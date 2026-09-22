@@ -41,7 +41,7 @@ export default function ReposPage() {
         body: JSON.stringify({ owner, repo, createNew }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "init failed");
-      router.push("/upload");
+      router.push("/gallery");
     } catch (err) {
       setError(String(err));
     } finally {

@@ -1,6 +1,6 @@
 import { getSession } from "@/lib/session";
-import { readMediaIndex } from "@/lib/media";
 import Link from "next/link";
+import NavBar from "../components/NavBar";
 import GalleryClient from "./GalleryClient";
 
 export const dynamic = "force-dynamic";
@@ -17,11 +17,14 @@ export default async function GalleryPage() {
     );
   }
 
-  const index = await readMediaIndex(
-    session.accessToken,
-    session.repoOwner,
-    session.repoName
+  // Section 11 (Sync Strategy): the media index itself is no longer fetched
+  // here on every server render — GalleryClient loads from its IndexedDB
+  // cache first and only asks the server for a fresh media-index.json when
+  // the repo's HEAD sha has actually moved.
+  return (
+    <>
+      <NavBar repoLabel={`${session.repoOwner}/${session.repoName}`} />
+      <GalleryClient repoOwner={session.repoOwner} repoName={session.repoName} />
+    </>
   );
-
-  return <GalleryClient initialItems={index} />;
 }

@@ -3,8 +3,16 @@
 // resumability. Replaces the simple sequential loop from Phase 1/2
 // (app/upload/page.tsx used to call a single uploadOneFile() directly).
 //
-// Kept out of scope on purpose (Phase 4/5): IndexedDB, an offline/background
-// queue, PWA/service worker. This engine only runs while the tab is open.
+// Phase 5 adds online/offline awareness on top of the same pause/resume
+// machinery: going offline behaves exactly like the user hitting "pause",
+// and coming back online behaves like "resume" — no new persistence was
+// needed since localStorage-backed per-file/per-chunk state (lib/upload/
+// persist.ts) already survives a paused/interrupted upload.
+//
+// Kept out of scope on purpose (Phase 5): a full IndexedDB-backed
+// background queue / the Background Sync API (limited browser support) —
+// reacting to window online/offline events while the tab is open is the
+// intended scope here.
 
 import {
   chunkFile,
@@ -96,11 +104,46 @@ export class UploadQueue {
   private tasks: FileTask[] = [];
   private listeners = new Set<QueueListener>();
   private concurrency: number;
-  private globalPaused = false;
+  private globalPaused = false; // user-initiated (Pause queue button)
+  private offlinePaused = false; // auto, driven by window online/offline events
 
   constructor(concurrency: number = DEFAULT_UPLOAD_CONCURRENCY) {
     this.concurrency = concurrency;
+    if (typeof window !== "undefined" && typeof navigator !== "undefined") {
+      this.offlinePaused = !navigator.onLine;
+      window.addEventListener("online", this.handleOnline);
+      window.addEventListener("offline", this.handleOffline);
+    }
   }
+
+  /** Detaches the window online/offline listeners. Safe to call more than
+   * once. Callers that create a queue for the lifetime of a component
+   * should call this on unmount to avoid leaking listeners. */
+  dispose(): void {
+    if (typeof window === "undefined") return;
+    window.removeEventListener("online", this.handleOnline);
+    window.removeEventListener("offline", this.handleOffline);
+  }
+
+  private handleOnline = (): void => {
+    this.offlinePaused = false;
+    if (this.globalPaused) return; // user still has it manually paused
+    for (const t of this.tasks) {
+      if (t.snapshot.status === "paused") {
+        this.update(t, { status: "uploading", message: "Back online — resuming…" });
+      }
+    }
+    this.pump();
+  };
+
+  private handleOffline = (): void => {
+    this.offlinePaused = true;
+    for (const t of this.tasks) {
+      if (t.snapshot.status === "uploading" || t.snapshot.status === "queued") {
+        this.update(t, { status: "paused", message: "Offline — will resume automatically" });
+      }
+    }
+  };
 
   subscribe(listener: QueueListener): () => void {
     this.listeners.add(listener);
@@ -151,6 +194,17 @@ export class UploadQueue {
       };
       this.tasks.push(task);
     }
+    // If we're already offline when files are added (rather than going
+    // offline mid-upload), mark them paused immediately instead of letting
+    // them sit as "Queued" — pump() would no-op anyway since isPaused()
+    // is true, but the status/message should reflect why.
+    if (this.offlinePaused) {
+      for (const t of this.tasks) {
+        if (t.snapshot.status === "queued") {
+          this.update(t, { status: "paused", message: "Offline — will resume automatically" });
+        }
+      }
+    }
     this.emit();
     this.pump();
   }
@@ -166,6 +220,7 @@ export class UploadQueue {
 
   resumeAll(): void {
     this.globalPaused = false;
+    if (this.offlinePaused) return; // still offline — handleOnline() will resume once it fires
     for (const t of this.tasks) {
       if (t.snapshot.status === "paused") {
         this.update(t, { status: "uploading" });
@@ -192,7 +247,7 @@ export class UploadQueue {
   }
 
   private isPaused(): boolean {
-    return this.globalPaused;
+    return this.globalPaused || this.offlinePaused;
   }
 
   private async pump(): Promise<void> {

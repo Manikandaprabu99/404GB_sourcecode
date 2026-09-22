@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { initRepoStructure, getOctokit } from "@/lib/github";
+import { initRepoStructure, getOctokit, getDefaultBranch } from "@/lib/github";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
   const body = (await req.json()) as InitBody;
   let owner = body.owner;
   let repo = body.repo;
+  let branch: string | undefined;
 
   if (!repo) {
     return NextResponse.json({ error: "repo is required" }, { status: 400 });
@@ -35,6 +36,7 @@ export async function POST(req: NextRequest) {
     });
     owner = data.owner.login;
     repo = data.name;
+    branch = data.default_branch;
   }
 
   if (!owner) {
@@ -42,9 +44,14 @@ export async function POST(req: NextRequest) {
   }
 
   await initRepoStructure(session.accessToken, owner, repo);
+  // Cache the default branch on the session now (one extra call, on this
+  // low-frequency repo-select path only) so the gallery's per-load HEAD-sha
+  // check (Section 11) never has to re-resolve it.
+  branch ??= await getDefaultBranch(session.accessToken, owner, repo);
 
   session.repoOwner = owner;
   session.repoName = repo;
+  session.repoBranch = branch;
   await session.save();
 
   return NextResponse.json({ ok: true, owner, repo });

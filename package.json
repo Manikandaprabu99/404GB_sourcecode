@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@octokit/rest": "^20.1.1",
+    "idb": "^8.0.3",
     "iron-session": "^8.0.1",
     "js-sha256": "^1.0.0",
     "next": "14.2.5",

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { UploadQueue } from "@/lib/upload/uploadQueue";
 import type { FileTaskSnapshot } from "@/lib/upload/types";
+import NavBar from "../components/NavBar";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -109,7 +110,11 @@ export default function UploadPage() {
 
   useEffect(() => {
     const queue = queueRef.current!;
-    return queue.subscribe(setItems);
+    const unsubscribe = queue.subscribe(setItems);
+    return () => {
+      unsubscribe();
+      queue.dispose(); // detach the online/offline listeners (Phase 5)
+    };
   }, []);
 
   const busy = items.some((i) => !["done", "error", "canceled"].includes(i.status));
@@ -123,8 +128,10 @@ export default function UploadPage() {
   }, [items]);
 
   return (
-    <main className="mx-auto flex max-w-xl flex-col gap-4 p-8">
-      <h1 className="text-2xl font-bold">Upload photos &amp; videos</h1>
+    <>
+      <NavBar />
+      <main className="mx-auto flex max-w-xl flex-col gap-4 p-8">
+        <h1 className="text-2xl font-bold">Upload photos &amp; videos</h1>
       <input
         type="file"
         accept="image/*,video/*"
@@ -191,6 +198,7 @@ export default function UploadPage() {
           Go to gallery
         </button>
       )}
-    </main>
+      </main>
+    </>
   );
 }

@@ -6,6 +6,10 @@ export interface SessionData {
   githubLogin?: string;
   repoOwner?: string;
   repoName?: string;
+  /** Cached default branch for repoOwner/repoName, so the Section 11 sync
+   * check (GET /api/media?sinceSha=) doesn't need an extra repos.get() call
+   * on every gallery load just to find the branch name for the refs API. */
+  repoBranch?: string;
 }
 
 const secret = process.env.SESSION_SECRET;

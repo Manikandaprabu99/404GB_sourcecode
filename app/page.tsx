@@ -1,11 +1,16 @@
 import { getSession } from "@/lib/session";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const session = await getSession();
   const isLoggedIn = !!session.accessToken;
+
+  if (isLoggedIn && session.repoOwner && session.repoName) {
+    redirect("/gallery");
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">

@@ -1,34 +1,85 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { MediaIndexEntry } from "@/lib/media";
+import {
+  repoKeyFor,
+  getCachedMediaIndex,
+  applyMediaDiff,
+  diffMediaIndex,
+  getSyncState,
+  setSyncState,
+} from "@/lib/cache";
 import { groupByDay } from "./dateGroups";
 import MediaViewer from "./MediaViewer";
+import VirtualGrid from "./VirtualGrid";
 
 interface GalleryClientProps {
-  initialItems: MediaIndexEntry[];
+  repoOwner: string;
+  repoName: string;
 }
 
-function formatDuration(seconds: number): string {
-  const total = Math.round(seconds);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+interface MediaResponse {
+  unchanged: boolean;
+  sha: string;
+  media?: MediaIndexEntry[];
 }
 
-export default function GalleryClient({ initialItems }: GalleryClientProps) {
+export default function GalleryClient({ repoOwner, repoName }: GalleryClientProps) {
+  const repoKey = useMemo(() => repoKeyFor(repoOwner, repoName), [repoOwner, repoName]);
+  const [items, setItems] = useState<MediaIndexEntry[]>([]);
+  const [ready, setReady] = useState(false);
   const [query, setQuery] = useState("");
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+
+  // Section 11 sync strategy: render whatever's cached in IndexedDB
+  // immediately, then check the repo's HEAD sha; only re-fetch
+  // media-index.json (and update the cache) if it actually changed.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const cached = await getCachedMediaIndex(repoKey);
+      if (cancelled) return;
+      if (cached.length > 0) setItems(cached);
+
+      try {
+        const syncState = await getSyncState(repoKey);
+        const sinceSha = syncState?.lastKnownSha ?? "";
+        const res = await fetch(`/api/media?sinceSha=${encodeURIComponent(sinceSha)}`);
+        if (!res.ok || cancelled) return;
+
+        const data = (await res.json()) as MediaResponse;
+        if (cancelled || data.unchanged) return;
+
+        const fresh = data.media ?? [];
+        const diff = diffMediaIndex(cached, fresh);
+        if (diff.changed) {
+          await applyMediaDiff(repoKey, diff.upserts, diff.removedIds);
+        }
+        if (data.sha) await setSyncState(repoKey, data.sha);
+        if (!cancelled) setItems(fresh);
+      } catch {
+        // Offline or a GitHub API hiccup — keep serving whatever's cached.
+      } finally {
+        if (!cancelled) setReady(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [repoKey]);
 
   // Newest first.
   const sorted = useMemo(
     () =>
-      [...initialItems].sort(
+      [...items].sort(
         (a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       ),
-    [initialItems]
+    [items]
   );
 
   const filtered = useMemo(() => {
@@ -36,6 +87,14 @@ export default function GalleryClient({ initialItems }: GalleryClientProps) {
     if (!q) return sorted;
     return sorted.filter((item) => item.filename.toLowerCase().includes(q));
   }, [sorted, query]);
+
+  // O(1) id -> position lookups for the viewer, instead of an indexOf() call
+  // per rendered item.
+  const indexById = useMemo(() => {
+    const map = new Map<string, number>();
+    filtered.forEach((item, i) => map.set(item.id, i));
+    return map;
+  }, [filtered]);
 
   const groups = useMemo(() => groupByDay(filtered), [filtered]);
 
@@ -59,54 +118,24 @@ export default function GalleryClient({ initialItems }: GalleryClientProps) {
         className="w-full rounded border border-neutral-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-400 sm:max-w-sm"
       />
 
-      {initialItems.length === 0 && (
+      {!ready && items.length === 0 && (
+        <p className="text-neutral-500">Loading…</p>
+      )}
+      {ready && items.length === 0 && (
         <p className="text-neutral-500">No media yet.</p>
       )}
-      {initialItems.length > 0 && filtered.length === 0 && (
+      {items.length > 0 && filtered.length === 0 && (
         <p className="text-neutral-500">No photos match &quot;{query}&quot;.</p>
       )}
 
-      <div className="flex flex-col gap-8">
-        {groups.map((group) => (
-          <section key={group.label} className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-neutral-400">
-              {group.label}
-            </h2>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-              {group.items.map((item) => {
-                const globalIndex = filtered.indexOf(item);
-                return (
-                  <button
-                    key={item.id}
-                    className="group relative aspect-square overflow-hidden rounded bg-neutral-900"
-                    onClick={() => setOpenIndex(globalIndex)}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/api/media/thumb/${item.id}/320`}
-                      alt={item.filename}
-                      loading="lazy"
-                      className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                    />
-                    {item.mimeType?.startsWith("video/") && (
-                      <div className="pointer-events-none absolute inset-0 flex items-end justify-between p-1.5">
-                        <span className="rounded bg-black/60 px-1 text-[10px] text-white">
-                          ▶
-                        </span>
-                        {typeof item.duration === "number" && item.duration > 0 && (
-                          <span className="rounded bg-black/60 px-1 text-[10px] text-white">
-                            {formatDuration(item.duration)}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        ))}
-      </div>
+      {filtered.length > 0 && (
+        <VirtualGrid
+          groups={groups}
+          repoKey={repoKey}
+          indexById={indexById}
+          onOpen={setOpenIndex}
+        />
+      )}
 
       {openIndex !== null && (
         <MediaViewer

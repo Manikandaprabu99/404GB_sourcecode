@@ -6,6 +6,14 @@ import {
   contentsExists,
   getContentBinary,
 } from "@/lib/github";
+import { mapWithConcurrency } from "@/lib/concurrency";
+
+/** How many chunk objects to fetch from GitHub in parallel when
+ * reconstructing a media file (Section 20 Phase 4 — Performance). Previously
+ * this was a sequential for-loop (one chunk at a time), which meant a large
+ * video with many 5 MiB chunks paid its full network round-trip latency N
+ * times over instead of ~N/CONCURRENCY times. */
+const CHUNK_FETCH_CONCURRENCY = 4;
 
 export interface ChunkRef {
   index: number;
@@ -82,7 +90,12 @@ export async function readMediaRecord(
   );
 }
 
-/** Fetch and reassemble a media record's chunks into one Buffer, in order. */
+/**
+ * Fetch and reassemble a media record's chunks into one Buffer, in order.
+ * Chunks are fetched with bounded concurrency rather than one at a time —
+ * `mapWithConcurrency` preserves output order by index, so concatenation is
+ * still correct regardless of which request lands first.
+ */
 export async function reconstructMedia(
   accessToken: string,
   owner: string,
@@ -90,14 +103,17 @@ export async function reconstructMedia(
   record: MediaRecord
 ): Promise<Buffer> {
   const ordered = [...record.chunks].sort((a, b) => a.index - b.index);
-  const parts: Buffer[] = [];
-  for (const chunk of ordered) {
-    const bytes = await getContentBinary(accessToken, owner, repo, chunk.path);
-    if (!bytes) {
-      throw new Error(`Missing chunk object at ${chunk.path}`);
+  const parts = await mapWithConcurrency(
+    ordered,
+    CHUNK_FETCH_CONCURRENCY,
+    async (chunk) => {
+      const bytes = await getContentBinary(accessToken, owner, repo, chunk.path);
+      if (!bytes) {
+        throw new Error(`Missing chunk object at ${chunk.path}`);
+      }
+      return Buffer.from(bytes);
     }
-    parts.push(Buffer.from(bytes));
-  }
+  );
   return Buffer.concat(parts);
 }
 

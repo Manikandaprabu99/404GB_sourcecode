@@ -230,3 +230,24 @@ export async function getDefaultBranch(
   const { data } = await octokit.repos.get({ owner, repo });
   return data.default_branch;
 }
+
+/**
+ * Cheap "what's the repo's current HEAD commit" check via the Git Data refs
+ * API (a single GET, no tree/blob traversal) — the basis of the Section 11
+ * sync strategy: the client compares this against its cached lastKnownSha
+ * and only re-fetches manifest/media-index.json when it differs.
+ */
+export async function getHeadSha(
+  accessToken: string,
+  owner: string,
+  repo: string,
+  branch: string
+): Promise<string> {
+  const octokit = getOctokit(accessToken);
+  const { data } = await octokit.git.getRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`,
+  });
+  return data.object.sha;
+}
