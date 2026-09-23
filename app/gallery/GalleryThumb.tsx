@@ -2,11 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { loadThumbnailObjectUrl } from "@/lib/cache";
+import MediaPlaceholder from "./MediaPlaceholder";
 
 interface GalleryThumbProps {
   repoKey: string;
   mediaId: string;
   alt: string;
+  /** Whether this item has a cached thumbnail at all (see
+   * MediaIndexEntry.thumb — thumbnail generation during upload is
+   * best-effort and can fail, e.g. an undecodable image). When false, no
+   * network request is attempted and a placeholder tile is shown instead of
+   * a request that would just 404. */
+  hasThumbnail: boolean;
+  isVideo?: boolean;
   className?: string;
 }
 
@@ -21,16 +29,22 @@ export default function GalleryThumb({
   repoKey,
   mediaId,
   alt,
+  hasThumbnail,
+  isVideo,
   className,
 }: GalleryThumbProps) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    setObjectUrl(null);
+    setFailed(false);
+    if (!hasThumbnail) return;
+
     let cancelled = false;
     let ownedUrl: string | null = null;
     const controller = new AbortController();
 
-    setObjectUrl(null);
     loadThumbnailObjectUrl(repoKey, mediaId, 320, controller.signal)
       .then((url) => {
         if (cancelled) {
@@ -41,7 +55,9 @@ export default function GalleryThumb({
         setObjectUrl(url);
       })
       .catch(() => {
-        // Leave the placeholder up on failure (offline, 404, etc).
+        // No cached/served thumbnail (offline, 404, etc.) — fall back to
+        // the placeholder tile rather than leaving a spinner up forever.
+        if (!cancelled) setFailed(true);
       });
 
     return () => {
@@ -49,12 +65,23 @@ export default function GalleryThumb({
       controller.abort();
       if (ownedUrl) URL.revokeObjectURL(ownedUrl);
     };
-  }, [repoKey, mediaId]);
+  }, [repoKey, mediaId, hasThumbnail]);
+
+  if (!hasThumbnail || failed) {
+    return <MediaPlaceholder isVideo={isVideo} className={className} />;
+  }
 
   if (!objectUrl) {
-    return <div className={`${className ?? ""} animate-pulse bg-neutral-800`} />;
+    return <div className={`${className ?? ""} skeleton`} />;
   }
 
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={objectUrl} alt={alt} loading="lazy" className={className} />;
+  return (
+    <img
+      src={objectUrl}
+      alt={alt}
+      loading="lazy"
+      className={`${className ?? ""} animate-fade-in`}
+    />
+  );
 }

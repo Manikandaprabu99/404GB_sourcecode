@@ -99,33 +99,55 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   const groups = useMemo(() => groupByDay(filtered), [filtered]);
 
   return (
-    <main className="mx-auto flex max-w-6xl flex-col gap-6 p-4 sm:p-8">
+    <main className="mx-auto flex max-w-6xl flex-col gap-6 p-4 pb-tabbar-safe sm:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Gallery</h1>
+        <h1 className="text-h1 font-bold tracking-tight">Gallery</h1>
         <Link
           href="/upload"
-          className="rounded border border-neutral-700 px-3 py-1.5 text-sm underline"
+          className="group inline-flex items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-small font-medium text-bg shadow-soft transition-all duration-180 ease-out-expo hover:-translate-y-0.5 hover:shadow-elevated active:translate-y-0 active:scale-95"
         >
-          Upload photos
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Upload
         </Link>
       </div>
 
-      <input
-        type="search"
-        placeholder="Search by filename…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className="w-full rounded border border-neutral-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-400 sm:max-w-sm"
-      />
+      <div className="relative w-full sm:max-w-sm">
+        <svg
+          viewBox="0 0 24 24"
+          width="16"
+          height="16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.2-3.2" />
+        </svg>
+        <input
+          type="search"
+          placeholder="Search by filename…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="w-full rounded-full border border-border bg-surface py-2.5 pl-10 pr-4 text-body text-ink outline-none transition-colors duration-180 placeholder:text-ink-faint focus:border-accent"
+        />
+      </div>
 
       {!ready && items.length === 0 && (
-        <p className="text-neutral-500">Loading…</p>
+        <p className="animate-fade-in text-body text-ink-muted">Loading…</p>
       )}
       {ready && items.length === 0 && (
-        <p className="text-neutral-500">No media yet.</p>
+        <p className="animate-fade-in text-body text-ink-muted">No media yet.</p>
       )}
       {items.length > 0 && filtered.length === 0 && (
-        <p className="text-neutral-500">No photos match &quot;{query}&quot;.</p>
+        <p className="animate-fade-in text-body text-ink-muted">
+          No photos match &quot;{query}&quot;.
+        </p>
       )}
 
       {filtered.length > 0 && (

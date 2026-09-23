@@ -13,7 +13,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
-export default function InstallPrompt() {
+export default function InstallPrompt({ full }: { full?: boolean } = {}) {
   const [deferredEvent, setDeferredEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
 
@@ -59,9 +59,18 @@ export default function InstallPrompt() {
   return (
     <button
       onClick={handleInstall}
-      className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:text-neutral-100"
       title="Install 404GB as an app"
+      className={
+        full
+          ? "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-small text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink"
+          : "rounded-full border border-border px-3 py-1.5 text-small text-ink-muted transition-all duration-180 ease-out-expo hover:border-border-strong hover:text-ink"
+      }
     >
+      {full && (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 4v11m0 0 3.5-3.5M12 15l-3.5-3.5M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
+        </svg>
+      )}
       Install app
     </button>
   );

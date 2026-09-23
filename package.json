@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@capacitor/core": "^8.5.2",
     "@octokit/rest": "^20.1.1",
     "idb": "^8.0.3",
     "iron-session": "^8.0.1",

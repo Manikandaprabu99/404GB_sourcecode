@@ -2,6 +2,165 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --bg: 6 6 9;
+  --surface: 15 15 19;
+  --surface-2: 22 22 27;
+  --surface-3: 31 31 37;
+  --border: 39 39 46;
+  --border-strong: 63 63 72;
+  --ink: 250 250 251;
+  --ink-muted: 163 163 172;
+  --ink-faint: 110 110 120;
+  --accent: 129 140 248;
+  --accent-strong: 99 102 241;
+  --accent-ink: 12 12 18;
+  --success: 74 222 128;
+  --danger: 248 113 113;
+  --warning: 250 204 21;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: 250 250 251;
+    --surface: 255 255 255;
+    --surface-2: 244 244 247;
+    --surface-3: 234 234 239;
+    --border: 226 226 231;
+    --border-strong: 209 209 217;
+    --ink: 24 24 27;
+    --ink-muted: 82 82 94;
+    --ink-faint: 133 133 145;
+    --accent: 99 102 241;
+    --accent-strong: 79 70 229;
+    --accent-ink: 255 255 255;
+    --success: 22 163 74;
+    --danger: 220 38 38;
+    --warning: 161 98 7;
+
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: 250 250 251;
+  --surface: 255 255 255;
+  --surface-2: 244 244 247;
+  --surface-3: 234 234 239;
+  --border: 226 226 231;
+  --border-strong: 209 209 217;
+  --ink: 24 24 27;
+  --ink-muted: 82 82 94;
+  --ink-faint: 133 133 145;
+  --accent: 99 102 241;
+  --accent-strong: 79 70 229;
+  --accent-ink: 255 255 255;
+  --success: 22 163 74;
+  --danger: 220 38 38;
+  --warning: 161 98 7;
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
-  @apply bg-neutral-950 text-neutral-100;
+  @apply bg-bg text-ink antialiased;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+::selection {
+  background: rgb(var(--accent) / 0.35);
+}
+
+/* ---------- Motion-safety ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- Landing page background treatment ---------- */
+/* Soft, slow-drifting blurred color fields (a lightweight stand-in for a
+ * "mesh gradient" hero) plus a faint fading grid — both pure CSS, no
+ * canvas/WebGL, so it's cheap enough to run indefinitely. */
+.bg-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(72px);
+  opacity: 0.55;
+  will-change: transform;
+}
+
+.bg-grid-fade {
+  background-image:
+    linear-gradient(rgb(var(--ink) / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--ink) / 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 30%, black 40%, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 55% at 50% 30%, black 40%, transparent 78%);
+}
+
+/* ---------- Skeleton shimmer (gallery thumbnails while loading) ---------- */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgb(var(--surface-2));
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgb(var(--surface-3) / 0.9),
+    transparent
+  );
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ---------- Glass surfaces (sticky nav, overflow menu) ---------- */
+.glass {
+  background: rgb(var(--surface) / 0.72);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+}
+
+/* ---------- Safe-area helpers (installed PWA) ---------- */
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* Extra bottom padding on phones so content can't sit under the fixed
+ * mobile tab bar (see NavBar.tsx). Scoped to an explicit max-width media
+ * query (rather than a base rule + a `sm:` reset) so it never has to
+ * override anything at >= sm, where the tab bar is hidden — an unscoped
+ * reset would have to set `padding-bottom: 0`, clobbering whatever bottom
+ * padding the page's own `sm:p-8` etc. was already contributing there. */
+@media (max-width: 639.98px) {
+  .pb-tabbar-safe {
+    padding-bottom: calc(4.75rem + env(safe-area-inset-bottom));
+  }
 }

@@ -349,42 +349,63 @@ export class UploadQueue {
       let width: number | undefined;
       let height: number | undefined;
       let duration: number | undefined;
-      let posterSource: File | Blob = file;
 
       if (isVideo(file)) {
         const meta = await extractVideoMetadata(file);
         width = meta.width;
         height = meta.height;
         duration = meta.duration;
-        this.update(task, { message: "Capturing poster frame…" });
-        posterSource = await captureVideoPosterFrame(file);
       } else {
         const dims = await getImageDimensions(file);
         width = dims.width;
         height = dims.height;
       }
 
-      this.update(task, { message: "Generating thumbnails…" });
-      const thumbnails = await generateThumbnails(posterSource);
-
       const id = `media_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-      this.update(task, { mediaId: id, message: "Uploading thumbnails…" });
+      this.update(task, { mediaId: id });
 
-      const thumbnailBlobShas: Record<string, string> = {};
-      const thumbnailPaths: Record<string, string> = {};
-      for (const thumb of thumbnails) {
-        if (task.canceled) throw new CanceledError();
-        const base64Content = await blobToBase64(thumb.blob);
-        const res = await fetch("/api/media/upload/chunk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ hash: `thumb-${id}-${thumb.size}`, base64Content }),
-          signal,
+      // Thumbnail generation + upload is best-effort and kept in its own
+      // try/catch, separate from the outer per-file one: a poster-frame
+      // capture or image-decode failure here (createImageBitmap can throw
+      // "InvalidStateError: The source image could not be decoded" for some
+      // large/unusual images — see lib/thumbnails) must not throw away a
+      // fully-uploaded set of chunks over what is fundamentally "couldn't
+      // make a preview image", not a data-loss problem. Only genuinely
+      // fatal errors (chunk upload, commit) should still mark the file
+      // "error" — those are handled by the outer catch below.
+      let thumbnailPaths: Record<string, string> = {};
+      let thumbnailBlobShas: Record<string, string> = {};
+      try {
+        this.update(task, { message: "Generating thumbnails…" });
+        const posterSource: File | Blob = isVideo(file)
+          ? await captureVideoPosterFrame(file)
+          : file;
+        const thumbnails = await generateThumbnails(posterSource);
+
+        this.update(task, { message: "Uploading thumbnails…" });
+        for (const thumb of thumbnails) {
+          if (task.canceled) throw new CanceledError();
+          const base64Content = await blobToBase64(thumb.blob);
+          const res = await fetch("/api/media/upload/chunk", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ hash: `thumb-${id}-${thumb.size}`, base64Content }),
+            signal,
+          });
+          if (!res.ok) throw new Error((await res.json()).error ?? "thumbnail upload failed");
+          const { sha } = (await res.json()) as { sha: string };
+          thumbnailBlobShas[String(thumb.size)] = sha;
+          thumbnailPaths[String(thumb.size)] = `thumbnails/${id}/${thumb.size}.webp`;
+        }
+      } catch (thumbErr) {
+        // Cancellation must still propagate to the outer catch, not be
+        // swallowed as "just no thumbnail".
+        if (thumbErr instanceof CanceledError || task.canceled) throw thumbErr;
+        thumbnailPaths = {};
+        thumbnailBlobShas = {};
+        this.update(task, {
+          message: `Thumbnail generation failed — uploading original without a preview (${String(thumbErr)})`,
         });
-        if (!res.ok) throw new Error((await res.json()).error ?? "thumbnail upload failed");
-        const { sha } = (await res.json()) as { sha: string };
-        thumbnailBlobShas[String(thumb.size)] = sha;
-        thumbnailPaths[String(thumb.size)] = `thumbnails/${id}/${thumb.size}.webp`;
       }
 
       const record = {

@@ -15,10 +15,13 @@ function columnsForViewportWidth(width: number): number {
   return 2;
 }
 
-const ITEM_GAP = 8; // px — matches the old grid's `gap-2`
-const SECTION_GAP = 32; // px — matches the flex column's `gap-8` between date groups
-const HEADER_HEIGHT = 32; // px — a date group's label row
+const ITEM_GAP = 6; // px
+const SECTION_GAP = 28; // px — gap between date groups
+const HEADER_HEIGHT = 40; // px — a date group's label row
 const OVERSCAN_PX = 800; // render this many px worth of extra rows above/below the viewport
+// Must match NavBar's own fixed height (the `h-14` sticky top bar — see the
+// note above its export) — sticky date headers pin themselves just below it.
+const NAVBAR_HEIGHT = 56;
 
 type Row =
   | { type: "header"; label: string; key: string }
@@ -101,6 +104,31 @@ function findVisibleRange(
   return [start, Math.max(start, end)];
 }
 
+/** The row index of the date-group header that should currently be "stuck"
+ * under the navbar: the last header whose natural top is at or above the
+ * pin point `x` (viewport-local target offset). Binary search over just the
+ * header rows (sorted by top, same order as `rows`), so this stays cheap
+ * even for a library with hundreds of date groups. Returns -1 if no header
+ * has scrolled up that far yet (e.g. still at the very top of the list). */
+function findCurrentHeaderRowIndex(
+  headerRows: { rowIndex: number; top: number }[],
+  x: number
+): number {
+  let lo = 0;
+  let hi = headerRows.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (headerRows[mid].top <= x) {
+      ans = headerRows[mid].rowIndex;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return ans;
+}
+
 function formatDuration(seconds: number): string {
   const total = Math.round(seconds);
   const m = Math.floor(total / 60);
@@ -125,6 +153,15 @@ export interface VirtualGridProps {
  * relative to this component's own container and absolutely positions each
  * rendered row within a full-height spacer div so native scrolling/scrollbar
  * behavior is unaffected.
+ *
+ * Date-group headers additionally emulate `position: sticky` (see
+ * `findCurrentHeaderRowIndex`): since every row here is already absolutely
+ * positioned for virtualization, real CSS sticky isn't available, so the
+ * "current" header's rendered `top` is instead clamped to
+ * `max(naturalTop, rawScrollOffset + NAVBAR_HEIGHT)` every frame, and a
+ * standalone copy is rendered if its row would otherwise be virtualized
+ * away entirely (a date group spanning more rows than fit in the overscan
+ * window).
  */
 export default function VirtualGrid({
   groups,
@@ -135,7 +172,11 @@ export default function VirtualGrid({
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [columns, setColumns] = useState(2);
-  const [viewport, setViewport] = useState({ scrollTop: 0, height: 0 });
+  // `scrollTop` (clamped to >=0) drives which rows are mounted at all;
+  // `rawTop` (can be negative, i.e. the container hasn't reached the top of
+  // the viewport yet) is what the sticky-header math needs to avoid
+  // "sticking" a header before it would naturally have reached that point.
+  const [viewport, setViewport] = useState({ scrollTop: 0, rawTop: 0, height: 0 });
 
   useEffect(() => {
     const el = containerRef.current;
@@ -166,6 +207,7 @@ export default function VirtualGrid({
       const rect = el.getBoundingClientRect();
       setViewport({
         scrollTop: Math.max(0, -rect.top),
+        rawTop: -rect.top,
         height: window.innerHeight,
       });
     }
@@ -203,6 +245,22 @@ export default function VirtualGrid({
     [layout, viewport]
   );
 
+  const headerRows = useMemo(() => {
+    const arr: { rowIndex: number; top: number }[] = [];
+    rows.forEach((row, i) => {
+      if (row.type === "header") arr.push({ rowIndex: i, top: layout[i]?.top ?? 0 });
+    });
+    return arr;
+  }, [rows, layout]);
+
+  const stickyTarget = viewport.rawTop + NAVBAR_HEIGHT;
+  const currentHeaderIdx = useMemo(
+    () => findCurrentHeaderRowIndex(headerRows, stickyTarget),
+    [headerRows, stickyTarget]
+  );
+  const currentHeaderInSlice =
+    currentHeaderIdx >= 0 && currentHeaderIdx >= startIdx && currentHeaderIdx <= endIdx;
+
   // Before the ResizeObserver reports a real width, render just the probe
   // div so we get a measurement — avoids computing a bogus itemSize of 0.
   if (containerWidth === 0) {
@@ -215,19 +273,25 @@ export default function VirtualGrid({
       style={{ position: "relative", height: totalHeight, width: "100%" }}
     >
       {layout.slice(startIdx, endIdx + 1).map((rowLayout, i) => {
-        const row = rows[startIdx + i];
+        const absIndex = startIdx + i;
+        const row = rows[absIndex];
         if (row.type === "header") {
+          const isPinned = absIndex === currentHeaderIdx;
+          const top = isPinned ? Math.max(rowLayout.top, stickyTarget) : rowLayout.top;
           return (
             <h2
               key={row.key}
               style={{
                 position: "absolute",
-                top: rowLayout.top,
+                top,
                 left: 0,
                 right: 0,
                 height: rowLayout.height,
+                zIndex: isPinned ? 5 : 1,
               }}
-              className="flex items-end text-sm font-semibold text-neutral-400"
+              className={`flex items-center px-1 text-small font-semibold text-ink-muted transition-colors duration-180 ${
+                isPinned ? "bg-bg/85 backdrop-blur-sm" : ""
+              }`}
             >
               {row.label}
             </h2>
@@ -251,32 +315,56 @@ export default function VirtualGrid({
               <button
                 key={item.id}
                 type="button"
-                className="group relative overflow-hidden rounded bg-neutral-900"
+                className="group relative overflow-hidden rounded-lg bg-surface-2 shadow-none transition-shadow duration-250 ease-out-expo hover:shadow-elevated"
                 onClick={() => onOpen(indexById.get(item.id) ?? 0)}
               >
                 <GalleryThumb
                   repoKey={repoKey}
                   mediaId={item.id}
                   alt={item.filename}
-                  className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                  hasThumbnail={Boolean(item.thumb)}
+                  isVideo={item.mimeType?.startsWith("video/")}
+                  className="h-full w-full object-cover transition-transform duration-250 ease-out-expo group-hover:scale-[1.04] group-active:scale-[0.97]"
                 />
                 {item.mimeType?.startsWith("video/") && (
-                  <div className="pointer-events-none absolute inset-0 flex items-end justify-between p-1.5">
-                    <span className="rounded bg-black/60 px-1 text-[10px] text-white">
-                      ▶
-                    </span>
-                    {typeof item.duration === "number" && item.duration > 0 && (
-                      <span className="rounded bg-black/60 px-1 text-[10px] text-white">
-                        {formatDuration(item.duration)}
+                  <>
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-9 bg-gradient-to-t from-black/55 to-transparent" />
+                    <div className="pointer-events-none absolute inset-0 flex items-end justify-between p-1.5">
+                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-black/55 text-[9px] text-white">
+                        ▶
                       </span>
-                    )}
-                  </div>
+                      {typeof item.duration === "number" && item.duration > 0 && (
+                        <span className="rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                          {formatDuration(item.duration)}
+                        </span>
+                      )}
+                    </div>
+                  </>
                 )}
               </button>
             ))}
           </div>
         );
       })}
+
+      {/* Fallback for a date group so large its header row scrolled outside
+       * the virtualized/overscan slice entirely — keeps the sticky label
+       * showing even mid-scroll through a very large single day. */}
+      {currentHeaderIdx >= 0 && !currentHeaderInSlice && rows[currentHeaderIdx]?.type === "header" && (
+        <h2
+          style={{
+            position: "absolute",
+            top: stickyTarget,
+            left: 0,
+            right: 0,
+            height: HEADER_HEIGHT,
+            zIndex: 5,
+          }}
+          className="flex items-center bg-bg/85 px-1 text-small font-semibold text-ink-muted backdrop-blur-sm"
+        >
+          {(rows[currentHeaderIdx] as Extract<Row, { type: "header" }>).label}
+        </h2>
+      )}
     </div>
   );
 }

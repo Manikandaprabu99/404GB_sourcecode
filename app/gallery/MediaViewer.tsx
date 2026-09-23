@@ -1,13 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MediaIndexEntry } from "@/lib/media";
+import MediaPlaceholder from "./MediaPlaceholder";
 
 interface MediaViewerProps {
   items: MediaIndexEntry[];
   index: number;
   onClose: () => void;
   onNavigate: (index: number) => void;
+}
+
+// Matches the CSS transition/animation durations used for the overlay's
+// open/close below — kept as one constant so the deferred `onClose` call
+// (which unmounts this component) always waits for the exit animation to
+// actually finish painting.
+const CLOSE_ANIMATION_MS = 180;
+
+function ChevronIcon({ direction }: { direction: "left" | "right" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="22"
+      height="22"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={direction === "left" ? "M15 18l-6-6 6-6" : "M9 18l6-6-6-6"} />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
 }
 
 /**
@@ -25,8 +58,28 @@ export default function MediaViewer({
 }: MediaViewerProps) {
   const item = items[index];
   const isVideo = item?.mimeType?.startsWith("video/");
+  // Thumbnail generation during upload is best-effort (see
+  // lib/upload/uploadQueue.ts) — some items have none at all.
+  const hasThumb = Boolean(item?.thumb);
   const [stage, setStage] = useState<"thumb" | "medium" | "original">("thumb");
   const [loadingOriginal, setLoadingOriginal] = useState(false);
+  const [closing, setClosing] = useState(false);
+
+  // Direction-aware slide: +1 when moving to a later photo, -1 when moving
+  // back, 0 on the very first mount (no slide-in on open, the overlay fade
+  // already covers that entrance).
+  const prevIndexRef = useRef(index);
+  const [slideDir, setSlideDir] = useState(0);
+  const isFirstRender = useRef(true);
+
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+    } else {
+      setSlideDir(index > prevIndexRef.current ? 1 : index < prevIndexRef.current ? -1 : 0);
+    }
+    prevIndexRef.current = index;
+  }, [index]);
 
   useEffect(() => {
     setStage("thumb");
@@ -34,7 +87,7 @@ export default function MediaViewer({
   }, [item?.id]);
 
   useEffect(() => {
-    if (!item || isVideo) return;
+    if (!item || isVideo || !hasThumb) return;
     let cancelled = false;
     const img = new Image();
     img.onload = () => {
@@ -44,17 +97,24 @@ export default function MediaViewer({
     return () => {
       cancelled = true;
     };
-  }, [item?.id, isVideo]);
+  }, [item?.id, isVideo, hasThumb]);
+
+  function requestClose() {
+    if (closing) return;
+    setClosing(true);
+    window.setTimeout(onClose, CLOSE_ANIMATION_MS);
+  }
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") requestClose();
       else if (e.key === "ArrowRight") onNavigate(Math.min(index + 1, items.length - 1));
       else if (e.key === "ArrowLeft") onNavigate(Math.max(index - 1, 0));
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [index, items.length, onClose, onNavigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, items.length, closing]);
 
   if (!item) return null;
 
@@ -65,20 +125,28 @@ export default function MediaViewer({
       ? `/api/media/thumb/${item.id}/800`
       : `/api/media/thumb/${item.id}/320`;
 
+  // No cached thumbnail exists for this item (thumbnail generation is
+  // best-effort — see uploadQueue.ts) and the original hasn't been
+  // requested yet: show a clear placeholder instead of an <img>/poster
+  // request to a thumbnail path that doesn't exist.
+  const showPlaceholder = !hasThumb && stage !== "original";
+
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-black/95"
-      onClick={onClose}
+      className={`fixed inset-0 z-50 flex flex-col bg-black/95 transition-opacity duration-180 ease-out-expo ${
+        closing ? "opacity-0" : "animate-fade-in opacity-100"
+      }`}
+      onClick={requestClose}
     >
       <div
-        className="flex items-center justify-between gap-4 p-4 text-sm text-neutral-300"
+        className="flex items-center justify-between gap-4 p-4 pt-safe text-small text-neutral-300"
         onClick={(e) => e.stopPropagation()}
       >
         <span className="truncate">{item.filename}</span>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {stage !== "original" && isVideo && (
             <button
-              className="rounded border border-neutral-600 px-2 py-1 disabled:opacity-50"
+              className="rounded-full border border-white/20 px-3 py-2 text-small text-white transition-colors duration-180 hover:bg-white/10 disabled:opacity-50"
               disabled={loadingOriginal}
               onClick={() => {
                 setLoadingOriginal(true);
@@ -91,7 +159,7 @@ export default function MediaViewer({
           )}
           {stage !== "original" && !isVideo && (
             <button
-              className="rounded border border-neutral-600 px-2 py-1 disabled:opacity-50"
+              className="rounded-full border border-white/20 px-3 py-2 text-small text-white transition-colors duration-180 hover:bg-white/10 disabled:opacity-50"
               disabled={loadingOriginal}
               onClick={() => {
                 setLoadingOriginal(true);
@@ -108,62 +176,76 @@ export default function MediaViewer({
             </button>
           )}
           <button
-            className="rounded border border-neutral-600 px-2 py-1"
-            onClick={onClose}
+            aria-label="Close"
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 text-white transition-colors duration-180 hover:bg-white/10"
+            onClick={requestClose}
           >
-            Close (Esc)
+            <CloseIcon />
           </button>
         </div>
       </div>
 
-      <div className="relative flex flex-1 items-center justify-center overflow-hidden px-4">
+      <div className="relative flex flex-1 items-center justify-center overflow-hidden px-2 sm:px-4">
         {index > 0 && (
           <button
             aria-label="Previous"
-            className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-3 text-2xl text-white"
+            className="absolute left-1 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors duration-180 hover:bg-black/70 sm:left-3"
             onClick={(e) => {
               e.stopPropagation();
               onNavigate(index - 1);
             }}
           >
-            ‹
+            <ChevronIcon direction="left" />
           </button>
         )}
 
-        {isVideo && stage === "original" ? (
-          <video
-            src={`/api/media/object/${item.id}`}
-            poster={`/api/media/thumb/${item.id}/1600`}
-            controls
-            autoPlay
-            className="max-h-full max-w-full object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={src}
-            alt={item.filename}
-            className="max-h-full max-w-full object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        )}
+        <div
+          key={item.id}
+          style={{ ["--slide-dir" as string]: slideDir }}
+          className={slideDir !== 0 ? "animate-slide-in" : "animate-scale-in"}
+        >
+          {isVideo && stage === "original" ? (
+            <video
+              src={`/api/media/object/${item.id}`}
+              poster={hasThumb ? `/api/media/thumb/${item.id}/1600` : undefined}
+              controls
+              autoPlay
+              className="max-h-[calc(100vh-9rem)] max-w-full object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : showPlaceholder ? (
+            <div onClick={(e) => e.stopPropagation()}>
+              <MediaPlaceholder
+                isVideo={isVideo}
+                className="h-64 w-64 max-h-[50vh] max-w-[50vh] rounded-lg"
+              />
+            </div>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt={item.filename}
+              className="max-h-[calc(100vh-9rem)] max-w-full object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
+        </div>
 
         {index < items.length - 1 && (
           <button
             aria-label="Next"
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-3 text-2xl text-white"
+            className="absolute right-1 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors duration-180 hover:bg-black/70 sm:right-3"
             onClick={(e) => {
               e.stopPropagation();
               onNavigate(index + 1);
             }}
           >
-            ›
+            <ChevronIcon direction="right" />
           </button>
         )}
       </div>
 
-      <div className="p-3 text-center text-xs text-neutral-500">
+      <div className="p-3 pb-safe text-center text-small text-neutral-500">
         {index + 1} / {items.length}
       </div>
     </div>
