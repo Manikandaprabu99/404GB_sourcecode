@@ -11,6 +11,12 @@ interface MediaViewerProps {
   index: number;
   onClose: () => void;
   onNavigate: (index: number) => void;
+  /** Deletes the current item (see lib/media.deleteMedia).
+   * Must throw on failure so the trash button can show an inline error
+   * instead of silently doing nothing; on success the caller is expected to
+   * close the viewer itself (the underlying `items` list has just shrunk,
+   * so `index` can no longer be trusted to point at the right item). */
+  onDelete: (id: string) => Promise<void>;
 }
 
 // Matches the CSS transition/animation durations used for the overlay's
@@ -45,27 +51,61 @@ function CloseIcon() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-9 0 1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
+    </svg>
+  );
+}
+
+function SpinnerIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" className={`animate-spin ${className ?? ""}`} aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2.5" strokeOpacity="0.25" />
+      <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /**
  * Full-screen overlay viewer. Loads progressively: the already-cached 320px
  * thumbnail appears instantly, the 800px thumbnail swaps in as soon as it's
- * fetched, and the original full-resolution file is only fetched if the
- * viewer explicitly requests it (reconstructing chunks server-side is not
- * cheap, so it's on-demand rather than automatic).
+ * fetched, and the original full-resolution file is fetched on demand —
+ * automatically, the moment the viewer opens, for an image that has no
+ * thumbnail at all (see the auto-load effect below: there's nothing smaller
+ * to progressively show in that case, so making the user click an extra
+ * "View full resolution" button first would just be an extra step before
+ * seeing the photo they already tapped); still explicitly on-demand (a
+ * button click) for everything else — an image that already has a
+ * thumbnail to show instantly, and video (always button-gated — playback
+ * has its own controls anyway).
  */
 export default function MediaViewer({
   items,
   index,
   onClose,
   onNavigate,
+  onDelete,
 }: MediaViewerProps) {
   const item = items[index];
   const isVideo = item?.mimeType?.startsWith("video/");
   // Thumbnail generation during upload is best-effort (see
   // lib/upload/uploadQueue.ts) — some items have none at all.
   const hasThumb = Boolean(item?.thumb);
+  // An image with no thumbnail has nothing to progressively show — see the
+  // auto-load effect below and the component doc comment above.
+  const isNoThumbImage = !isVideo && !hasThumb;
   const [stage, setStage] = useState<"thumb" | "medium" | "original">("thumb");
   const [loadingOriginal, setLoadingOriginal] = useState(false);
+  // Mirrors `loadingOriginal` but updates synchronously (refs, unlike
+  // state, take effect immediately rather than on the next render) — see
+  // loadOriginal()'s guard and the item-reset effect below for why the
+  // state value alone isn't safe to gate re-entrancy on.
+  const loadingOriginalRef = useRef(false);
   const [closing, setClosing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Full-resolution / video-playback loading. `record` (fetched on demand
   // from GET /api/media/:id, which is where `size`/`chunks`/`hash` live —
@@ -101,9 +141,11 @@ export default function MediaViewer({
   useEffect(() => {
     setStage("thumb");
     setLoadingOriginal(false);
+    loadingOriginalRef.current = false;
     setOriginalSrc(null);
     setOriginalError(null);
     setReconstructProgress(null);
+    setDeleteError(null);
     recordRef.current = null;
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
@@ -146,7 +188,19 @@ export default function MediaViewer({
    * client-side chunked-reconstruction path based on the record's size —
    * see the `record` state comment above. */
   async function loadOriginal() {
-    if (loadingOriginal) return;
+    // Gate re-entrancy on the ref, not the `loadingOriginal` state variable:
+    // when the viewer navigates to a new item, the item-reset effect above
+    // and this component's no-thumbnail-image auto-load effect both fire
+    // within the same commit, in that order. The auto-load effect calls
+    // this function from a closure captured during that render, which still
+    // sees the *old* item's `loadingOriginal` (state updates don't apply
+    // until the next render) — checking that stale value here would wrongly
+    // skip starting the new item's load and leave it stuck on "Loading
+    // photo…" forever. The ref, by contrast, was already flipped back to
+    // false by the reset effect earlier in this same commit, so it's always
+    // current by the time this guard runs.
+    if (loadingOriginalRef.current) return;
+    loadingOriginalRef.current = true;
     setLoadingOriginal(true);
     setOriginalError(null);
     setReconstructProgress(null);
@@ -170,7 +224,42 @@ export default function MediaViewer({
     } catch (err) {
       setOriginalError(err instanceof Error ? err.message : String(err));
     } finally {
+      loadingOriginalRef.current = false;
       setLoadingOriginal(false);
+    }
+  }
+
+  // Auto-load for the no-thumbnail-image case (see the component doc
+  // comment above): the moment the viewer opens on such an item, kick off
+  // the exact same reconstruction the manual "View full resolution" button
+  // uses elsewhere, instead of sitting on the placeholder until the user
+  // clicks something. Runs once per item — [item?.id] rather than
+  // [isNoThumbImage] — because isNoThumbImage is itself derived from `item`
+  // and only actually changes when the item does; declared after the reset
+  // effect above so it always runs against that effect's freshly-cleared
+  // state (stage/originalError/etc reset to their "nothing loaded yet"
+  // values first). Not applicable to video — see the doc comment above.
+  useEffect(() => {
+    if (!item || !isNoThumbImage) return;
+    void loadOriginal();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id, isNoThumbImage]);
+
+  async function handleDelete() {
+    if (deleting || !item) return;
+    if (!window.confirm(`Delete "${item.filename}"? This can't be undone from the gallery.`)) {
+      return;
+    }
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(item.id);
+      // On success the parent closes the viewer itself (see the onDelete
+      // prop doc comment) — nothing left to do here, and this component may
+      // already be unmounting by the time this line would otherwise run.
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err));
+      setDeleting(false);
     }
   }
 
@@ -225,8 +314,13 @@ export default function MediaViewer({
   // No cached thumbnail exists for this item (thumbnail generation is
   // best-effort — see uploadQueue.ts) and the original hasn't been
   // requested yet: show a clear placeholder instead of an <img>/poster
-  // request to a thumbnail path that doesn't exist.
-  const showPlaceholder = !hasThumb && stage !== "original";
+  // request to a thumbnail path that doesn't exist. Video keeps this exact
+  // behavior (placeholder until the user presses "Play video" — unaffected
+  // by the auto-load change above); the no-thumbnail *image* case is
+  // rendered separately below (loading spinner / retry) instead of a bare
+  // placeholder, since it's now loading automatically rather than waiting
+  // on a click.
+  const showPlaceholder = isVideo && !hasThumb && stage !== "original";
 
   return (
     <div
@@ -264,6 +358,14 @@ export default function MediaViewer({
             </button>
           )}
           <button
+            aria-label="Delete"
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 text-white transition-colors duration-180 hover:bg-red-500/20 hover:text-red-400 disabled:opacity-50"
+            disabled={deleting}
+            onClick={handleDelete}
+          >
+            {deleting ? <SpinnerIcon /> : <TrashIcon />}
+          </button>
+          <button
             aria-label="Close"
             className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 text-white transition-colors duration-180 hover:bg-white/10"
             onClick={requestClose}
@@ -272,6 +374,12 @@ export default function MediaViewer({
           </button>
         </div>
       </div>
+
+      {deleteError && (
+        <div className="px-4 pb-2 text-small text-red-400" onClick={(e) => e.stopPropagation()}>
+          {deleteError}
+        </div>
+      )}
 
       {loadingOriginal && reconstructPct !== null && (
         <div
@@ -290,7 +398,7 @@ export default function MediaViewer({
           </p>
         </div>
       )}
-      {originalError && (
+      {originalError && !isNoThumbImage && (
         <div className="px-4 pb-2 text-small text-red-400" onClick={(e) => e.stopPropagation()}>
           {originalError}
         </div>
@@ -324,6 +432,34 @@ export default function MediaViewer({
               className="max-h-[calc(100vh-9rem)] max-w-full object-contain"
               onClick={(e) => e.stopPropagation()}
             />
+          ) : isNoThumbImage && stage !== "original" ? (
+            <div
+              className="flex flex-col items-center gap-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <MediaPlaceholder
+                isVideo={false}
+                className="h-64 w-64 max-h-[50vh] max-w-[50vh] rounded-lg"
+              />
+              {originalError ? (
+                <div className="flex max-w-xs flex-col items-center gap-3 text-center">
+                  <p className="text-small text-red-400">{originalError}</p>
+                  <button
+                    className="rounded-full border border-white/20 px-4 py-2 text-small font-medium text-white transition-colors duration-180 hover:bg-white/10"
+                    onClick={() => void loadOriginal()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-small text-neutral-300">
+                  <SpinnerIcon />
+                  <span>
+                    {reconstructPct !== null ? `Reconstructing… ${reconstructPct}%` : "Loading photo…"}
+                  </span>
+                </div>
+              )}
+            </div>
           ) : showPlaceholder ? (
             <div onClick={(e) => e.stopPropagation()}>
               <MediaPlaceholder

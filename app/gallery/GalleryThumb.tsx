@@ -4,6 +4,17 @@ import { useEffect, useState } from "react";
 import { loadThumbnailObjectUrl } from "@/lib/cache";
 import MediaPlaceholder from "./MediaPlaceholder";
 
+// Session-lived guard against re-firing a backfill request for the same
+// item every time it scrolls in and out of the virtualized grid's mounted
+// window (VirtualGrid only mounts rows near the viewport, so a given
+// GalleryThumb instance mounts/unmounts repeatedly as the user scrolls —
+// without this, each remount would re-request a backfill for an item
+// that's already known to have none, or whose generation already failed).
+// Deliberately a plain module-level Set, not persisted anywhere: it only
+// needs to survive for this page session, and a fresh attempt per item on
+// the next full page load is the desired behavior, not a bug.
+const attemptedBackfillIds = new Set<string>();
+
 interface GalleryThumbProps {
   repoKey: string;
   mediaId: string;
@@ -16,6 +27,13 @@ interface GalleryThumbProps {
   hasThumbnail: boolean;
   isVideo?: boolean;
   className?: string;
+  /** Called once a server-side thumbnail backfill (see the effect below and
+   * lib/media.backfillThumbnailIfMissing) succeeds for this item, with the
+   * new 320px thumbnail's repo-relative path — so the parent can update its
+   * in-memory item list + IndexedDB cache and this tile re-renders showing
+   * the real image instead of the placeholder. Omitted entirely for video
+   * items (see the effect below — video posters are out of scope here). */
+  onThumbnailBackfilled?: (mediaId: string, thumbPath: string) => void;
 }
 
 /**
@@ -32,9 +50,43 @@ export default function GalleryThumb({
   hasThumbnail,
   isVideo,
   className,
+  onThumbnailBackfilled,
 }: GalleryThumbProps) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+
+  // Self-healing for images stored with no thumbnail at all (uploaded
+  // before the server-side `sharp` fallback existed, or whose client-side
+  // generation failed) — see lib/media.backfillThumbnailIfMissing and
+  // POST /api/media/:id/thumbnail/backfill. Fire-and-forget: this never
+  // blocks or affects what renders below, it just repairs the stored data
+  // in the background so a *future* render of this same id shows a real
+  // thumbnail. Video is out of scope (video posters are captured
+  // client-side at upload time — see lib/media/video.ts — not backfilled
+  // here).
+  useEffect(() => {
+    if (hasThumbnail || isVideo) return;
+    if (attemptedBackfillIds.has(mediaId)) return;
+    attemptedBackfillIds.add(mediaId);
+
+    let cancelled = false;
+    fetch(`/api/media/${mediaId}/thumbnail/backfill`, { method: "POST" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { ok?: boolean; thumbnails?: Record<string, string> } | null) => {
+        if (cancelled || !data?.ok) return;
+        const path = data.thumbnails?.["320"];
+        if (path) onThumbnailBackfilled?.(mediaId, path);
+      })
+      .catch(() => {
+        // Best-effort — leave the placeholder showing, exactly as if
+        // generation had failed client-side too. attemptedBackfillIds
+        // already guards against retry-spamming this same id again.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mediaId, hasThumbnail, isVideo, onThumbnailBackfilled]);
 
   useEffect(() => {
     setObjectUrl(null);

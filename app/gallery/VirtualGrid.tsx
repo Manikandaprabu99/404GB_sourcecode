@@ -143,6 +143,13 @@ export interface VirtualGridProps {
    * full-screen viewer at the right position). */
   indexById: Map<string, number>;
   onOpen: (globalIndex: number) => void;
+  /** Multi-select mode (gallery selection toolbar — bulk delete). When true,
+   * tapping a tile toggles its selection instead of opening the viewer. */
+  selectMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  /** Threaded straight through to GalleryThumb — see its doc comment. */
+  onThumbnailBackfilled?: (mediaId: string, thumbPath: string) => void;
 }
 
 /**
@@ -168,6 +175,10 @@ export default function VirtualGrid({
   repoKey,
   indexById,
   onOpen,
+  selectMode = false,
+  selectedIds,
+  onToggleSelect,
+  onThumbnailBackfilled,
 }: VirtualGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -311,38 +322,64 @@ export default function VirtualGrid({
               gap: ITEM_GAP,
             }}
           >
-            {row.items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="group relative overflow-hidden rounded-lg bg-surface-2 shadow-none transition-shadow duration-250 ease-out-expo hover:shadow-elevated"
-                onClick={() => onOpen(indexById.get(item.id) ?? 0)}
-              >
-                <GalleryThumb
-                  repoKey={repoKey}
-                  mediaId={item.id}
-                  alt={item.filename}
-                  hasThumbnail={Boolean(item.thumb)}
-                  isVideo={item.mimeType?.startsWith("video/")}
-                  className="h-full w-full object-cover transition-transform duration-250 ease-out-expo group-hover:scale-[1.04] group-active:scale-[0.97]"
-                />
-                {item.mimeType?.startsWith("video/") && (
-                  <>
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-9 bg-gradient-to-t from-black/55 to-transparent" />
-                    <div className="pointer-events-none absolute inset-0 flex items-end justify-between p-1.5">
-                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-black/55 text-[9px] text-white">
-                        ▶
-                      </span>
-                      {typeof item.duration === "number" && item.duration > 0 && (
-                        <span className="rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                          {formatDuration(item.duration)}
+            {row.items.map((item) => {
+              const selected = selectedIds?.has(item.id) ?? false;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`group relative overflow-hidden rounded-lg bg-surface-2 shadow-none transition-shadow duration-250 ease-out-expo hover:shadow-elevated ${
+                    selectMode && selected ? "ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""
+                  }`}
+                  onClick={() =>
+                    selectMode ? onToggleSelect?.(item.id) : onOpen(indexById.get(item.id) ?? 0)
+                  }
+                >
+                  <GalleryThumb
+                    repoKey={repoKey}
+                    mediaId={item.id}
+                    alt={item.filename}
+                    hasThumbnail={Boolean(item.thumb)}
+                    isVideo={item.mimeType?.startsWith("video/")}
+                    onThumbnailBackfilled={onThumbnailBackfilled}
+                    className={`h-full w-full object-cover transition-transform duration-250 ease-out-expo group-hover:scale-[1.04] group-active:scale-[0.97] ${
+                      selectMode && selected ? "brightness-75" : ""
+                    }`}
+                  />
+                  {item.mimeType?.startsWith("video/") && !selectMode && (
+                    <>
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-9 bg-gradient-to-t from-black/55 to-transparent" />
+                      <div className="pointer-events-none absolute inset-0 flex items-end justify-between p-1.5">
+                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-black/55 text-[9px] text-white">
+                          ▶
                         </span>
+                        {typeof item.duration === "number" && item.duration > 0 && (
+                          <span className="rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                            {formatDuration(item.duration)}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+                  {selectMode && (
+                    <div
+                      className={`pointer-events-none absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-colors duration-180 ${
+                        selected
+                          ? "border-accent bg-accent text-accent-ink"
+                          : "border-white/85 bg-black/25 backdrop-blur-sm"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {selected && (
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 13l4 4L19 7" />
+                        </svg>
                       )}
                     </div>
-                  </>
-                )}
-              </button>
-            ))}
+                  )}
+                </button>
+              );
+            })}
           </div>
         );
       })}
