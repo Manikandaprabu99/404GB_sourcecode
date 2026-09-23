@@ -16,7 +16,6 @@
 
 import {
   chunkFile,
-  blobToBase64,
   DEFAULT_CHUNK_SIZE,
   DEFAULT_UPLOAD_CONCURRENCY,
   type ChunkInfo,
@@ -385,13 +384,16 @@ export class UploadQueue {
         this.update(task, { message: "Uploading thumbnails…" });
         for (const thumb of thumbnails) {
           if (task.canceled) throw new CanceledError();
-          const base64Content = await blobToBase64(thumb.blob);
-          const res = await fetch("/api/media/upload/chunk", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ hash: `thumb-${id}-${thumb.size}`, base64Content }),
-            signal,
-          });
+          const thumbHash = `thumb-${id}-${thumb.size}`;
+          const res = await fetch(
+            `/api/media/upload/chunk?hash=${encodeURIComponent(thumbHash)}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/octet-stream" },
+              body: thumb.blob,
+              signal,
+            }
+          );
           if (!res.ok) throw new Error((await res.json()).error ?? "thumbnail upload failed");
           const { sha } = (await res.json()) as { sha: string };
           thumbnailBlobShas[String(thumb.size)] = sha;
@@ -471,13 +473,15 @@ export class UploadQueue {
       attempt += 1;
       this.updateChunk(task, chunk.index, { attempts: attempt });
       try {
-        const base64Content = await blobToBase64(chunk.blob);
-        const res = await fetch("/api/media/upload/chunk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ hash: chunk.hash, base64Content }),
-          signal,
-        });
+        const res = await fetch(
+          `/api/media/upload/chunk?hash=${encodeURIComponent(chunk.hash)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: chunk.blob,
+            signal,
+          }
+        );
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body.error ?? `chunk upload failed (${res.status})`);

@@ -78,6 +78,45 @@ export async function contentsExists(
   }
 }
 
+/**
+ * Read a file's actual bytes via the Git Data API's blob endpoint (base64,
+ * supports files up to 100MB) instead of the Contents API's inline `content`
+ * field.
+ *
+ * This matters because octokit.repos.getContent(), with the default JSON
+ * media type, only returns real base64 content for files <=1MB. For files
+ * between 1MB and 100MB it returns `{ content: "", encoding: "none" }` —
+ * present-but-empty, not truncated, not a 404 — so a naive
+ * `Buffer.from(data.content, "base64")` silently produces a valid-looking
+ * *empty* buffer instead of throwing or returning null. DEFAULT_CHUNK_SIZE
+ * (lib/chunking) is 4 MiB, so every full-size chunk object, and any
+ * single-chunk file over 1MB, would hit that trap and get served/reconstructed
+ * as 0 bytes.
+ *
+ * We first resolve the file's blob sha via getContent's metadata (present
+ * regardless of size), then fetch its real content via git.getBlob(sha),
+ * which returns full base64 content for anything up to 100MB — the same API
+ * createBlob() already writes through, so read/write use the same size
+ * ceiling.
+ */
+async function getBlobBuffer(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  path: string
+): Promise<Buffer | null> {
+  const { data: meta } = await octokit.repos.getContent({ owner, repo, path });
+  if (Array.isArray(meta) || !("sha" in meta)) return null;
+
+  const { data: blob } = await octokit.git.getBlob({
+    owner,
+    repo,
+    file_sha: meta.sha,
+  });
+  if (blob.encoding !== "base64") return null;
+  return Buffer.from(blob.content, "base64");
+}
+
 export async function getContentJson<T>(
   accessToken: string,
   owner: string,
@@ -86,9 +125,8 @@ export async function getContentJson<T>(
 ): Promise<T | null> {
   const octokit = getOctokit(accessToken);
   try {
-    const { data } = await octokit.repos.getContent({ owner, repo, path });
-    if (Array.isArray(data) || !("content" in data)) return null;
-    const buf = Buffer.from(data.content, "base64");
+    const buf = await getBlobBuffer(octokit, owner, repo, path);
+    if (!buf) return null;
     return JSON.parse(buf.toString("utf-8")) as T;
   } catch (err: any) {
     if (err?.status === 404) return null;
@@ -104,9 +142,9 @@ export async function getContentBinary(
 ): Promise<Uint8Array | null> {
   const octokit = getOctokit(accessToken);
   try {
-    const { data } = await octokit.repos.getContent({ owner, repo, path });
-    if (Array.isArray(data) || !("content" in data)) return null;
-    return new Uint8Array(Buffer.from(data.content, "base64"));
+    const buf = await getBlobBuffer(octokit, owner, repo, path);
+    if (!buf) return null;
+    return new Uint8Array(buf);
   } catch (err: any) {
     if (err?.status === 404) return null;
     throw err;

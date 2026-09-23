@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { MediaIndexEntry } from "@/lib/media";
+import type { MediaIndexEntry, MediaRecord } from "@/lib/media";
+import { MAX_DIRECT_FETCH_BYTES } from "@/lib/chunking";
+import { reconstructMediaClientUrl, type ReconstructProgress } from "@/lib/media/reconstructClient";
 import MediaPlaceholder from "./MediaPlaceholder";
 
 interface MediaViewerProps {
@@ -65,6 +67,21 @@ export default function MediaViewer({
   const [loadingOriginal, setLoadingOriginal] = useState(false);
   const [closing, setClosing] = useState(false);
 
+  // Full-resolution / video-playback loading. `record` (fetched on demand
+  // from GET /api/media/:id, which is where `size`/`chunks`/`hash` live —
+  // the lightweight MediaIndexEntry in `items` doesn't carry them) decides
+  // the fast path (record.size under the Vercel response-body cap: fetch
+  // /api/media/object/:id directly, one round trip) vs the chunked path
+  // (fetch+reassemble client-side via lib/media/reconstructClient.ts) — see
+  // docs/ARCHITECTURE.md's "Vercel Functions Body-Size Cap" section.
+  const [originalSrc, setOriginalSrc] = useState<string | null>(null);
+  const [originalError, setOriginalError] = useState<string | null>(null);
+  const [reconstructProgress, setReconstructProgress] = useState<ReconstructProgress | null>(null);
+  // Tracks the object URL created by client-side reconstruction so it can be
+  // revoked (these can be GB-scale) once it's no longer needed.
+  const objectUrlRef = useRef<string | null>(null);
+  const recordRef = useRef<MediaRecord | null>(null);
+
   // Direction-aware slide: +1 when moving to a later photo, -1 when moving
   // back, 0 on the very first mount (no slide-in on open, the overlay fade
   // already covers that entrance).
@@ -84,7 +101,78 @@ export default function MediaViewer({
   useEffect(() => {
     setStage("thumb");
     setLoadingOriginal(false);
+    setOriginalSrc(null);
+    setOriginalError(null);
+    setReconstructProgress(null);
+    recordRef.current = null;
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
   }, [item?.id]);
+
+  // Revoke any outstanding reconstructed object URL when the viewer itself
+  // unmounts (the per-item effect above already handles navigating between
+  // items while it stays open).
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    };
+  }, []);
+
+  function preloadImage(url: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Failed to load image"));
+      img.src = url;
+    });
+  }
+
+  async function fetchRecord(): Promise<MediaRecord> {
+    if (recordRef.current) return recordRef.current;
+    const res = await fetch(`/api/media/${item.id}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}) as { error?: string });
+      throw new Error(body.error ?? `Failed to load media details (${res.status})`);
+    }
+    const { media } = (await res.json()) as { media: MediaRecord };
+    recordRef.current = media;
+    return media;
+  }
+
+  /** Loads the full-resolution original (image "view full resolution" and
+   * video "play" both call this). Picks the fast direct-fetch path or the
+   * client-side chunked-reconstruction path based on the record's size —
+   * see the `record` state comment above. */
+  async function loadOriginal() {
+    if (loadingOriginal) return;
+    setLoadingOriginal(true);
+    setOriginalError(null);
+    setReconstructProgress(null);
+    try {
+      const rec = await fetchRecord();
+      if (rec.size <= MAX_DIRECT_FETCH_BYTES) {
+        const directUrl = `/api/media/object/${item.id}`;
+        if (!isVideo) {
+          // Preload off-DOM first so the viewer doesn't flash a broken
+          // image if the fetch fails partway.
+          await preloadImage(directUrl);
+        }
+        setOriginalSrc(directUrl);
+      } else {
+        const { url } = await reconstructMediaClientUrl(rec, setReconstructProgress);
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = url;
+        setOriginalSrc(url);
+      }
+      setStage("original");
+    } catch (err) {
+      setOriginalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingOriginal(false);
+    }
+  }
 
   useEffect(() => {
     if (!item || isVideo || !hasThumb) return;
@@ -120,10 +208,19 @@ export default function MediaViewer({
 
   const src =
     stage === "original"
-      ? `/api/media/object/${item.id}`
+      ? (originalSrc ?? `/api/media/thumb/${item.id}/800`)
       : stage === "medium"
       ? `/api/media/thumb/${item.id}/800`
       : `/api/media/thumb/${item.id}/320`;
+
+  const reconstructPct = reconstructProgress
+    ? Math.min(100, Math.round((reconstructProgress.bytesDone / Math.max(1, reconstructProgress.bytesTotal)) * 100))
+    : null;
+  const originalButtonLabel = loadingOriginal
+    ? reconstructPct !== null
+      ? `Reconstructing… ${reconstructPct}%`
+      : "Loading full res…"
+    : null;
 
   // No cached thumbnail exists for this item (thumbnail generation is
   // best-effort — see uploadQueue.ts) and the original hasn't been
@@ -149,12 +246,10 @@ export default function MediaViewer({
               className="rounded-full border border-white/20 px-3 py-2 text-small text-white transition-colors duration-180 hover:bg-white/10 disabled:opacity-50"
               disabled={loadingOriginal}
               onClick={() => {
-                setLoadingOriginal(true);
-                setStage("original");
-                setLoadingOriginal(false);
+                void loadOriginal();
               }}
             >
-              Play video
+              {originalButtonLabel ?? "Play video"}
             </button>
           )}
           {stage !== "original" && !isVideo && (
@@ -162,17 +257,10 @@ export default function MediaViewer({
               className="rounded-full border border-white/20 px-3 py-2 text-small text-white transition-colors duration-180 hover:bg-white/10 disabled:opacity-50"
               disabled={loadingOriginal}
               onClick={() => {
-                setLoadingOriginal(true);
-                const full = new Image();
-                full.onload = () => {
-                  setStage("original");
-                  setLoadingOriginal(false);
-                };
-                full.onerror = () => setLoadingOriginal(false);
-                full.src = `/api/media/object/${item.id}`;
+                void loadOriginal();
               }}
             >
-              {loadingOriginal ? "Loading full res…" : "View full resolution"}
+              {originalButtonLabel ?? "View full resolution"}
             </button>
           )}
           <button
@@ -184,6 +272,29 @@ export default function MediaViewer({
           </button>
         </div>
       </div>
+
+      {loadingOriginal && reconstructPct !== null && (
+        <div
+          className="px-4 pb-2 text-small text-neutral-300"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/15">
+            <div
+              className="h-full rounded-full bg-white transition-[width] duration-320 ease-out-expo"
+              style={{ width: `${reconstructPct}%` }}
+            />
+          </div>
+          <p className="mt-1 text-micro text-neutral-400">
+            Reconstructing original from {reconstructProgress?.chunksTotal} chunks — this can take a
+            while for large videos.
+          </p>
+        </div>
+      )}
+      {originalError && (
+        <div className="px-4 pb-2 text-small text-red-400" onClick={(e) => e.stopPropagation()}>
+          {originalError}
+        </div>
+      )}
 
       <div className="relative flex flex-1 items-center justify-center overflow-hidden px-2 sm:px-4">
         {index > 0 && (
@@ -204,9 +315,9 @@ export default function MediaViewer({
           style={{ ["--slide-dir" as string]: slideDir }}
           className={slideDir !== 0 ? "animate-slide-in" : "animate-scale-in"}
         >
-          {isVideo && stage === "original" ? (
+          {isVideo && stage === "original" && originalSrc ? (
             <video
-              src={`/api/media/object/${item.id}`}
+              src={originalSrc}
               poster={hasThumb ? `/api/media/thumb/${item.id}/1600` : undefined}
               controls
               autoPlay

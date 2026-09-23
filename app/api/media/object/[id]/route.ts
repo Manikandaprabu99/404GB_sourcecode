@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { readMediaRecord, reconstructMedia } from "@/lib/media";
+import { MAX_DIRECT_FETCH_BYTES } from "@/lib/chunking";
 import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,14 @@ export const dynamic = "force-dynamic";
  * Reconstructs the full media file from its chunks (server-side, since only
  * the server holds the GitHub token) and streams the bytes back to the
  * browser. Verifies the reassembled bytes against the stored whole-file hash.
+ *
+ * Only safe for files under MAX_DIRECT_FETCH_BYTES — see the guard below and
+ * docs/ARCHITECTURE.md's "Vercel Functions Body-Size Cap" section. Anything
+ * bigger must go through GET /api/media/:id + client-side chunked
+ * reconstruction (lib/media/reconstructClient.ts), which
+ * app/gallery/MediaViewer.tsx already selects based on this same threshold —
+ * this check is defense in depth in case that client-side check is ever
+ * bypassed or wrong (e.g. a stale record.size, a direct API call).
  */
 export async function GET(
   _req: NextRequest,
@@ -30,6 +39,17 @@ export async function GET(
   );
   if (!record) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+
+  if (record.size > MAX_DIRECT_FETCH_BYTES) {
+    return NextResponse.json(
+      {
+        error: "file too large for direct fetch, use chunked reconstruction",
+        size: record.size,
+        maxDirectFetchBytes: MAX_DIRECT_FETCH_BYTES,
+      },
+      { status: 413 }
+    );
   }
 
   const buffer = await reconstructMedia(
