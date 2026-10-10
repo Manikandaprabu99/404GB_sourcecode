@@ -18,6 +18,7 @@ import {
   chunkFile,
   DEFAULT_CHUNK_SIZE,
   DEFAULT_UPLOAD_CONCURRENCY,
+  sha256Hex,
   type ChunkInfo,
 } from "@/lib/chunking";
 import { generateThumbnails } from "@/lib/thumbnails";
@@ -384,7 +385,7 @@ export class UploadQueue {
         this.update(task, { message: "Uploading thumbnails…" });
         for (const thumb of thumbnails) {
           if (task.canceled) throw new CanceledError();
-          const thumbHash = `thumb-${id}-${thumb.size}`;
+          const thumbHash = await sha256Hex(await thumb.blob.arrayBuffer());
           const res = await fetch(
             `/api/media/upload/chunk?hash=${encodeURIComponent(thumbHash)}`,
             {
