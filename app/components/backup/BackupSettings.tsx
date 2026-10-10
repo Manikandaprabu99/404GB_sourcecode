@@ -10,8 +10,9 @@ import {
   backupRunProgress,
   errorCode,
   errorMessage,
+  describeWait,
   refreshBackupStatus,
-  waitingReason,
+  type BackupPillIcon,
   type BackupRun,
 } from "@/lib/library/backupStore";
 import { formatRelativeTime } from "@/lib/library/dates";
@@ -21,16 +22,20 @@ import { SettingsCard, rowButtonClass } from "@/app/components/library/SettingsB
 import {
   AlertIcon,
   BatteryChargingIcon,
+  BatteryLowIcon,
+  ClockIcon,
   CloudCheckIcon,
   CloudOffIcon,
   DownloadAppIcon,
   LockIcon,
   RefreshIcon,
+  SignalIcon,
   SyncIcon,
   UploadIcon,
   WifiIcon,
 } from "@/app/components/library/icons";
 import EnableBackupSheet from "./EnableBackupSheet";
+import NetworkChoice from "./NetworkChoice";
 
 const CHOICES_KEY = "404gb-backup-choices";
 const PERMISSION_MESSAGE =
@@ -108,6 +113,38 @@ function Stat({ label, value, danger }: { label: string; value: number; danger?:
   );
 }
 
+// GitHub accepts roughly 500 new objects an hour per account and a photo takes
+// about nine (its chunks, three previews, metadata and the commit itself).
+const UPLOADS_PER_HOUR = 55;
+const BACKLOG_NOTE_MIN = 60;
+
+function backlogEstimate(pending: number): string {
+  const hours = pending / UPLOADS_PER_HOUR;
+  if (hours < 1) return "under an hour";
+  if (hours < 1.5) return "about an hour";
+  if (hours < 36) return `about ${Math.round(hours)} hours`;
+  return `about ${Math.round(hours / 24)} days`;
+}
+
+function waitIcon(icon: BackupPillIcon): ReactNode {
+  const className = "text-ink-muted";
+  switch (icon) {
+    case "charging":
+      return <BatteryChargingIcon size={18} className={className} />;
+    case "battery":
+      return <BatteryLowIcon size={18} className="text-warning" />;
+    case "signal":
+      return <SignalIcon size={18} className={className} />;
+    case "clock":
+      return <ClockIcon size={18} className={className} />;
+    case "off":
+      return <CloudOffIcon size={18} className={className} />;
+    default:
+      return <WifiIcon size={18} className={className} />;
+  }
+}
+
+
 function statusHeadline(status: BackupStatus, run: BackupRun | null): { icon: ReactNode; text: string } {
   switch (status.state) {
     case "uploading": {
@@ -123,16 +160,8 @@ function statusHeadline(status: BackupStatus, run: BackupRun | null): { icon: Re
         text: "Checking for new photos and videos",
       };
     case "waiting": {
-      const reason = waitingReason(status);
-      return {
-        icon:
-          reason === "Waiting to charge" ? (
-            <BatteryChargingIcon size={18} className="text-ink-muted" />
-          ) : (
-            <WifiIcon size={18} className="text-ink-muted" />
-          ),
-        text: reason,
-      };
+      const wait = describeWait(status);
+      return { icon: waitIcon(wait.icon), text: wait.label };
     }
     case "needs_permission":
       return { icon: <AlertIcon size={18} className="text-warning" />, text: "Photo access needed" };
@@ -332,9 +361,11 @@ export default function BackupSettings() {
               <div className="min-w-0 flex-1">
                 <p className="text-body font-medium text-ink">{headline.text}</p>
                 <p className="text-small text-ink-muted">
-                  {status.lastBackupAt
-                    ? `Last backup ${formatRelativeTime(status.lastBackupAt, now)}`
-                    : "Nothing backed up from this phone yet"}
+                  {status.state === "waiting"
+                    ? describeWait(status, now).detail
+                    : status.lastBackupAt
+                      ? `Last backup ${formatRelativeTime(status.lastBackupAt, now)}`
+                      : "Nothing backed up from this phone yet"}
                 </p>
                 {progress && (
                   <div className="mt-2.5">
@@ -354,6 +385,15 @@ export default function BackupSettings() {
                 )}
               </div>
             </div>
+
+            {status.pending >= BACKLOG_NOTE_MIN &&
+              (status.state === "uploading" || status.state === "waiting" || status.state === "scanning") && (
+                <Callout icon={<ClockIcon size={18} />} tone="info" title={`${status.pending.toLocaleString()} to go`}>
+                  Your photos and videos are backed up newest first. GitHub takes roughly {UPLOADS_PER_HOUR} uploads an
+                  hour, so this takes {backlogEstimate(status.pending)}. It carries on in the background by itself;
+                  you don&apos;t need to keep the app open.
+                </Callout>
+              )}
 
             {status.state === "needs_permission" && (
               <Callout
@@ -394,7 +434,7 @@ export default function BackupSettings() {
               <Callout
                 icon={<BatteryChargingIcon size={18} />}
                 tone="info"
-                title="Battery optimization may delay backups"
+                title="Let backup run in the background"
                 action={
                   <button
                     type="button"
@@ -406,7 +446,9 @@ export default function BackupSettings() {
                   </button>
                 }
               >
-                Let 404GB run in the background so Android doesn&apos;t pause backups.
+                Backup only wakes up when there&apos;s something new and pauses when the battery is low, so this
+                won&apos;t drain it. Without it, Android may hold backups back for hours when you don&apos;t open the
+                app.
               </Callout>
             )}
 
@@ -459,12 +501,17 @@ export default function BackupSettings() {
       {enabled && (
         <SettingsCard>
           <div className="px-4 py-3.5">
-            <Switch
-              checked={status.wifiOnly}
-              onChange={(checked) => setOption({ wifiOnly: checked })}
-              label="Wi-Fi only"
-              description="Don't use mobile data for backups."
+            <p className="text-body font-medium text-ink">Back up using</p>
+            <p className="text-small text-ink-muted">
+              {status.wifiOnly
+                ? "Mobile data is never used. Backups wait for Wi-Fi."
+                : "Uses mobile data when there's no Wi-Fi, but never while roaming."}
+            </p>
+            <NetworkChoice
+              className="mt-2.5"
+              wifiOnly={status.wifiOnly}
               disabled={busy !== null}
+              onChange={(wifiOnly) => setOption({ wifiOnly })}
             />
           </div>
           <div className="px-4 py-3.5">
@@ -472,7 +519,7 @@ export default function BackupSettings() {
               checked={status.chargingOnly}
               onChange={(checked) => setOption({ chargingOnly: checked })}
               label="Only while charging"
-              description="Saves battery during long backups."
+              description="Backup always pauses on low battery. Turn this on to back up only while plugged in."
               disabled={busy !== null}
             />
           </div>

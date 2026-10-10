@@ -80,6 +80,8 @@ export interface UploadCheck {
   missing: string[];
   /** Id of an indexed item with the same whole-file hash; nothing needs uploading then. */
   duplicateOf: string | null;
+  /** The duplicate has no capture date: send this file's via POST /api/media/<id>/taken-at. */
+  duplicateNeedsDate?: boolean;
 }
 
 /** POST /api/media/upload/init: duplicate check plus which chunks are missing. */
@@ -92,7 +94,7 @@ export async function checkUpload(
   if (fileHash) {
     const hash = `sha256:${fileHash}`;
     const existing = (await readIndex(reader)).find((entry) => entry.hash === hash);
-    if (existing) return { missing: [], duplicateOf: existing.id };
+    if (existing) return { missing: [], duplicateOf: existing.id, duplicateNeedsDate: !existing.takenAt };
   }
   const unique = Array.from(new Set(chunkHashes));
   const stored = await reader.existingObjects(unique);
@@ -171,6 +173,38 @@ export async function commitMediaUpload(
     }
     throw err;
   }
+}
+
+export interface SetTakenAtResult {
+  /** False when the item is gone or already had a capture date (which is never overwritten). */
+  changed: boolean;
+  entry: MediaIndexEntry | null;
+}
+
+/**
+ * Gives an item uploaded without a capture date (older web uploads) the date
+ * a later upload of the same file knew, so it sorts under the day it was taken.
+ */
+export async function setTakenAtIfMissing(repo: RepoRef, id: string, takenAt: string): Promise<SetTakenAtResult> {
+  if (!isMediaId(id)) return { changed: false, entry: null };
+  const { result } = await runTransaction<SetTakenAtResult>(repo, async (snapshot) => {
+    const index = await readIndex(snapshot);
+    const entry = index.find((item) => item.id === id);
+    if (!entry || entry.takenAt) return { result: { changed: false, entry: entry ?? null } };
+    const updated: MediaIndexEntry = { ...entry, takenAt };
+    const blobs: BlobInput[] = [
+      { path: MEDIA_INDEX_PATH, text: serializeJsonArray(index.map((item) => (item.id === id ? updated : item))) },
+    ];
+    const record = await snapshot.readJson<MediaRecord>(metadataPath(id));
+    if (record && !record.takenAt) {
+      blobs.push({ path: metadataPath(id), text: JSON.stringify({ ...record, takenAt }, null, 2) });
+    }
+    return {
+      result: { changed: true, entry: updated },
+      commit: { blobs, message: `404gb: set capture date of ${entry.filename}` },
+    };
+  });
+  return result;
 }
 
 export type ThumbnailBackfillStatus = "created" | "skipped" | "failed";

@@ -3,8 +3,9 @@
 import { useEffect, useRef } from "react";
 import type { LibraryFilter } from "@/lib/library/viewState";
 import { useHistoryOverlay } from "@/lib/ui/useHistoryOverlay";
+import { setZoom, useZoom, ZOOM_LABELS, ZOOM_LEVELS } from "@/lib/library/zoom";
 import BackupStatusPill, { StatusPill } from "@/app/components/backup/BackupStatusPill";
-import { BackIcon, CloseIcon, HeartIcon, SearchIcon } from "@/app/components/library/icons";
+import { BackIcon, CloseIcon, HeartIcon, SearchIcon, ViewGridIcon } from "@/app/components/library/icons";
 
 const FILTERS: { value: LibraryFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -61,6 +62,23 @@ export default function GalleryHeader({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  const zoom = useZoom();
+  const nextZoom = ZOOM_LEVELS[(ZOOM_LEVELS.indexOf(zoom) + 1) % ZOOM_LEVELS.length];
+  const zoomButton = canSelect && !selectMode ? (
+    <button
+      type="button"
+      onClick={() => setZoom(nextZoom)}
+      aria-label={`${ZOOM_LABELS[zoom]} view. Switch to ${ZOOM_LABELS[nextZoom].toLowerCase()} view`}
+      title="Change view (pinch, or Ctrl + scroll)"
+      className="flex h-10 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink active:bg-surface-3 sm:h-9 sm:px-3"
+    >
+      <ViewGridIcon size={18} density={zoom === "day" ? 2 : zoom === "month" ? 3 : 4} />
+      <span key={zoom} className="hidden animate-fade-in text-small font-medium sm:inline">
+        {ZOOM_LABELS[zoom]}
+      </span>
+    </button>
+  ) : null;
 
   const selectButton =
     canSelect && !selectMode ? (
@@ -151,6 +169,7 @@ export default function GalleryHeader({
         >
           <SearchIcon size={20} />
         </button>
+        {zoomButton}
         {selectButton}
       </div>
 

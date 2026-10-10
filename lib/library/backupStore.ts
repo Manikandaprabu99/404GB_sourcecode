@@ -132,6 +132,28 @@ export function startBackupWatcher(): void {
   });
 }
 
+let reportedLibrary: string | null = null;
+
+/** Tells the phone's backup which repo ("owner/name") the app shows, so a switch
+ * re-queues everything for the new repo, and resumes backup after a fresh sign-in. */
+export async function syncBackupLibrary(repo: string): Promise<void> {
+  startBackupWatcher();
+  if (snapshot.support !== "available" || reportedLibrary === repo) return;
+  reportedLibrary = repo;
+  let status: BackupStatus | null = null;
+  try {
+    status = await Backup.setLibrary({ repo });
+    applyBackupStatus(status);
+  } catch {
+    // Older app builds lack setLibrary; their uploads follow the session's repo anyway.
+    status = await Backup.getStatus().catch(() => null);
+  }
+  if (status?.enabled && status.state === "needs_sign_in") {
+    await Backup.backupNow().catch(() => {});
+    await refreshBackupStatus();
+  }
+}
+
 export function backupRunProgress(
   status: BackupStatus,
   run: BackupRun | null
@@ -158,18 +180,100 @@ function connectionType(): string | undefined {
   return (navigator as Navigator & { connection?: { type?: string } }).connection?.type;
 }
 
-/** The plugin reports "waiting" without saying which condition is unmet. */
-export function waitingReason(status: BackupStatus): string {
-  if (typeof navigator !== "undefined" && !navigator.onLine) return "Waiting for a connection";
+export type BackupPillIcon =
+  | "sync"
+  | "check"
+  | "wifi"
+  | "signal"
+  | "charging"
+  | "battery"
+  | "clock"
+  | "alert"
+  | "off"
+  | "update"
+  | "lock";
+
+export interface WaitInfo {
+  /** Short, for the pill. */
+  label: string;
+  icon: BackupPillIcon;
+  /** A sentence for Settings explaining what happens next. */
+  detail: string;
+}
+
+function formatResumeTime(epochMs: number, now: number): string {
+  const minutes = Math.max(1, Math.round((epochMs - now) / 60_000));
+  if (minutes < 60) return minutes === 1 ? "in a minute" : `in ${minutes} min`;
+  return `at ${new Date(epochMs).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** Why a "waiting" backup isn't running. Newer app builds say so (waitingFor);
+ * for older ones this guesses from the options and the browser's connection. */
+export function describeWait(status: BackupStatus, now: number = Date.now()): WaitInfo {
+  if ("waitingFor" in status) {
+    switch (status.waitingFor) {
+      case "rate_limit": {
+        const when = status.resumeAt && status.resumeAt > now ? formatResumeTime(status.resumeAt, now) : "shortly";
+        return {
+          label: `GitHub limit · resumes ${when}`,
+          icon: "clock",
+          detail: `GitHub limits how fast a repo can take uploads, so backup paused itself. It resumes ${when} on its own.`,
+        };
+      }
+      case "network":
+        return {
+          label: "Waiting for a connection",
+          icon: "off",
+          detail: "Backup continues as soon as the phone is online again.",
+        };
+      case "wifi":
+        return {
+          label: "Waiting for Wi-Fi",
+          icon: "wifi",
+          detail: "Wi-Fi only is on. Backup continues when you're on Wi-Fi, or allow mobile data below.",
+        };
+      case "roaming":
+        return {
+          label: "Paused while roaming",
+          icon: "signal",
+          detail: "Backup doesn't use mobile data while roaming. It continues on Wi-Fi or back home.",
+        };
+      case "charging":
+        return {
+          label: "Waiting to charge",
+          icon: "charging",
+          detail: "Only while charging is on. Backup continues when the phone is plugged in.",
+        };
+      case "battery":
+        return {
+          label: "Paused: battery low",
+          icon: "battery",
+          detail: "Backup pauses while the battery is low and continues by itself once it's charged a bit.",
+        };
+      default:
+        return {
+          label: "Starting soon",
+          icon: "clock",
+          detail: "Android starts backup at a moment that suits the battery, usually within a few minutes.",
+        };
+    }
+  }
+
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return { label: "Waiting for a connection", icon: "off", detail: "Backup continues once you're online." };
+  }
   const type = connectionType();
   const onWifi = type === "wifi" || type === "ethernet";
-  if (status.wifiOnly && !(status.chargingOnly && onWifi)) return "Waiting for Wi-Fi";
-  if (status.chargingOnly) return "Waiting to charge";
-  return "Waiting for a connection";
+  if (status.wifiOnly && !(status.chargingOnly && onWifi)) {
+    return { label: "Waiting for Wi-Fi", icon: "wifi", detail: "Backup continues when you're on Wi-Fi." };
+  }
+  if (status.chargingOnly) {
+    return { label: "Waiting to charge", icon: "charging", detail: "Backup continues when the phone is plugged in." };
+  }
+  return { label: "Starting soon", icon: "clock", detail: "Android starts backup at a moment that suits the battery." };
 }
 
 export type BackupPillTone = "progress" | "ok" | "warn" | "action" | "muted";
-export type BackupPillIcon = "sync" | "check" | "wifi" | "charging" | "alert" | "off" | "update" | "lock";
 
 export interface BackupPill {
   label: string;
@@ -198,8 +302,8 @@ export function describeBackup(backup: BackupSnapshot): BackupPill | null {
     case "needs_permission":
       return { label: "Allow photo access", tone: "warn", icon: "alert", href: "/settings" };
     case "waiting": {
-      const label = waitingReason(status);
-      return { label, tone: "muted", icon: label === "Waiting to charge" ? "charging" : "wifi", href: "/settings" };
+      const wait = describeWait(status);
+      return { label: wait.label, tone: "muted", icon: wait.icon, href: "/settings" };
     }
     case "scanning":
       return { label: "Checking for new items", tone: "progress", icon: "sync", href: "/settings" };

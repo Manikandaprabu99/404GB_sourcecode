@@ -5,13 +5,14 @@ import type { MediaIndexEntry } from "@/lib/media";
 import type { Album } from "@/lib/albums/types";
 import MediaViewer from "@/app/gallery/MediaViewer";
 import VirtualGrid from "@/app/gallery/VirtualGrid";
-import { groupByDay } from "@/app/gallery/dateGroups";
+import { groupMedia } from "@/app/gallery/dateGroups";
 import { useToast } from "@/app/components/ui/Toast";
 import { addToAlbum, removeFromAlbum, setAlbumCover } from "@/lib/library/albumsStore";
 import { afterOverlayClosed } from "@/lib/library/history";
 import { useIsomorphicLayoutEffect } from "@/lib/library/hooks";
 import { syncLibrary, updateEntryLocally } from "@/lib/library/mediaStore";
 import { getHeaderHeight, getScrollPosition, setHeaderHeight } from "@/lib/library/viewState";
+import { stepZoom, useZoom } from "@/lib/library/zoom";
 import AddToAlbumSheet from "./AddToAlbumSheet";
 import ScrollArea from "./ScrollArea";
 import SelectionBar, { type SelectionAction } from "./SelectionBar";
@@ -69,6 +70,8 @@ export default function MediaLibraryView({
   const [openId, setOpenId] = useState<string | null>(null);
   const [pickerIds, setPickerIds] = useState<readonly string[] | null>(null);
   const focusAfterEditRef = useRef<string | null>(null);
+  const zoom = useZoom();
+  const [scrubberHost, setScrubberHost] = useState<HTMLDivElement | null>(null);
 
   useIsomorphicLayoutEffect(() => {
     const el = headerRef.current;
@@ -102,7 +105,7 @@ export default function MediaLibraryView({
     scrollRef.current?.scrollTo({ top: 0 });
   }, [resetKey]);
 
-  const groups = useMemo(() => groupByDay(items, new Date(now)), [items, now]);
+  const groups = useMemo(() => groupMedia(items, zoom, new Date(now)), [items, zoom, now]);
   const indexById = useMemo(() => new Map(items.map((item, index) => [item.id, index])), [items]);
   const openIndex = openId === null ? -1 : (indexById.get(openId) ?? -1);
 
@@ -265,7 +268,15 @@ export default function MediaLibraryView({
 
   return (
     <>
-      <ScrollArea ref={scrollRef} scrollKey={scrollKey} restore={false} selectionInset={selection.active}>
+      <div className="relative h-full">
+      <ScrollArea
+        ref={scrollRef}
+        scrollKey={scrollKey}
+        restore={false}
+        selectionInset={selection.active}
+        // The timeline scrubber replaces the scrollbar; pinches switch views instead of zooming the page.
+        className="touch-pan-y [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         <div ref={headerRef} className="sticky top-0 z-30">
           {header({ selectMode: selection.active, startSelect: () => selection.start() })}
         </div>
@@ -278,6 +289,9 @@ export default function MediaLibraryView({
           ) : (
             <VirtualGrid
               groups={groups}
+              zoom={zoom}
+              onZoomStep={stepZoom}
+              scrubberHost={scrubberHost}
               repoKey={repoKey}
               scrollRef={scrollRef}
               stickyTop={stickyTop}
@@ -293,6 +307,17 @@ export default function MediaLibraryView({
           )}
         </div>
       </ScrollArea>
+      <div
+        ref={setScrubberHost}
+        aria-hidden={items.length === 0 || undefined}
+        className={`pointer-events-none absolute right-0 z-20 w-40 transition-[bottom] duration-250 ease-out-expo ${
+          selection.active
+            ? "bottom-[calc(9.25rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] sm:bottom-[calc(6.75rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))]"
+            : "bottom-[calc(5rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] sm:bottom-[calc(2.25rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))]"
+        }`}
+        style={{ top: stickyTop + 8 }}
+      />
+      </div>
 
       {selection.active && (
         <SelectionBar

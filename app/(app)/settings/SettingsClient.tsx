@@ -6,6 +6,7 @@ import InstallPrompt from "@/app/components/InstallPrompt";
 import ThemeToggle from "@/app/components/ThemeToggle";
 import BackupSettings from "@/app/components/backup/BackupSettings";
 import { useConfirm } from "@/app/components/ui/ConfirmDialog";
+import DuplicateCleanup from "@/app/components/library/DuplicateCleanup";
 import PageHeader from "@/app/components/library/PageHeader";
 import ScrollArea from "@/app/components/library/ScrollArea";
 import {
@@ -18,6 +19,7 @@ import { DownloadAppIcon, ExternalIcon, GithubIcon, LogoutIcon } from "@/app/com
 import { useBackupStatus } from "@/lib/library/hooks";
 import { clearLocalLibraryData } from "@/lib/library/localData";
 import { flushPendingDeletes } from "@/lib/library/mediaStore";
+import { repoKeyFor } from "@/lib/cache";
 import { isNativeApp } from "@/lib/native/platform";
 
 interface SettingsClientProps {
@@ -113,6 +115,7 @@ export default function SettingsClient({ githubLogin, repoOwner, repoName }: Set
                 <ExternalIcon size={16} />
               </a>
             )}
+            {repoOwner && repoName && <DuplicateCleanup repoKey={repoKeyFor(repoOwner, repoName)} />}
           </SettingsCard>
         </SettingsSection>
 

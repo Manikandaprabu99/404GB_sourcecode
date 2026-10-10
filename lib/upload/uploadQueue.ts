@@ -83,6 +83,18 @@ class ApiResponseError extends Error {
 interface InitResponse {
   missing: string[];
   duplicateOf: string | null;
+  /** The library copy has no capture date; this upload can supply it. */
+  duplicateNeedsDate?: boolean;
+}
+
+/** Best effort: an older copy without a capture date gets this file's, so it sorts by when it was taken. */
+function fillMissingCaptureDate(mediaId: string, takenAt: string): void {
+  void fetch(`/api/media/${encodeURIComponent(mediaId)}/taken-at`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ takenAt }),
+    credentials: "same-origin",
+  }).catch(() => {});
 }
 
 interface BlobResponse {
@@ -484,6 +496,7 @@ export class UploadQueue {
       );
       if (init.duplicateOf) {
         this.finishDuplicate(task, init.duplicateOf, fileHash);
+        if (init.duplicateNeedsDate && takenAt) fillMissingCaptureDate(init.duplicateOf, takenAt);
         return;
       }
 

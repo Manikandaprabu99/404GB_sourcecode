@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { MediaIndexEntry } from "@/lib/media";
 import { repoKeyFor } from "@/lib/cache";
 import { useBackupStatus, useLibrary, useOnline } from "@/lib/library/hooks";
+import { syncBackupLibrary } from "@/lib/library/backupStore";
 import { syncLibrary } from "@/lib/library/mediaStore";
 import { galleryView, type LibraryFilter } from "@/lib/library/viewState";
 import EmptyState, { primaryButtonClass, secondaryButtonClass } from "@/app/components/library/EmptyState";
@@ -53,6 +54,10 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   useEffect(() => {
     if (library.error?.kind === "auth") router.replace("/");
   }, [library.error, router]);
+
+  useEffect(() => {
+    void syncBackupLibrary(`${repoOwner}/${repoName}`);
+  }, [repoOwner, repoName]);
 
   const visible = useMemo(
     () => applyFilter(library.items, filter, deferredQuery),

@@ -5,6 +5,7 @@ import Sheet from "@/app/components/ui/Sheet";
 import Switch from "@/app/components/ui/Switch";
 import type { BackupFolders, BackupOptions } from "@/lib/native/backup";
 import { primaryButtonClass, secondaryButtonClass } from "@/app/components/library/EmptyState";
+import NetworkChoice from "./NetworkChoice";
 
 interface EnableBackupSheetProps {
   open: boolean;
@@ -73,8 +74,8 @@ export default function EnableBackupSheet({ open, defaults, busy, onConfirm, onC
     <Sheet open={open} onClose={onClose} title="Turn on backup">
       <div className="flex flex-col gap-5">
         <p className="text-small text-ink-muted">
-          New photos and videos upload to your GitHub repo in original quality. Anything already in your
-          library is skipped, so nothing is uploaded twice.
+          Photos and videos upload to your GitHub repo in original quality, even when the app is closed. Anything
+          already in your library is skipped, so nothing is uploaded twice.
         </p>
 
         <div role="radiogroup" aria-label="Photos already on this phone" className="flex flex-col gap-2">
@@ -82,7 +83,7 @@ export default function EnableBackupSheet({ open, defaults, busy, onConfirm, onC
           <Choice
             checked={includeExisting}
             title="Back up everything"
-            description="Includes photos and videos already on this phone."
+            description="Everything already on this phone (newest first), then each new photo or video."
             onSelect={() => setIncludeExisting(true)}
           />
           <Choice
@@ -109,18 +110,22 @@ export default function EnableBackupSheet({ open, defaults, busy, onConfirm, onC
           />
         </div>
 
-        <div className="flex flex-col gap-3 rounded-xl border border-border px-3.5 py-3">
-          <Switch
-            checked={wifiOnly}
-            onChange={setWifiOnly}
-            label="Wi-Fi only"
-            description="Don't use mobile data for backups."
-          />
+        <div className="flex flex-col gap-2">
+          <h3 className="text-small font-semibold text-ink">Back up using</h3>
+          <NetworkChoice wifiOnly={wifiOnly} onChange={setWifiOnly} />
+          <p className="text-micro text-ink-faint">
+            {wifiOnly
+              ? "Mobile data is never used."
+              : "Uses mobile data when there's no Wi-Fi, but never while roaming."}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-border px-3.5 py-3">
           <Switch
             checked={chargingOnly}
             onChange={setChargingOnly}
             label="Only while charging"
-            description="Saves battery during long backups."
+            description="Backup never runs nonstop and always pauses on low battery. This waits for a charger too."
           />
         </div>
 

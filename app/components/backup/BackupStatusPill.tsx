@@ -7,10 +7,13 @@ import { useBackupStatus, useWebUploadProgress } from "@/lib/library/hooks";
 import {
   AlertIcon,
   BatteryChargingIcon,
+  BatteryLowIcon,
+  ClockIcon,
   CloudCheckIcon,
   CloudOffIcon,
   DownloadAppIcon,
   LockIcon,
+  SignalIcon,
   WifiIcon,
 } from "@/app/components/library/icons";
 
@@ -60,8 +63,14 @@ function iconFor(icon: BackupPillIcon, progress?: number): ReactNode {
       return <CloudCheckIcon size={14} strokeWidth={2} className="shrink-0" />;
     case "wifi":
       return <WifiIcon size={14} strokeWidth={2} className="shrink-0" />;
+    case "signal":
+      return <SignalIcon size={14} strokeWidth={2} className="shrink-0" />;
     case "charging":
       return <BatteryChargingIcon size={14} strokeWidth={2} className="shrink-0" />;
+    case "battery":
+      return <BatteryLowIcon size={14} strokeWidth={2} className="shrink-0" />;
+    case "clock":
+      return <ClockIcon size={14} strokeWidth={2} className="shrink-0" />;
     case "alert":
       return <AlertIcon size={14} strokeWidth={2} className="shrink-0" />;
     case "off":

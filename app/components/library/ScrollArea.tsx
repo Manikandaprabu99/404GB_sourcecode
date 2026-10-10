@@ -25,7 +25,9 @@ const ScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(function ScrollAr
   forwardedRef
 ) {
   const ref = useRef<HTMLDivElement>(null);
-  useImperativeHandle(forwardedRef, () => ref.current as HTMLDivElement);
+  // Set once: re-running it on every render detaches the ref during commits,
+  // so children's layout effects (the grid's zoom anchoring) would see null.
+  useImperativeHandle(forwardedRef, () => ref.current as HTMLDivElement, []);
 
   useIsomorphicLayoutEffect(() => {
     const saved = getScrollPosition(scrollKey);

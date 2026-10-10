@@ -130,6 +130,7 @@ export default function AlbumPhotoPicker({ repoKey, album, onClose }: AlbumPhoto
         ) : (
           <VirtualGrid
             groups={groups}
+            zoom="day"
             repoKey={repoKey}
             scrollRef={scrollRef}
             stickyTop={0}

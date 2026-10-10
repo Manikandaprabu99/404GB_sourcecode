@@ -314,3 +314,64 @@ export function ExternalIcon(props: IconProps) {
     </Svg>
   );
 }
+
+export function BatteryLowIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="2.5" y="7" width="17" height="10" rx="2.5" />
+      <path d="M22 11v2" />
+      <path d="M6 10.5v3" strokeWidth={2.6} />
+    </Svg>
+  );
+}
+
+export function ClockIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7.5V12l3 2" />
+    </Svg>
+  );
+}
+
+/** Mobile-data bars. */
+export function SignalIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M5 19v-3M10 19v-6M15 19v-9M20 19V7" />
+    </Svg>
+  );
+}
+
+/** Grid density for the Day / Month / Year views: 2, 3 or 4 tiles per row. */
+export function ViewGridIcon({ density = 2, ...props }: IconProps & { density?: 2 | 3 | 4 }) {
+  const cell = 18 / density;
+  const gap = density === 2 ? 2 : 1.5;
+  const rects: ReactNode[] = [];
+  for (let row = 0; row < density; row++) {
+    for (let col = 0; col < density; col++) {
+      rects.push(
+        <rect
+          key={`${row}-${col}`}
+          x={3 + col * cell + gap / 2}
+          y={3 + row * cell + gap / 2}
+          width={cell - gap}
+          height={cell - gap}
+          rx={density === 2 ? 1.6 : 0.9}
+          fill="currentColor"
+          stroke="none"
+        />
+      );
+    }
+  }
+  return <Svg {...props}>{rects}</Svg>;
+}
+
+export function DuplicateIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="8" y="8" width="13" height="13" rx="3" />
+      <path d="M16 8V6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v7a3 3 0 0 0 3 3h2" />
+    </Svg>
+  );
+}

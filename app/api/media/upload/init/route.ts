@@ -9,7 +9,8 @@ export const maxDuration = 60;
 // 32,768 chunks × 4 MiB = 128 GiB, far beyond anything a GitHub repo can hold.
 const MAX_CHUNKS = 32768;
 
-/** Body { chunkHashes, fileHash? } → { missing, duplicateOf }; a duplicate needs no upload, so missing is []. */
+/** Body { chunkHashes, fileHash? } → { missing, duplicateOf, library }; a duplicate needs no upload, so
+ * missing is []. `library` ("owner/repo") lets the phone notice it is now backing up into another repo. */
 export const POST = withRepo(
   async (req, { repo }) => {
     const body = await readJsonBody(req);
@@ -30,7 +31,8 @@ export const POST = withRepo(
       fileHash = candidate;
     }
 
-    return NextResponse.json(await checkUpload(repo, chunkHashes, fileHash));
+    const check = await checkUpload(repo, chunkHashes, fileHash);
+    return NextResponse.json({ ...check, library: `${repo.owner}/${repo.repo}` });
   },
   { renew: true }
 );

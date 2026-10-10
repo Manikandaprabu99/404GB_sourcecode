@@ -48,6 +48,8 @@ interface MediaListResponse {
   unchanged: boolean;
   sha: string;
   index?: MediaIndexEntry[];
+  /** More of the index at the same sha: fetch ?sha=&offset=nextOffset. */
+  nextOffset?: number | null;
 }
 
 interface FavoriteOverride {
@@ -276,7 +278,16 @@ async function runSync(gen: number): Promise<void> {
     if (data.unchanged) {
       followUp = reconcile(new Map(base.map((entry) => [entry.id, entry])), startedAt);
     } else {
-      const fresh = data.index ?? [];
+      let fresh = data.index ?? [];
+      let nextOffset = data.nextOffset ?? null;
+      while (nextOffset !== null && data.sha) {
+        const page = await apiJson<MediaListResponse>(
+          `/api/media?sha=${encodeURIComponent(data.sha)}&offset=${nextOffset}`
+        );
+        if (gen !== generation) return;
+        fresh = fresh.concat(page.index ?? []);
+        nextOffset = page.nextOffset ?? null;
+      }
       const diff = diffEntries(base, fresh);
       base = sortNewestFirst(fresh);
       itemsDirty = true;
