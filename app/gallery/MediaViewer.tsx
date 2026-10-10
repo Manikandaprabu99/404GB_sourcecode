@@ -1,500 +1,831 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MediaIndexEntry, MediaRecord } from "@/lib/media";
-import { MAX_DIRECT_FETCH_BYTES } from "@/lib/chunking";
-import { reconstructMediaClientUrl, type ReconstructProgress } from "@/lib/media/reconstructClient";
-import MediaPlaceholder from "./MediaPlaceholder";
+import { useHistoryOverlay } from "@/lib/ui/useHistoryOverlay";
+import { useConfirm } from "@/app/components/ui/ConfirmDialog";
+import { useToast } from "@/app/components/ui/Toast";
+import { trapTab, useEscapeLayer, useFocusReturn } from "@/app/components/ui/focus";
+import { canEdit } from "@/lib/editor/canEdit";
+import ImageSlide from "./viewer/ImageSlide";
+import InfoSheet from "./viewer/InfoSheet";
+import VideoSlide from "./viewer/VideoSlide";
+import { BottomBar, SideArrows, StatusPill, TopBar, type OriginalChipState, type ViewerAction } from "./viewer/ViewerChrome";
+import { canDisplayOriginal, isHeic, isVideoItem, viewerTitle } from "./viewer/format";
+import { fitBox, type Size } from "./viewer/geometry";
+import { AlbumAddIcon, DownloadIcon, EditIcon, ShareIcon, Spinner, TrashIcon } from "./viewer/icons";
+import {
+  OriginalStore,
+  describeLoadError,
+  isAuthError,
+  type OriginalEntry,
+  type OriginalView,
+  type ProgressListener,
+} from "./viewer/originals";
+import { canShareFiles, hasNativeBackup, isShareCancel, nativeTransfer, triggerDownload } from "./viewer/transfer";
+import { thumbUrl } from "./viewer/useCachedThumb";
+import { SLIDE_GAP, useViewerGestures } from "./viewer/useViewerGestures";
 
-interface MediaViewerProps {
+const PhotoEditor = dynamic(() => import("./PhotoEditor"), {
+  ssr: false,
+  loading: () => (
+    <div className="fixed inset-0 z-editor flex items-center justify-center bg-black/85 text-white">
+      <Spinner size={28} />
+    </div>
+  ),
+});
+
+export interface MediaViewerProps {
   items: MediaIndexEntry[];
   index: number;
-  onClose: () => void;
-  onNavigate: (index: number) => void;
-  /** Deletes the current item (see lib/media.deleteMedia).
-   * Must throw on failure so the trash button can show an inline error
-   * instead of silently doing nothing; on success the caller is expected to
-   * close the viewer itself (the underlying `items` list has just shrunk,
-   * so `index` can no longer be trusted to point at the right item). */
-  onDelete: (id: string) => Promise<void>;
+  repoKey: string;
+  onIndexChange(i: number): void;
+  onClose(): void;
+  onDelete(ids: string[]): void;
+  onFavoriteChange(id: string, favorite: boolean): void;
+  onAddToAlbum(ids: string[]): void;
+  onEdited?(newMediaId: string | null): void;
+  onRemoveFromAlbum?(id: string): void;
 }
 
-// Matches the CSS transition/animation durations used for the overlay's
-// open/close below — kept as one constant so the deferred `onClose` call
-// (which unmounts this component) always waits for the exit animation to
-// actually finish painting.
-const CLOSE_ANIMATION_MS = 180;
-
-function ChevronIcon({ direction }: { direction: "left" | "right" }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="22"
-      height="22"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d={direction === "left" ? "M15 18l-6-6 6-6" : "M9 18l6-6-6-6"} />
-    </svg>
-  );
+interface Transfer {
+  label: string;
+  progress: number | null;
 }
 
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
-      <path d="M6 6l12 12M18 6 6 18" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-9 0 1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
-    </svg>
-  );
-}
-
-function SpinnerIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" className={`animate-spin ${className ?? ""}`} aria-hidden="true">
-      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2.5" strokeOpacity="0.25" />
-      <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-    </svg>
-  );
-}
+const CLOSE_MS = 200;
+const LEAVE_MS = 220;
+const AUTO_HIDE_MS = 3000;
+// Browsers only open the share sheet shortly after a tap.
+const SHARE_GESTURE_MS = 4000;
 
 /**
- * Full-screen overlay viewer. Loads progressively: the already-cached 320px
- * thumbnail appears instantly, the 800px thumbnail swaps in as soon as it's
- * fetched, and the original full-resolution file is fetched on demand —
- * automatically, the moment the viewer opens, for an image that has no
- * thumbnail at all (see the auto-load effect below: there's nothing smaller
- * to progressively show in that case, so making the user click an extra
- * "View full resolution" button first would just be an extra step before
- * seeing the photo they already tapped); still explicitly on-demand (a
- * button click) for everything else — an image that already has a
- * thumbnail to show instantly, and video (always button-gated — playback
- * has its own controls anyway).
+ * Full-screen viewer. Swipe sideways to move between items, down to close and up
+ * for details; pinch, double-tap or scroll to zoom; tap to hide the toolbars.
+ * The 320px thumbnail shows instantly, the 1600px preview fades in over it, and
+ * the original loads when zooming or tapping "Original". The parent owns data
+ * changes; this only calls back and moves to a neighbour after a removal.
  */
-export default function MediaViewer({
-  items,
-  index,
-  onClose,
-  onNavigate,
-  onDelete,
-}: MediaViewerProps) {
-  const item = items[index];
-  const isVideo = item?.mimeType?.startsWith("video/");
-  // Thumbnail generation during upload is best-effort (see
-  // lib/upload/uploadQueue.ts) — some items have none at all.
-  const hasThumb = Boolean(item?.thumb);
-  // An image with no thumbnail has nothing to progressively show — see the
-  // auto-load effect below and the component doc comment above.
-  const isNoThumbImage = !isVideo && !hasThumb;
-  const [stage, setStage] = useState<"thumb" | "medium" | "original">("thumb");
-  const [loadingOriginal, setLoadingOriginal] = useState(false);
-  // Mirrors `loadingOriginal` but updates synchronously (refs, unlike
-  // state, take effect immediately rather than on the next render) — see
-  // loadOriginal()'s guard and the item-reset effect below for why the
-  // state value alone isn't safe to gate re-entrancy on.
-  const loadingOriginalRef = useRef(false);
+export default function MediaViewer(props: MediaViewerProps) {
+  const { items, index, repoKey, onAddToAlbum, onRemoveFromAlbum } = props;
+  const toast = useToast();
+  const confirm = useConfirm();
+
+  const safeIndex = Math.min(Math.max(index, 0), Math.max(items.length - 1, 0));
+  const item: MediaIndexEntry | undefined = items[safeIndex];
+
+  const latest = useRef(props);
+  latest.current = props;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const indexRef = useRef(safeIndex);
+  indexRef.current = safeIndex;
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const chromeRef = useRef<HTMLDivElement>(null);
+  const aliveRef = useRef(true);
+  const storeRef = useRef<OriginalStore | null>(null);
+  const getStore = useCallback(() => (storeRef.current ??= new OriginalStore()), []);
+
+  const [stage, setStage] = useState<Size>(() =>
+    typeof window === "undefined" ? { w: 0, h: 0 } : { w: window.innerWidth, h: window.innerHeight }
+  );
+  const [aspects, setAspects] = useState<Record<string, number>>({});
+  const [chromeVisible, setChromeVisible] = useState(true);
   const [closing, setClosing] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const closingRef = useRef(false);
+  const closeCalledRef = useRef(false);
+  const [zoomed, setZoomed] = useState(false);
+  const [original, setOriginal] = useState<OriginalView | null>(null);
+  const [transfer, setTransfer] = useState<Transfer | null>(null);
+  const transferBusyRef = useRef(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoRecord, setInfoRecord] = useState<MediaRecord | null>(null);
+  const [infoLoading, setInfoLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [leavingId, setLeavingId] = useState<string | null>(null);
+  const [enteringId, setEnteringId] = useState<string | null>(() => items[safeIndex]?.id ?? null);
+  const [videoPlaying, setVideoPlaying] = useState(false);
+  const [activity, setActivity] = useState(0);
+  const [shareable, setShareable] = useState(false);
+  const [native, setNative] = useState(false);
+  const [favoritePulse, setFavoritePulse] = useState(0);
 
-  // Full-resolution / video-playback loading. `record` (fetched on demand
-  // from GET /api/media/:id, which is where `size`/`chunks`/`hash` live —
-  // the lightweight MediaIndexEntry in `items` doesn't carry them) decides
-  // the fast path (record.size under the Vercel response-body cap: fetch
-  // /api/media/object/:id directly, one round trip) vs the chunked path
-  // (fetch+reassemble client-side via lib/media/reconstructClient.ts) — see
-  // docs/ARCHITECTURE.md's "Vercel Functions Body-Size Cap" section.
-  const [originalSrc, setOriginalSrc] = useState<string | null>(null);
-  const [originalError, setOriginalError] = useState<string | null>(null);
-  const [reconstructProgress, setReconstructProgress] = useState<ReconstructProgress | null>(null);
-  // Tracks the object URL created by client-side reconstruction so it can be
-  // revoked (these can be GB-scale) once it's no longer needed.
-  const objectUrlRef = useRef<string | null>(null);
-  const recordRef = useRef<MediaRecord | null>(null);
-
-  // Direction-aware slide: +1 when moving to a later photo, -1 when moving
-  // back, 0 on the very first mount (no slide-in on open, the overlay fade
-  // already covers that entrance).
-  const prevIndexRef = useRef(index);
-  const [slideDir, setSlideDir] = useState(0);
-  const isFirstRender = useRef(true);
+  const blocked = infoOpen || editing || confirming || closing || leavingId !== null;
+  const blockedRef = useRef(blocked);
+  blockedRef.current = blocked;
 
   useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-    } else {
-      setSlideDir(index > prevIndexRef.current ? 1 : index < prevIndexRef.current ? -1 : 0);
-    }
-    prevIndexRef.current = index;
-  }, [index]);
-
-  useEffect(() => {
-    setStage("thumb");
-    setLoadingOriginal(false);
-    loadingOriginalRef.current = false;
-    setOriginalSrc(null);
-    setOriginalError(null);
-    setReconstructProgress(null);
-    setDeleteError(null);
-    recordRef.current = null;
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-    }
-  }, [item?.id]);
-
-  // Revoke any outstanding reconstructed object URL when the viewer itself
-  // unmounts (the per-item effect above already handles navigating between
-  // items while it stays open).
-  useEffect(() => {
+    aliveRef.current = true;
     return () => {
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      aliveRef.current = false;
+      storeRef.current?.dispose();
+      storeRef.current = null;
     };
   }, []);
 
-  function preloadImage(url: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("Failed to load image"));
-      img.src = url;
-    });
-  }
+  // ---- closing ------------------------------------------------------------
 
-  async function fetchRecord(): Promise<MediaRecord> {
-    if (recordRef.current) return recordRef.current;
-    const res = await fetch(`/api/media/${item.id}`);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}) as { error?: string });
-      throw new Error(body.error ?? `Failed to load media details (${res.status})`);
-    }
-    const { media } = (await res.json()) as { media: MediaRecord };
-    recordRef.current = media;
-    return media;
-  }
+  const callClose = useCallback(() => {
+    if (closeCalledRef.current) return;
+    closeCalledRef.current = true;
+    latest.current.onClose();
+  }, []);
 
-  /** Loads the full-resolution original (image "view full resolution" and
-   * video "play" both call this). Picks the fast direct-fetch path or the
-   * client-side chunked-reconstruction path based on the record's size —
-   * see the `record` state comment above. */
-  async function loadOriginal() {
-    // Gate re-entrancy on the ref, not the `loadingOriginal` state variable:
-    // when the viewer navigates to a new item, the item-reset effect above
-    // and this component's no-thumbnail-image auto-load effect both fire
-    // within the same commit, in that order. The auto-load effect calls
-    // this function from a closure captured during that render, which still
-    // sees the *old* item's `loadingOriginal` (state updates don't apply
-    // until the next render) — checking that stale value here would wrongly
-    // skip starting the new item's load and leave it stuck on "Loading
-    // photo…" forever. The ref, by contrast, was already flipped back to
-    // false by the reset effect earlier in this same commit, so it's always
-    // current by the time this guard runs.
-    if (loadingOriginalRef.current) return;
-    loadingOriginalRef.current = true;
-    setLoadingOriginal(true);
-    setOriginalError(null);
-    setReconstructProgress(null);
-    try {
-      const rec = await fetchRecord();
-      if (rec.size <= MAX_DIRECT_FETCH_BYTES) {
-        const directUrl = `/api/media/object/${item.id}`;
-        if (!isVideo) {
-          // Preload off-DOM first so the viewer doesn't flash a broken
-          // image if the fetch fails partway.
-          await preloadImage(directUrl);
-        }
-        setOriginalSrc(directUrl);
-      } else {
-        const { url } = await reconstructMediaClientUrl(rec, setReconstructProgress);
-        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = url;
-        setOriginalSrc(url);
+  const requestClose = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    window.setTimeout(callClose, CLOSE_MS);
+  }, [callClose]);
+
+  /** Close right away: the swipe-down animation already played. */
+  const closeNow = useCallback(() => {
+    closingRef.current = true;
+    setClosing(true);
+    callClose();
+  }, [callClose]);
+
+  useHistoryOverlay(true, requestClose);
+  useEscapeLayer(!editing, requestClose);
+  useFocusReturn(true, rootRef);
+
+  // ---- layout -------------------------------------------------------------
+
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      setStage((s) => (s.w === rect.width && s.h === rect.height ? s : { w: rect.width, h: rect.height }));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const boxFor = useCallback(
+    (entry: MediaIndexEntry): Size => {
+      const aspect = aspects[entry.id] ?? (entry.width && entry.height ? entry.width / entry.height : null);
+      return fitBox(aspect, stage.w, stage.h);
+    },
+    [aspects, stage.w, stage.h]
+  );
+
+  const handleAspect = useCallback((id: string, aspect: number) => {
+    setAspects((current) =>
+      current[id] !== undefined && Math.abs(current[id] - aspect) < 0.005 ? current : { ...current, [id]: aspect }
+    );
+  }, []);
+
+  // ---- errors & originals -------------------------------------------------
+
+  const notifyError = useCallback(
+    (err: unknown, fallback: string) => {
+      if (!aliveRef.current) return;
+      if (isAuthError(err)) {
+        toast({
+          message: "You're signed out. Sign in again to continue.",
+          tone: "error",
+          actionLabel: "Sign in",
+          onAction: () => window.location.assign("/"),
+        });
+        return;
       }
-      setStage("original");
-    } catch (err) {
-      setOriginalError(err instanceof Error ? err.message : String(err));
-    } finally {
-      loadingOriginalRef.current = false;
-      setLoadingOriginal(false);
-    }
-  }
+      toast({ message: describeLoadError(err, fallback), tone: "error" });
+    },
+    [toast]
+  );
 
-  // Auto-load for the no-thumbnail-image case (see the component doc
-  // comment above): the moment the viewer opens on such an item, kick off
-  // the exact same reconstruction the manual "View full resolution" button
-  // uses elsewhere, instead of sitting on the placeholder until the user
-  // clicks something. Runs once per item — [item?.id] rather than
-  // [isNoThumbImage] — because isNoThumbImage is itself derived from `item`
-  // and only actually changes when the item does; declared after the reset
-  // effect above so it always runs against that effect's freshly-cleared
-  // state (stage/originalError/etc reset to their "nothing loaded yet"
-  // values first). Not applicable to video — see the doc comment above.
-  useEffect(() => {
-    if (!item || !isNoThumbImage) return;
-    void loadOriginal();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item?.id, isNoThumbImage]);
+  const loadOriginalForDisplay = useCallback(
+    (target: MediaIndexEntry, quiet: boolean) => {
+      if (isVideoItem(target) || !canDisplayOriginal(target)) return;
+      const store = getStore();
+      const cached = store.peek(target.id);
+      if (cached) {
+        setOriginal({ id: target.id, status: "ready", url: cached.url, progress: 1 });
+        return;
+      }
+      setOriginal((current) =>
+        current?.id === target.id && current.status === "loading"
+          ? current
+          : { id: target.id, status: "loading", progress: null }
+      );
+      store
+        .load(target, (progress) =>
+          setOriginal((current) =>
+            current?.id === target.id && current.status === "loading" ? { ...current, progress } : current
+          )
+        )
+        .then((entry) =>
+          setOriginal((current) =>
+            current?.id === target.id ? { id: target.id, status: "ready", url: entry.url, progress: 1 } : current
+          )
+        )
+        .catch((err: unknown) => {
+          if (!aliveRef.current) return;
+          setOriginal((current) =>
+            current?.id === target.id
+              ? { id: target.id, status: "error", progress: null, error: describeLoadError(err) }
+              : current
+          );
+          if (!quiet) notifyError(err, "Couldn't load the original. Try again.");
+        });
+    },
+    [getStore, notifyError]
+  );
 
-  async function handleDelete() {
-    if (deleting || !item) return;
-    if (!window.confirm(`Delete "${item.filename}"? This can't be undone from the gallery.`)) {
+  const loadForVideo = useCallback(
+    (entry: MediaIndexEntry, onProgress: ProgressListener): Promise<OriginalEntry> => getStore().load(entry, onProgress),
+    [getStore]
+  );
+  const releaseOriginal = useCallback((id: string) => storeRef.current?.release(id), []);
+
+  // ---- which item is showing ------------------------------------------------
+
+  const currentIdRef = useRef<string | null>(item?.id ?? null);
+  const prevPropsRef = useRef({ items, index });
+
+  // Keep showing the same item when the list changes underneath (sync, prepends,
+  // removals), unless the parent moved the index itself.
+  useLayoutEffect(() => {
+    const prev = prevPropsRef.current;
+    prevPropsRef.current = { items, index };
+    if (closingRef.current) return;
+    if (items.length === 0) {
+      closeNow();
       return;
     }
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      await onDelete(item.id);
-      // On success the parent closes the viewer itself (see the onDelete
-      // prop doc comment) — nothing left to do here, and this component may
-      // already be unmounting by the time this line would otherwise run.
-    } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : String(err));
-      setDeleting(false);
+    if (prev.items !== items && prev.index === index) {
+      const id = currentIdRef.current;
+      const found = id ? items.findIndex((entry) => entry.id === id) : -1;
+      if (found !== -1 && found !== index) {
+        latest.current.onIndexChange(found);
+        return;
+      }
     }
-  }
+    if (index !== safeIndex) {
+      latest.current.onIndexChange(safeIndex);
+      return;
+    }
+    currentIdRef.current = items[safeIndex]?.id ?? null;
+  }, [items, index, safeIndex, closeNow]);
+
+  const isVideo = item ? isVideoItem(item) : false;
+  const hasThumb = Boolean(item?.thumb);
+  const currentOriginal = original && item && original.id === item.id ? original : null;
+  const canZoom = Boolean(item) && !isVideo && (hasThumb || currentOriginal?.status === "ready");
+  const currentBox = item ? boxFor(item) : { w: 0, h: 0 };
+  const gestureContext = useRef({ canZoom, box: currentBox, stage });
+  gestureContext.current = { canZoom, box: currentBox, stage };
+
+  const gestures = useViewerGestures(stageRef, {
+    getContext: () => {
+      const g = gestureContext.current;
+      const at = indexRef.current;
+      return {
+        width: g.stage.w,
+        height: g.stage.h,
+        box: g.box,
+        canZoom: g.canZoom,
+        hasPrev: at > 0,
+        hasNext: at < itemsRef.current.length - 1,
+        enabled: !blockedRef.current,
+      };
+    },
+    onTap: () => setChromeVisible((visible) => !visible),
+    onZoomIn: () => {
+      const current = itemsRef.current[indexRef.current];
+      if (current?.thumb) loadOriginalForDisplay(current, false);
+    },
+    onZoomedChange: setZoomed,
+    onNavigate: (direction) => {
+      const next = indexRef.current + direction;
+      const target = itemsRef.current[next];
+      if (!target) return;
+      currentIdRef.current = target.id;
+      latest.current.onIndexChange(next);
+    },
+    onDismiss: closeNow,
+    onSwipeUp: () => setInfoOpen(true),
+    onDismissProgress: (progress) => {
+      const el = chromeRef.current;
+      if (el) el.style.opacity = progress === 0 ? "" : String(Math.max(0, 1 - progress * 2.5));
+    },
+  });
+
+  const currentId = item?.id ?? null;
+  const shownIdRef = useRef(currentId);
+  useLayoutEffect(() => {
+    if (shownIdRef.current === currentId) return;
+    shownIdRef.current = currentId;
+    gestures.itemChanged();
+    setZoomed(false);
+    setVideoPlaying(false);
+    setLeavingId(null);
+    setInfoRecord(null);
+    const cached = currentId ? storeRef.current?.peek(currentId) : null;
+    setOriginal(cached && currentId ? { id: currentId, status: "ready", url: cached.url, progress: 1 } : null);
+  }, [currentId, gestures]);
+
+  // Items stored without thumbnails have nothing smaller to show: fetch the original right away.
+  useEffect(() => {
+    if (!item || item.thumb || isVideoItem(item) || !canDisplayOriginal(item)) return;
+    loadOriginalForDisplay(item, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id]);
 
   useEffect(() => {
-    if (!item || isVideo || !hasThumb) return;
+    if (!enteringId) return;
+    const timer = window.setTimeout(() => setEnteringId(null), 400);
+    return () => window.clearTimeout(timer);
+  }, [enteringId]);
+
+  useEffect(() => {
+    gestures.resetZoom(false);
+  }, [stage.w, stage.h, gestures]);
+
+  useEffect(() => {
+    setNative(hasNativeBackup());
+  }, []);
+
+  useEffect(() => {
+    setShareable(item ? hasNativeBackup() || canShareFiles(item) : false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id, item?.mimeType]);
+
+  // Warm the cache for the photos two steps away (the direct neighbours are already rendered).
+  const preloadRef = useRef<HTMLImageElement[]>([]);
+  useEffect(() => {
+    const images: HTMLImageElement[] = [];
+    for (const offset of [2, -2]) {
+      const entry = items[safeIndex + offset];
+      if (!entry?.thumb) continue;
+      const img = new Image();
+      img.decoding = "async";
+      img.src = thumbUrl(entry.id, 1600);
+      images.push(img);
+    }
+    preloadRef.current = images;
+  }, [items, safeIndex]);
+
+  useEffect(() => {
+    if (!infoOpen || !item) return;
+    const store = getStore();
+    const cached = store.cachedRecord(item.id);
+    if (cached) {
+      setInfoRecord(cached);
+      return;
+    }
     let cancelled = false;
-    const img = new Image();
-    img.onload = () => {
-      if (!cancelled) setStage((s) => (s === "original" ? s : "medium"));
-    };
-    img.src = `/api/media/thumb/${item.id}/800`;
+    setInfoLoading(true);
+    store
+      .record(item.id)
+      .then((record) => {
+        if (!cancelled) setInfoRecord(record);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setInfoLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [item?.id, isVideo, hasThumb]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [infoOpen, item?.id, getStore]);
 
-  function requestClose() {
-    if (closing) return;
-    setClosing(true);
-    window.setTimeout(onClose, CLOSE_ANIMATION_MS);
-  }
+  // The viewer is always black: light system-bar icons, hidden bars in immersive mode.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.systemBars = "dark";
+    return () => {
+      delete root.dataset.systemBars;
+      delete root.dataset.immersive;
+    };
+  }, []);
 
   useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") requestClose();
-      else if (e.key === "ArrowRight") onNavigate(Math.min(index + 1, items.length - 1));
-      else if (e.key === "ArrowLeft") onNavigate(Math.max(index - 1, 0));
+    const root = document.documentElement;
+    if (!chromeVisible && !closing && !editing && !infoOpen) root.dataset.immersive = "true";
+    else delete root.dataset.immersive;
+  }, [chromeVisible, closing, editing, infoOpen]);
+
+  useEffect(() => {
+    if (!videoPlaying || !chromeVisible || blocked) return;
+    const timer = window.setTimeout(() => setChromeVisible(false), AUTO_HIDE_MS);
+    return () => window.clearTimeout(timer);
+  }, [videoPlaying, chromeVisible, blocked, activity]);
+
+  const bumpActivity = useCallback(() => setActivity((n) => n + 1), []);
+
+  // ---- actions --------------------------------------------------------------
+
+  const toggleFavorite = useCallback(() => {
+    const current = itemsRef.current[indexRef.current];
+    if (!current) return;
+    if (!current.favorite) setFavoritePulse((n) => n + 1);
+    latest.current.onFavoriteChange(current.id, !current.favorite);
+  }, []);
+
+  const runTransfer = useCallback(async (label: string, task: (progress: ProgressListener) => Promise<void>) => {
+    if (transferBusyRef.current) return;
+    transferBusyRef.current = true;
+    setTransfer({ label, progress: null });
+    try {
+      await task((progress) => {
+        if (aliveRef.current) setTransfer((t) => (t ? { ...t, progress } : t));
+      });
+    } finally {
+      transferBusyRef.current = false;
+      if (aliveRef.current) setTransfer(null);
     }
+  }, []);
+
+  const download = useCallback(
+    (target: MediaIndexEntry) => {
+      if (hasNativeBackup()) {
+        void runTransfer("Saving to your phone", async (progress) => {
+          try {
+            await nativeTransfer("save", target.id, progress);
+            toast({ message: "Saved to your phone", tone: "success" });
+          } catch (err) {
+            if (!isShareCancel(err)) notifyError(err, "Couldn't save to your phone. Try again.");
+          }
+        });
+        return;
+      }
+      const cached = storeRef.current?.peek(target.id);
+      if (cached) {
+        triggerDownload(cached.url, target.filename);
+        return;
+      }
+      void runTransfer("Preparing download", async (progress) => {
+        try {
+          const store = getStore();
+          const direct = await store.directUrl(target);
+          if (direct) {
+            triggerDownload(direct, target.filename);
+            return;
+          }
+          const entry = await store.load(target, progress);
+          triggerDownload(entry.url, target.filename);
+        } catch (err) {
+          notifyError(err, "Couldn't download this. Try again.");
+        }
+      });
+    },
+    [getStore, notifyError, runTransfer, toast]
+  );
+
+  const share = useCallback(
+    (target: MediaIndexEntry) => {
+      if (hasNativeBackup()) {
+        void runTransfer("Preparing to share", async (progress) => {
+          try {
+            await nativeTransfer("share", target.id, progress);
+          } catch (err) {
+            if (!isShareCancel(err)) notifyError(err, "Couldn't share this. Try again.");
+          }
+        });
+        return;
+      }
+      const startedAt = Date.now();
+      let file: File | null = null;
+      void runTransfer("Preparing to share", async (progress) => {
+        try {
+          const entry = await getStore().load(target, progress);
+          file = new File([entry.blob], target.filename, { type: target.mimeType });
+        } catch (err) {
+          notifyError(err, "Couldn't get this ready to share. Try again.");
+        }
+      }).then(async () => {
+        const ready = file;
+        if (!ready || !aliveRef.current) return;
+        const send = () => navigator.share({ files: [ready] });
+        const offer = () =>
+          toast({
+            message: "Ready to share",
+            actionLabel: "Share",
+            durationMs: 10000,
+            onAction: () => {
+              send().catch((err: unknown) => {
+                if (!isShareCancel(err)) toast({ message: "Couldn't share this.", tone: "error" });
+              });
+            },
+          });
+        if (Date.now() - startedAt > SHARE_GESTURE_MS) {
+          offer();
+          return;
+        }
+        try {
+          await send();
+        } catch (err) {
+          if (isShareCancel(err)) return;
+          if (err instanceof DOMException && err.name === "NotAllowedError") offer();
+          else notifyError(err, "Couldn't share this. Try again.");
+        }
+      });
+    },
+    [getStore, notifyError, runTransfer, toast]
+  );
+
+  /**
+   * Animates the current item out, then hands the change to the parent. The
+   * neighbour is followed by id once the parent's list drops the item, whether
+   * or not the parent also moves the index itself.
+   */
+  const removeCurrent = useCallback(
+    (target: MediaIndexEntry, commit: () => void) => {
+      const list = itemsRef.current;
+      const at = list.findIndex((entry) => entry.id === target.id);
+      if (at === -1) {
+        commit();
+        return;
+      }
+      const follow = list[at + 1] ?? list[at - 1] ?? null;
+      setLeavingId(target.id);
+      window.setTimeout(() => {
+        if (!aliveRef.current) return;
+        currentIdRef.current = follow?.id ?? null;
+        if (!follow) {
+          closingRef.current = true;
+          setClosing(true);
+          commit();
+          callClose();
+          return;
+        }
+        setEnteringId(follow.id);
+        commit();
+        // The parent kept the item (failed or undone): bring it back into view.
+        window.setTimeout(() => {
+          if (!aliveRef.current || shownIdRef.current !== target.id) return;
+          currentIdRef.current = target.id;
+          setEnteringId(target.id);
+          setLeavingId(null);
+        }, 1200);
+      }, LEAVE_MS);
+    },
+    [callClose]
+  );
+
+  const requestDelete = useCallback(async () => {
+    const target = itemsRef.current[indexRef.current];
+    if (!target || blockedRef.current) return;
+    setConfirming(true);
+    const confirmed = await confirm({
+      title: isVideoItem(target) ? "Delete this video?" : "Delete this photo?",
+      message: "It will be removed from your library.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!aliveRef.current) return;
+    setConfirming(false);
+    if (!confirmed || closingRef.current) return;
+    removeCurrent(target, () => latest.current.onDelete([target.id]));
+  }, [confirm, removeCurrent]);
+
+  const removeFromAlbum = useCallback(() => {
+    const target = itemsRef.current[indexRef.current];
+    const handler = latest.current.onRemoveFromAlbum;
+    if (!target || !handler || blockedRef.current) return;
+    removeCurrent(target, () => handler(target.id));
+  }, [removeCurrent]);
+
+  const retryCurrentOriginal = useCallback(() => {
+    const current = itemsRef.current[indexRef.current];
+    if (current) loadOriginalForDisplay(current, true);
+  }, [loadOriginalForDisplay]);
+
+  const downloadCurrent = useCallback(() => {
+    const current = itemsRef.current[indexRef.current];
+    if (current) download(current);
+  }, [download]);
+
+  // Arrow keys and zoom shortcuts (Escape is handled by the escape layer).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (blockedRef.current || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (target && target !== document.body && !rootRef.current?.contains(target)) return;
+      switch (e.key) {
+        case "ArrowLeft":
+          gestures.navigate(-1);
+          break;
+        case "ArrowRight":
+          gestures.navigate(1);
+          break;
+        case "+":
+        case "=":
+          gestures.zoomBy(1.6);
+          break;
+        case "-":
+        case "_":
+          gestures.zoomBy(1 / 1.6);
+          break;
+        case "0":
+          gestures.resetZoom();
+          break;
+        default:
+          return;
+      }
+      e.preventDefault();
+    };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, items.length, closing]);
+  }, [gestures]);
 
   if (!item) return null;
 
-  const src =
-    stage === "original"
-      ? (originalSrc ?? `/api/media/thumb/${item.id}/800`)
-      : stage === "medium"
-      ? `/api/media/thumb/${item.id}/800`
-      : `/api/media/thumb/${item.id}/320`;
+  // ---- render ---------------------------------------------------------------
 
-  const reconstructPct = reconstructProgress
-    ? Math.min(100, Math.round((reconstructProgress.bytesDone / Math.max(1, reconstructProgress.bytesTotal)) * 100))
-    : null;
-  const originalButtonLabel = loadingOriginal
-    ? reconstructPct !== null
-      ? `Reconstructing… ${reconstructPct}%`
-      : "Loading full res…"
-    : null;
+  const slides = [-1, 0, 1].flatMap((offset) => {
+    const entry = items[safeIndex + offset];
+    return entry ? [{ offset, entry }] : [];
+  });
+  const title = viewerTitle(item.takenAt ?? item.createdAt);
+  const downloadLabel = native ? "Save" : "Download";
+  const chromeShown = chromeVisible && !closing;
+  const previewOnly = !isVideo && hasThumb && !canDisplayOriginal(item);
 
-  // No cached thumbnail exists for this item (thumbnail generation is
-  // best-effort — see uploadQueue.ts) and the original hasn't been
-  // requested yet: show a clear placeholder instead of an <img>/poster
-  // request to a thumbnail path that doesn't exist. Video keeps this exact
-  // behavior (placeholder until the user presses "Play video" — unaffected
-  // by the auto-load change above); the no-thumbnail *image* case is
-  // rendered separately below (loading spinner / retry) instead of a bare
-  // placeholder, since it's now loading automatically rather than waiting
-  // on a click.
-  const showPlaceholder = isVideo && !hasThumb && stage !== "original";
+  let originalChip: OriginalChipState | null = null;
+  if (!isVideo && hasThumb) {
+    if (previewOnly) originalChip = { kind: "preview-only" };
+    else if (currentOriginal?.status === "ready") originalChip = { kind: "ready" };
+    else if (currentOriginal?.status === "loading") originalChip = { kind: "loading", progress: currentOriginal.progress };
+    else originalChip = { kind: "idle" };
+  }
+
+  const explainPreview = () =>
+    toast({
+      message: `${isHeic(item) ? "HEIC photos" : "Photos in this format"} can't be shown at full quality in a browser. Download it to see the original.`,
+      durationMs: 6000,
+    });
+
+  const actions: ViewerAction[] = [];
+  if (shareable) {
+    actions.push({ key: "share", label: "Share", icon: <ShareIcon />, onClick: () => share(item), disabled: transfer !== null });
+  }
+  if (canEdit(item)) {
+    actions.push({ key: "edit", label: "Edit", icon: <EditIcon />, onClick: () => setEditing(true) });
+  }
+  actions.push({ key: "album", label: "Add to album", icon: <AlbumAddIcon />, onClick: () => onAddToAlbum([item.id]) });
+  actions.push({
+    key: "download",
+    label: downloadLabel,
+    icon: <DownloadIcon />,
+    onClick: () => download(item),
+    disabled: transfer !== null,
+  });
+  actions.push({ key: "delete", label: "Delete", icon: <TrashIcon />, onClick: () => void requestDelete() });
+
+  const status: { label: string; progress?: number | null } | null = transfer
+    ? { label: transfer.label, progress: transfer.progress }
+    : zoomed && previewOnly
+      ? { label: "Showing a preview. Download to see the original." }
+      : null;
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex flex-col bg-black/95 transition-opacity duration-180 ease-out-expo ${
-        closing ? "opacity-0" : "animate-fade-in opacity-100"
+      ref={rootRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={item.filename}
+      tabIndex={-1}
+      // Portaled children (editor, details sheet) bubble React events here too: only handle our own DOM.
+      onKeyDown={(e) => {
+        const root = rootRef.current;
+        if (e.key === "Tab" && root && root.contains(e.target as Node)) trapTab(e, root);
+      }}
+      onFocus={(e) => {
+        const root = rootRef.current;
+        if (!chromeVisible && root && e.target !== root && root.contains(e.target as Node)) setChromeVisible(true);
+      }}
+      className={`fixed inset-0 z-viewer touch-none select-none overflow-hidden text-white outline-none ${
+        closing ? "pointer-events-none" : ""
       }`}
-      onClick={requestClose}
     >
       <div
-        className="flex items-center justify-between gap-4 p-4 pt-safe text-small text-neutral-300"
-        onClick={(e) => e.stopPropagation()}
+        ref={gestures.setBackdropEl}
+        className={`absolute inset-0 bg-black transition-opacity duration-200 ${closing ? "opacity-0" : "animate-fade-in"}`}
+      />
+
+      <div ref={stageRef} className="absolute inset-0 overflow-hidden">
+        <div ref={gestures.setTrackEl} className="absolute inset-0">
+          {slides.map(({ offset, entry }) => {
+            const current = offset === 0;
+            const box = boxFor(entry);
+            const motion = !current
+              ? ""
+              : closing
+                ? "scale-95 opacity-0 transition duration-200 ease-in"
+                : leavingId === entry.id
+                  ? "animate-viewer-out"
+                  : enteringId === entry.id
+                    ? "animate-viewer-in"
+                    : "";
+            return (
+              <div
+                key={entry.id}
+                aria-hidden={current ? undefined : true}
+                className="absolute inset-0"
+                style={
+                  current ? undefined : { transform: `translate3d(calc(${offset * 100}% + ${offset * SLIDE_GAP}px), 0, 0)` }
+                }
+              >
+                <div ref={current ? gestures.setDismissEl : undefined} className="absolute inset-0">
+                  <div className={`absolute inset-0 ${motion}`}>
+                    <div ref={current ? gestures.setZoomEl : undefined} className="absolute inset-0 origin-center">
+                      {isVideoItem(entry) ? (
+                        <VideoSlide
+                          item={entry}
+                          repoKey={repoKey}
+                          box={box}
+                          active={current && !closing}
+                          controlsVisible={current && chromeShown}
+                          loadOriginal={loadForVideo}
+                          releaseOriginal={releaseOriginal}
+                          onAspect={handleAspect}
+                          onPlayingChange={setVideoPlaying}
+                          onActivity={bumpActivity}
+                          onDownload={downloadCurrent}
+                          downloadLabel={downloadLabel}
+                        />
+                      ) : (
+                        <ImageSlide
+                          item={entry}
+                          repoKey={repoKey}
+                          box={box}
+                          active={current}
+                          original={current ? currentOriginal : null}
+                          onAspect={handleAspect}
+                          onRetryOriginal={retryCurrentOriginal}
+                          onDownload={downloadCurrent}
+                          downloadLabel={downloadLabel}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div
+        ref={chromeRef}
+        className={`pointer-events-none absolute inset-0 transition-opacity duration-250 ease-out ${
+          chromeShown ? "opacity-100" : "opacity-0"
+        }`}
       >
-        <span className="truncate">{item.filename}</span>
-        <div className="flex items-center gap-2">
-          {stage !== "original" && isVideo && (
-            <button
-              className="rounded-full border border-white/20 px-3 py-2 text-small text-white transition-colors duration-180 hover:bg-white/10 disabled:opacity-50"
-              disabled={loadingOriginal}
-              onClick={() => {
-                void loadOriginal();
-              }}
-            >
-              {originalButtonLabel ?? "Play video"}
-            </button>
-          )}
-          {stage !== "original" && !isVideo && (
-            <button
-              className="rounded-full border border-white/20 px-3 py-2 text-small text-white transition-colors duration-180 hover:bg-white/10 disabled:opacity-50"
-              disabled={loadingOriginal}
-              onClick={() => {
-                void loadOriginal();
-              }}
-            >
-              {originalButtonLabel ?? "View full resolution"}
-            </button>
-          )}
-          <button
-            aria-label="Delete"
-            className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 text-white transition-colors duration-180 hover:bg-red-500/20 hover:text-red-400 disabled:opacity-50"
-            disabled={deleting}
-            onClick={handleDelete}
-          >
-            {deleting ? <SpinnerIcon /> : <TrashIcon />}
-          </button>
-          <button
-            aria-label="Close"
-            className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 text-white transition-colors duration-180 hover:bg-white/10"
-            onClick={requestClose}
-          >
-            <CloseIcon />
-          </button>
-        </div>
+        <TopBar
+          visible={chromeShown}
+          title={title}
+          edited={Boolean(item.editedFrom)}
+          favorite={Boolean(item.favorite)}
+          favoritePulse={favoritePulse}
+          originalChip={originalChip}
+          onBack={requestClose}
+          onFavorite={toggleFavorite}
+          onInfo={() => setInfoOpen(true)}
+          onOriginal={previewOnly ? explainPreview : () => loadOriginalForDisplay(item, false)}
+          onRemoveFromAlbum={onRemoveFromAlbum ? removeFromAlbum : undefined}
+        />
+        <SideArrows
+          visible={chromeShown}
+          hasPrev={safeIndex > 0}
+          hasNext={safeIndex < items.length - 1}
+          onPrev={() => gestures.navigate(-1)}
+          onNext={() => gestures.navigate(1)}
+        />
+        <BottomBar visible={chromeShown} actions={actions} />
       </div>
 
-      {deleteError && (
-        <div className="px-4 pb-2 text-small text-red-400" onClick={(e) => e.stopPropagation()}>
-          {deleteError}
-        </div>
+      {status && !closing && <StatusPill key={status.label} label={status.label} progress={status.progress} />}
+
+      <InfoSheet
+        open={infoOpen}
+        onClose={() => setInfoOpen(false)}
+        item={item}
+        record={infoRecord}
+        loading={infoLoading}
+      />
+
+      {editing && (
+        <PhotoEditor
+          media={item}
+          onClose={() => setEditing(false)}
+          onSaved={(newMediaId) => {
+            setEditing(false);
+            latest.current.onEdited?.(newMediaId);
+          }}
+        />
       )}
-
-      {loadingOriginal && reconstructPct !== null && (
-        <div
-          className="px-4 pb-2 text-small text-neutral-300"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/15">
-            <div
-              className="h-full rounded-full bg-white transition-[width] duration-320 ease-out-expo"
-              style={{ width: `${reconstructPct}%` }}
-            />
-          </div>
-          <p className="mt-1 text-micro text-neutral-400">
-            Reconstructing original from {reconstructProgress?.chunksTotal} chunks — this can take a
-            while for large videos.
-          </p>
-        </div>
-      )}
-      {originalError && !isNoThumbImage && (
-        <div className="px-4 pb-2 text-small text-red-400" onClick={(e) => e.stopPropagation()}>
-          {originalError}
-        </div>
-      )}
-
-      <div className="relative flex flex-1 items-center justify-center overflow-hidden px-2 sm:px-4">
-        {index > 0 && (
-          <button
-            aria-label="Previous"
-            className="absolute left-1 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors duration-180 hover:bg-black/70 sm:left-3"
-            onClick={(e) => {
-              e.stopPropagation();
-              onNavigate(index - 1);
-            }}
-          >
-            <ChevronIcon direction="left" />
-          </button>
-        )}
-
-        <div
-          key={item.id}
-          style={{ ["--slide-dir" as string]: slideDir }}
-          className={slideDir !== 0 ? "animate-slide-in" : "animate-scale-in"}
-        >
-          {isVideo && stage === "original" && originalSrc ? (
-            <video
-              src={originalSrc}
-              poster={hasThumb ? `/api/media/thumb/${item.id}/1600` : undefined}
-              controls
-              autoPlay
-              className="max-h-[calc(100vh-9rem)] max-w-full object-contain"
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : isNoThumbImage && stage !== "original" ? (
-            <div
-              className="flex flex-col items-center gap-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <MediaPlaceholder
-                isVideo={false}
-                className="h-64 w-64 max-h-[50vh] max-w-[50vh] rounded-lg"
-              />
-              {originalError ? (
-                <div className="flex max-w-xs flex-col items-center gap-3 text-center">
-                  <p className="text-small text-red-400">{originalError}</p>
-                  <button
-                    className="rounded-full border border-white/20 px-4 py-2 text-small font-medium text-white transition-colors duration-180 hover:bg-white/10"
-                    onClick={() => void loadOriginal()}
-                  >
-                    Retry
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-small text-neutral-300">
-                  <SpinnerIcon />
-                  <span>
-                    {reconstructPct !== null ? `Reconstructing… ${reconstructPct}%` : "Loading photo…"}
-                  </span>
-                </div>
-              )}
-            </div>
-          ) : showPlaceholder ? (
-            <div onClick={(e) => e.stopPropagation()}>
-              <MediaPlaceholder
-                isVideo={isVideo}
-                className="h-64 w-64 max-h-[50vh] max-w-[50vh] rounded-lg"
-              />
-            </div>
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={src}
-              alt={item.filename}
-              className="max-h-[calc(100vh-9rem)] max-w-full object-contain"
-              onClick={(e) => e.stopPropagation()}
-            />
-          )}
-        </div>
-
-        {index < items.length - 1 && (
-          <button
-            aria-label="Next"
-            className="absolute right-1 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-colors duration-180 hover:bg-black/70 sm:right-3"
-            onClick={(e) => {
-              e.stopPropagation();
-              onNavigate(index + 1);
-            }}
-          >
-            <ChevronIcon direction="right" />
-          </button>
-        )}
-      </div>
-
-      <div className="p-3 pb-safe text-center text-small text-neutral-500">
-        {index + 1} / {items.length}
-      </div>
     </div>
   );
 }

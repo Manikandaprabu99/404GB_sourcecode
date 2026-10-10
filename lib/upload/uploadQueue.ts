@@ -1,18 +1,4 @@
-// Phase 3 upload queue: per-file + per-chunk progress, bounded-concurrency
-// chunk uploads with retry/backoff, pause/cancel, and localStorage-backed
-// resumability. Replaces the simple sequential loop from Phase 1/2
-// (app/upload/page.tsx used to call a single uploadOneFile() directly).
-//
-// Phase 5 adds online/offline awareness on top of the same pause/resume
-// machinery: going offline behaves exactly like the user hitting "pause",
-// and coming back online behaves like "resume" — no new persistence was
-// needed since localStorage-backed per-file/per-chunk state (lib/upload/
-// persist.ts) already survives a paused/interrupted upload.
-//
-// Kept out of scope on purpose (Phase 5): a full IndexedDB-backed
-// background queue / the Background Sync API (limited browser support) —
-// reacting to window online/offline events while the tab is open is the
-// intended scope here.
+// App-wide upload queue: one file at a time, bounded chunk concurrency, waits out pause/offline/rate limits.
 
 import {
   chunkFile,
@@ -21,66 +7,52 @@ import {
   sha256Hex,
   type ChunkInfo,
 } from "@/lib/chunking";
+import { makeMediaId, type MediaRecord } from "@/lib/media/types";
+import { captureVideoPosterFrame, extractVideoMetadata } from "@/lib/media/video";
 import { generateThumbnails } from "@/lib/thumbnails";
-import { extractVideoMetadata, captureVideoPosterFrame } from "@/lib/media/video";
-import { loadFileRecord, saveFileRecord, markChunkUploaded, removeFileRecord } from "./persist";
-import type { AddFilesOptions, ChunkTaskState, FileTaskSnapshot, FileUploadStatus } from "./types";
+import { probeImageDimensions } from "@/lib/thumbnails/imageDimensions";
+import { readCaptureDate } from "./captureDate";
+import { mediaMimeType } from "./mimeType";
+import { forgetFileProgress, loadChunkShas, rememberChunkSha } from "./persist";
+import type {
+  AddFilesOptions,
+  ChunkTaskState,
+  ChunkUploadStatus,
+  FileTaskSnapshot,
+  FileUploadStatus,
+} from "./types";
 
-const MAX_CHUNK_ATTEMPTS = 5;
-const RETRY_BASE_DELAY_MS = 600;
+// Shown as-is by the upload screen, so no technical jargon.
+const MESSAGES = {
+  waiting: "Waiting",
+  preparing: "Preparing…",
+  uploading: "Uploading…",
+  finishing: "Finishing…",
+  done: "Done",
+  duplicate: "Already in your library",
+  failed: "Couldn't upload",
+  canceled: "Canceled",
+} as const;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+type BlockReason = "paused" | "offline" | "rate-limit";
 
-function isVideo(file: File): boolean {
-  return file.type.startsWith("video/");
-}
+const BLOCKED_MESSAGES: Record<BlockReason, string> = {
+  paused: "Paused",
+  offline: "Offline — will resume automatically",
+  "rate-limit": "Waiting — GitHub rate limit",
+};
 
-function isImage(file: File): boolean {
-  return file.type.startsWith("image/");
-}
-
-function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      resolve({ width: img.naturalWidth, height: img.naturalHeight });
-      URL.revokeObjectURL(url);
-    };
-    img.onerror = () => {
-      resolve({ width: 0, height: 0 });
-      URL.revokeObjectURL(url);
-    };
-    img.src = url;
-  });
-}
-
-/** Runs `worker` over `items` with at most `limit` concurrent in flight.
- * Stops launching new work (but lets in-flight settle) once `shouldStop()`
- * returns true, and pauses launching new work while `isPaused()` is true. */
-async function runWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<void>,
-  opts: { isPaused: () => boolean; isCanceled: () => boolean }
-): Promise<void> {
-  let cursor = 0;
-  async function runNext(): Promise<void> {
-    while (cursor < items.length) {
-      if (opts.isCanceled()) return;
-      while (opts.isPaused() && !opts.isCanceled()) {
-        await sleep(200);
-      }
-      if (opts.isCanceled()) return;
-      const item = items[cursor++];
-      await worker(item);
-    }
-  }
-  const runners = Array.from({ length: Math.min(limit, items.length) }, () => runNext());
-  await Promise.all(runners);
-}
+const MAX_REQUEST_ATTEMPTS = 6;
+const REQUEST_TIMEOUT_MS = 3 * 60 * 1000;
+const MAX_BACKOFF_MS = 30_000;
+const OFFLINE_POLL_MS = 3000;
+const DEFAULT_RATE_LIMIT_WAIT_S = 60;
+const MAX_RATE_LIMIT_WAIT_S = 3600;
+const HASH_PROGRESS_MIN_BYTES = 64 * 1024 * 1024;
+const METADATA_TIMEOUT_MS = 20_000;
+const THUMBNAIL_TIMEOUT_MS = 30_000;
+const CAPTURE_DATE_TIMEOUT_MS = 10_000;
+const MAX_FINISHED_TASKS = 200;
 
 class CanceledError extends Error {
   constructor() {
@@ -89,37 +61,150 @@ class CanceledError extends Error {
   }
 }
 
+/** A failure whose message is fit to show the user. */
+class UploadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UploadError";
+  }
+}
+
+/** A non-retryable error response from our API. */
+class ApiResponseError extends Error {
+  readonly code?: string;
+
+  constructor(readonly status: number, readonly body: Record<string, unknown>) {
+    super(typeof body.error === "string" && body.error ? body.error : `The server refused the upload (${status})`);
+    this.name = "ApiResponseError";
+    this.code = typeof body.code === "string" ? body.code : undefined;
+  }
+}
+
+interface InitResponse {
+  missing: string[];
+  duplicateOf: string | null;
+}
+
+interface BlobResponse {
+  sha: string;
+}
+
+interface CommitResponse {
+  id: string;
+  duplicate?: boolean;
+}
+
+interface CommitBody {
+  record: MediaRecord;
+  chunkBlobShas: Record<string, string>;
+  thumbnailBlobShas: Record<string, string>;
+}
+
 interface FileTask {
   clientId: string;
-  file: File;
+  /** Released once the file is safely in the library. */
+  file: File | null;
+  mimeType: string;
   options: AddFilesOptions;
   controller: AbortController;
-  paused: boolean;
-  canceled: boolean;
+  state: "waiting" | "active" | "finished";
+  /** What an active task shows while the queue isn't blocked. */
+  phase: { status: FileUploadStatus; message: string };
   snapshot: FileTaskSnapshot;
 }
 
 export type QueueListener = (snapshots: FileTaskSnapshot[]) => void;
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+function jsonRequest(body: unknown): RequestInit {
+  return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+}
+
+function blobRequest(blob: Blob): RequestInit {
+  return { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: blob };
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return seconds;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? undefined : (at - Date.now()) / 1000;
+}
+
+function rateLimitSeconds(res: Response, body: Record<string, unknown> | null): number {
+  let seconds = parseRetryAfter(res.headers.get("Retry-After"));
+  if (seconds === undefined && typeof body?.retryAfter === "number") seconds = body.retryAfter;
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) seconds = DEFAULT_RATE_LIMIT_WAIT_S;
+  return Math.min(MAX_RATE_LIMIT_WAIT_S, Math.ceil(seconds));
+}
+
+function normalizeIso(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString();
+}
+
+function describeFailure(err: unknown): string {
+  if (err instanceof UploadError || err instanceof ApiResponseError) return err.message;
+  return "Something went wrong — try again";
+}
+
+function newClientId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    const done = (width: number, height: number) => {
+      URL.revokeObjectURL(url);
+      resolve({ width, height });
+    };
+    img.onload = () => done(img.naturalWidth, img.naturalHeight);
+    img.onerror = () => done(0, 0);
+    img.src = url;
+  });
+}
+
 export class UploadQueue {
   private tasks: FileTask[] = [];
-  private listeners = new Set<QueueListener>();
-  private concurrency: number;
-  private globalPaused = false; // user-initiated (Pause queue button)
-  private offlinePaused = false; // auto, driven by window online/offline events
+  private readonly listeners = new Set<QueueListener>();
+  private readonly waiters = new Set<() => void>();
+  private readonly concurrency: number;
+  private running = false;
+  private userPaused = false;
+  private offline = false;
+  private rateLimitedUntil = 0;
+  private blocked: BlockReason | null = null;
 
   constructor(concurrency: number = DEFAULT_UPLOAD_CONCURRENCY) {
-    this.concurrency = concurrency;
-    if (typeof window !== "undefined" && typeof navigator !== "undefined") {
-      this.offlinePaused = !navigator.onLine;
+    this.concurrency = Math.max(1, concurrency);
+    if (typeof window !== "undefined") {
+      this.offline = typeof navigator !== "undefined" && navigator.onLine === false;
+      this.blocked = this.blockedReason();
       window.addEventListener("online", this.handleOnline);
       window.addEventListener("offline", this.handleOffline);
     }
   }
 
-  /** Detaches the window online/offline listeners. Safe to call more than
-   * once. Callers that create a queue for the lifetime of a component
-   * should call this on unmount to avoid leaking listeners. */
+  /** Detaches the online/offline listeners; optional, since waits also poll navigator.onLine. */
   dispose(): void {
     if (typeof window === "undefined") return;
     window.removeEventListener("online", this.handleOnline);
@@ -127,383 +212,532 @@ export class UploadQueue {
   }
 
   private handleOnline = (): void => {
-    this.offlinePaused = false;
-    if (this.globalPaused) return; // user still has it manually paused
-    for (const t of this.tasks) {
-      if (t.snapshot.status === "paused") {
-        this.update(t, { status: "uploading", message: "Back online — resuming…" });
-      }
-    }
-    this.pump();
+    this.offline = false;
+    this.refreshBlocked();
+    this.kick();
   };
 
   private handleOffline = (): void => {
-    this.offlinePaused = true;
-    for (const t of this.tasks) {
-      if (t.snapshot.status === "uploading" || t.snapshot.status === "queued") {
-        this.update(t, { status: "paused", message: "Offline — will resume automatically" });
-      }
-    }
+    this.offline = true;
+    this.refreshBlocked();
   };
 
   subscribe(listener: QueueListener): () => void {
     this.listeners.add(listener);
     listener(this.snapshots());
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
-  private emit(): void {
-    const snap = this.snapshots();
-    for (const l of this.listeners) l(snap);
-  }
-
-  private snapshots(): FileTaskSnapshot[] {
-    return this.tasks.map((t) => t.snapshot);
-  }
-
-  private update(task: FileTask, patch: Partial<FileTaskSnapshot>): void {
-    task.snapshot = { ...task.snapshot, ...patch };
-    this.emit();
-  }
-
-  private updateChunk(task: FileTask, index: number, patch: Partial<ChunkTaskState>): void {
-    const chunks = task.snapshot.chunks.map((c) => (c.index === index ? { ...c, ...patch } : c));
-    task.snapshot = { ...task.snapshot, chunks };
-    this.emit();
+  getSnapshots(): FileTaskSnapshot[] {
+    return this.snapshots();
   }
 
   /** Queues files for upload and returns their queue ids (non-media files are skipped). */
   addFiles(files: File[], options: AddFilesOptions = {}): string[] {
     const added: string[] = [];
     for (const file of files) {
-      if (!isImage(file) && !isVideo(file)) continue;
-      const clientId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      added.push(clientId);
-      const task: FileTask = {
-        clientId,
-        file,
-        options,
-        controller: new AbortController(),
-        paused: false,
-        canceled: false,
-        snapshot: {
-          clientId,
-          filename: file.name,
-          size: file.size,
-          mimeType: file.type || "application/octet-stream",
-          status: "queued",
-          message: "Queued",
-          chunks: [],
-          bytesUploaded: 0,
-        },
-      };
+      const mimeType = mediaMimeType(file);
+      if (!mimeType) continue;
+      const task = this.createTask(newClientId(), file, mimeType, { ...options });
       this.tasks.push(task);
+      added.push(task.clientId);
     }
-    // If we're already offline when files are added (rather than going
-    // offline mid-upload), mark them paused immediately instead of letting
-    // them sit as "Queued" — pump() would no-op anyway since isPaused()
-    // is true, but the status/message should reflect why.
-    if (this.offlinePaused) {
-      for (const t of this.tasks) {
-        if (t.snapshot.status === "queued") {
-          this.update(t, { status: "paused", message: "Offline — will resume automatically" });
-        }
-      }
+    if (added.length > 0) {
+      this.emit();
+      this.kick();
     }
-    this.emit();
-    this.pump();
     return added;
   }
 
   pauseAll(): void {
-    this.globalPaused = true;
-    for (const t of this.tasks) {
-      if (t.snapshot.status === "uploading" || t.snapshot.status === "queued") {
-        this.update(t, { status: t.snapshot.status === "uploading" ? "paused" : t.snapshot.status });
-      }
-    }
+    this.userPaused = true;
+    this.refreshBlocked();
   }
 
   resumeAll(): void {
-    this.globalPaused = false;
-    if (this.offlinePaused) return; // still offline — handleOnline() will resume once it fires
-    for (const t of this.tasks) {
-      if (t.snapshot.status === "paused") {
-        this.update(t, { status: "uploading" });
-      }
-    }
-    this.pump();
+    this.userPaused = false;
+    this.refreshBlocked();
+    this.kick();
   }
 
+  /** Cancels a waiting or running file; on a failed file it dismisses the error. */
   cancelFile(clientId: string): void {
     const task = this.tasks.find((t) => t.clientId === clientId);
     if (!task) return;
-    task.canceled = true;
+    if (task.state === "finished") {
+      if (task.snapshot.status === "error") {
+        task.snapshot = { ...task.snapshot, status: "canceled", message: MESSAGES.canceled };
+        this.emit();
+      }
+      return;
+    }
     task.controller.abort();
-    this.update(task, { status: "canceled", message: "Canceled" });
+    this.finish(task, { status: "canceled", message: MESSAGES.canceled });
   }
 
   retryFile(clientId: string): void {
-    const task = this.tasks.find((t) => t.clientId === clientId);
-    if (!task) return;
-    task.canceled = false;
-    task.controller = new AbortController();
-    this.update(task, { status: "queued", message: "Queued", error: undefined });
-    this.pump();
+    const index = this.tasks.findIndex((t) => t.clientId === clientId);
+    const old = this.tasks[index];
+    if (!old || old.state !== "finished" || !old.file) return;
+    if (old.snapshot.status !== "error" && old.snapshot.status !== "canceled") return;
+    // A fresh task object, so a canceled run that's still unwinding can't touch the new one.
+    this.tasks[index] = this.createTask(old.clientId, old.file, old.mimeType, old.options);
+    this.emit();
+    this.kick();
   }
 
-  private isPaused(): boolean {
-    return this.globalPaused || this.offlinePaused;
+  /** Removes finished entries (done, already in library, canceled) from the list. */
+  clearFinished(): void {
+    const remaining = this.tasks.filter((t) => t.state !== "finished" || t.snapshot.status === "error");
+    if (remaining.length === this.tasks.length) return;
+    this.tasks = remaining;
+    this.emit();
   }
 
-  private async pump(): Promise<void> {
-    // Process files one at a time (chunk uploads within a file are what get
-    // the concurrency budget) so a single video doesn't starve every other
-    // queued item's chance to *start* hashing, while still keeping GitHub
-    // API load bounded.
+  private createTask(clientId: string, file: File, mimeType: string, options: AddFilesOptions): FileTask {
+    const task: FileTask = {
+      clientId,
+      file,
+      mimeType,
+      options,
+      controller: new AbortController(),
+      state: "waiting",
+      phase: { status: "queued", message: MESSAGES.waiting },
+      snapshot: {
+        clientId,
+        filename: file.name,
+        size: file.size,
+        mimeType,
+        status: "queued",
+        message: MESSAGES.waiting,
+        chunks: [],
+        bytesUploaded: 0,
+      },
+    };
+    task.snapshot = { ...task.snapshot, ...this.display(task) };
+    return task;
+  }
+
+  private snapshots(): FileTaskSnapshot[] {
+    return this.tasks.map((t) => t.snapshot);
+  }
+
+  private emit(): void {
+    const snapshots = this.snapshots();
+    for (const listener of this.listeners) listener(snapshots);
+  }
+
+  private blockedReason(): BlockReason | null {
+    if (this.userPaused) return "paused";
+    if (this.offline) return "offline";
+    if (Date.now() < this.rateLimitedUntil) return "rate-limit";
+    return null;
+  }
+
+  private display(task: FileTask): Pick<FileTaskSnapshot, "status" | "message"> {
+    if (this.blocked) return { status: "paused", message: BLOCKED_MESSAGES[this.blocked] };
+    if (task.state === "waiting") return { status: "queued", message: MESSAGES.waiting };
+    return task.phase;
+  }
+
+  /** On a pause/offline/rate-limit change: refresh every unfinished task and wake waiting requests. */
+  private refreshBlocked(): void {
+    const reason = this.blockedReason();
+    if (reason === this.blocked) return;
+    this.blocked = reason;
     for (const task of this.tasks) {
-      if (task.snapshot.status !== "queued") continue;
-      if (this.isPaused()) return;
-      // eslint-disable-next-line no-await-in-loop
-      await this.processFile(task);
+      if (task.state !== "finished") task.snapshot = { ...task.snapshot, ...this.display(task) };
     }
+    this.emit();
+    for (const wake of Array.from(this.waiters)) wake();
+  }
+
+  /** Resolves on the next block-state change, on abort, or after `timeoutMs`. */
+  private waitForChange(signal: AbortSignal, timeoutMs?: number): Promise<void> {
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        this.waiters.delete(done);
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      if (signal.aborted) return resolve();
+      this.waiters.add(done);
+      signal.addEventListener("abort", done, { once: true });
+      if (timeoutMs !== undefined) timer = setTimeout(done, Math.max(0, timeoutMs));
+    });
+  }
+
+  private async waitWhileBlocked(task: FileTask): Promise<void> {
+    for (;;) {
+      if (this.offline && typeof navigator !== "undefined" && navigator.onLine) this.offline = false;
+      this.refreshBlocked();
+      if (!this.blocked || task.controller.signal.aborted) return;
+      const timeout =
+        this.blocked === "rate-limit"
+          ? this.rateLimitedUntil - Date.now() + 50
+          : this.blocked === "offline"
+            ? OFFLINE_POLL_MS
+            : undefined;
+      await this.waitForChange(task.controller.signal, timeout);
+    }
+  }
+
+  private throwIfCanceled(task: FileTask): void {
+    if (task.controller.signal.aborted) throw new CanceledError();
+  }
+
+  private update(task: FileTask, patch: Partial<FileTaskSnapshot>): void {
+    if (task.state === "finished") return;
+    task.snapshot = { ...task.snapshot, ...patch, ...this.display(task) };
+    this.emit();
+  }
+
+  private setPhase(task: FileTask, status: FileUploadStatus, message: string): void {
+    task.phase = { status, message };
+    this.update(task, {});
+  }
+
+  private finish(
+    task: FileTask,
+    patch: Partial<FileTaskSnapshot> & Pick<FileTaskSnapshot, "status" | "message">
+  ): void {
+    if (task.state === "finished") return;
+    task.state = "finished";
+    if (patch.status === "done" || patch.status === "duplicate") task.file = null;
+    task.snapshot = { ...task.snapshot, ...patch };
+    this.emit();
+  }
+
+  private setChunkStatus(task: FileTask, pick: (chunk: ChunkTaskState) => ChunkUploadStatus | undefined): void {
+    const chunks = task.snapshot.chunks.map((chunk) => {
+      const status = pick(chunk);
+      return status && status !== chunk.status ? { ...chunk, status } : chunk;
+    });
+    const bytesUploaded = chunks.reduce(
+      (sum, chunk) => (chunk.status === "done" || chunk.status === "skipped" ? sum + chunk.size : sum),
+      0
+    );
+    this.update(task, { chunks, bytesUploaded });
+  }
+
+  private kick(): void {
+    if (this.running) return;
+    this.running = true;
+    void this.drain().finally(() => {
+      this.running = false;
+      // Files added while the runner was finishing must not be left behind.
+      if (this.tasks.some((t) => t.state === "waiting")) this.kick();
+      else this.pruneFinished();
+    });
+  }
+
+  private async drain(): Promise<void> {
+    for (;;) {
+      const task = this.tasks.find((t) => t.state === "waiting");
+      if (!task) return;
+      await this.waitWhileBlocked(task);
+      if (task.state === "waiting") await this.processFile(task);
+    }
+  }
+
+  private pruneFinished(): void {
+    const finished = this.tasks.filter(
+      (t) => t.state === "finished" && (t.snapshot.status === "done" || t.snapshot.status === "duplicate")
+    );
+    const excess = finished.length - MAX_FINISHED_TASKS;
+    if (excess <= 0) return;
+    const dropped = new Set(finished.slice(0, excess));
+    this.tasks = this.tasks.filter((t) => !dropped.has(t));
+    this.emit();
   }
 
   private async processFile(task: FileTask): Promise<void> {
-    const { file } = task;
-    const signal = task.controller.signal;
+    const file = task.file;
+    if (!file) return;
+    task.state = "active";
     try {
-      this.update(task, { status: "hashing", message: "Hashing & chunking…" });
-      const { fileHash, chunkSize, chunks } = await chunkFile(
-        file,
-        DEFAULT_CHUNK_SIZE,
-        (bytesHashed, total) => {
-          this.update(task, {
-            message: `Hashing… ${Math.round((bytesHashed / total) * 100)}%`,
-          });
-        }
-      );
-      if (task.canceled) throw new CanceledError();
-
-      const chunkStates: ChunkTaskState[] = chunks.map((c) => ({
-        index: c.index,
-        hash: c.hash,
-        size: c.size,
-        status: "pending",
-        attempts: 0,
-      }));
-      this.update(task, { fileHash, chunks: chunkStates });
-
-      const priorRecord = loadFileRecord(fileHash);
-      saveFileRecord({
+      this.setPhase(task, "hashing", MESSAGES.preparing);
+      const [{ fileHash, chunkSize, chunks }, takenAt] = await Promise.all([
+        chunkFile(file, DEFAULT_CHUNK_SIZE, (done, total) => this.reportPreparing(task, done, total)),
+        this.captureDate(task, file),
+      ]);
+      this.throwIfCanceled(task);
+      this.update(task, {
         fileHash,
-        filename: file.name,
-        size: file.size,
-        mimeType: file.type || "application/octet-stream",
-        chunkSize,
-        chunkHashes: chunks.map((c) => c.hash),
-        uploadedChunkHashes: priorRecord?.uploadedChunkHashes ?? [],
-        status: "uploading",
-        updatedAt: new Date().toISOString(),
-      });
-
-      this.update(task, { status: "uploading", message: "Checking which chunks are already stored…" });
-      const initRes = await fetch("/api/media/upload/init", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chunkHashes: chunks.map((c) => c.hash) }),
-        signal,
-      });
-      if (!initRes.ok) throw new Error((await initRes.json()).error ?? "init failed");
-      const { missing } = (await initRes.json()) as { missing: string[] };
-      const missingSet = new Set(missing);
-
-      // Chunks already known-uploaded (server dedup OR our own localStorage
-      // record from a prior interrupted attempt on the same file) are
-      // marked "skipped" immediately — this is the resume behavior.
-      for (const c of chunkStates) {
-        if (!missingSet.has(c.hash)) {
-          this.updateChunk(task, c.index, { status: "skipped" });
-        }
-      }
-      this.recomputeBytesUploaded(task, chunks);
-
-      const chunkBlobShas: Record<string, string> = {};
-      const toUpload = chunks.filter((c) => missingSet.has(c.hash));
-
-      await runWithConcurrency(
-        toUpload,
-        this.concurrency,
-        async (chunk) => {
-          if (task.canceled) return;
-          this.updateChunk(task, chunk.index, { status: "uploading" });
-          const sha = await this.uploadChunkWithRetry(task, chunk, signal);
-          chunkBlobShas[chunk.hash] = sha;
-          this.updateChunk(task, chunk.index, { status: "done" });
-          markChunkUploaded(fileHash, chunk.hash);
-          this.recomputeBytesUploaded(task, chunks);
-        },
-        {
-          isPaused: () => this.isPaused() || task.paused,
-          isCanceled: () => task.canceled,
-        }
-      );
-
-      if (task.canceled) throw new CanceledError();
-
-      this.update(task, { status: "processing", message: "Reading metadata…" });
-      let width: number | undefined;
-      let height: number | undefined;
-      let duration: number | undefined;
-
-      if (isVideo(file)) {
-        const meta = await extractVideoMetadata(file);
-        width = meta.width;
-        height = meta.height;
-        duration = meta.duration;
-      } else {
-        const dims = await getImageDimensions(file);
-        width = dims.width;
-        height = dims.height;
-      }
-
-      const id = `media_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-      this.update(task, { mediaId: id });
-
-      // Thumbnail generation + upload is best-effort and kept in its own
-      // try/catch, separate from the outer per-file one: a poster-frame
-      // capture or image-decode failure here (createImageBitmap can throw
-      // "InvalidStateError: The source image could not be decoded" for some
-      // large/unusual images — see lib/thumbnails) must not throw away a
-      // fully-uploaded set of chunks over what is fundamentally "couldn't
-      // make a preview image", not a data-loss problem. Only genuinely
-      // fatal errors (chunk upload, commit) should still mark the file
-      // "error" — those are handled by the outer catch below.
-      let thumbnailPaths: Record<string, string> = {};
-      let thumbnailBlobShas: Record<string, string> = {};
-      try {
-        this.update(task, { message: "Generating thumbnails…" });
-        const posterSource: File | Blob = isVideo(file)
-          ? await captureVideoPosterFrame(file)
-          : file;
-        const thumbnails = await generateThumbnails(posterSource);
-
-        this.update(task, { message: "Uploading thumbnails…" });
-        for (const thumb of thumbnails) {
-          if (task.canceled) throw new CanceledError();
-          const thumbHash = await sha256Hex(await thumb.blob.arrayBuffer());
-          const res = await fetch(
-            `/api/media/upload/chunk?hash=${encodeURIComponent(thumbHash)}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/octet-stream" },
-              body: thumb.blob,
-              signal,
-            }
-          );
-          if (!res.ok) throw new Error((await res.json()).error ?? "thumbnail upload failed");
-          const { sha } = (await res.json()) as { sha: string };
-          thumbnailBlobShas[String(thumb.size)] = sha;
-          thumbnailPaths[String(thumb.size)] = `thumbnails/${id}/${thumb.size}.webp`;
-        }
-      } catch (thumbErr) {
-        // Cancellation must still propagate to the outer catch, not be
-        // swallowed as "just no thumbnail".
-        if (thumbErr instanceof CanceledError || task.canceled) throw thumbErr;
-        thumbnailPaths = {};
-        thumbnailBlobShas = {};
-        this.update(task, {
-          message: `Thumbnail generation failed — uploading original without a preview (${String(thumbErr)})`,
-        });
-      }
-
-      const record = {
-        id,
-        filename: file.name,
-        mimeType: file.type || "application/octet-stream",
-        size: file.size,
-        createdAt: new Date().toISOString(),
-        width,
-        height,
-        duration,
-        hash: `sha256:${fileHash}`,
-        chunkSize,
-        chunks: chunks.map((c) => ({
+        chunks: chunks.map((c): ChunkTaskState => ({
           index: c.index,
           hash: c.hash,
-          path: `objects/${c.hash.slice(0, 2)}/${c.hash}`,
+          size: c.size,
+          status: "pending",
+          attempts: 0,
         })),
-        thumbnails: thumbnailPaths,
+      });
+
+      const init = await this.request<InitResponse>(
+        task,
+        "/api/media/upload/init",
+        jsonRequest({ chunkHashes: chunks.map((c) => c.hash), fileHash })
+      );
+      if (init.duplicateOf) {
+        this.finishDuplicate(task, init.duplicateOf, fileHash);
+        return;
+      }
+
+      const missing = new Set(init.missing);
+      const remembered = loadChunkShas(fileHash);
+      const chunkBlobShas: Record<string, string> = {};
+      const reused = new Set<string>();
+      for (const hash of missing) {
+        if (!remembered[hash]) continue;
+        chunkBlobShas[hash] = remembered[hash];
+        reused.add(hash);
+      }
+      this.setChunkStatus(task, (c) => (!missing.has(c.hash) || reused.has(c.hash) ? "skipped" : undefined));
+
+      this.setPhase(task, "uploading", MESSAGES.uploading);
+      const toUpload = chunks.filter((c) => missing.has(c.hash) && !chunkBlobShas[c.hash]);
+      await this.uploadChunks(task, fileHash, toUpload, chunkBlobShas);
+
+      this.setPhase(task, "processing", MESSAGES.finishing);
+      const id = makeMediaId();
+      const meta = await this.readMediaMeta(file, task.mimeType);
+      const thumbnailBlobShas = await this.uploadThumbnails(task, file);
+      const thumbnails: Record<string, string> = {};
+      for (const size of Object.keys(thumbnailBlobShas)) thumbnails[size] = `thumbnails/${id}/${size}.webp`;
+
+      const record: MediaRecord = {
+        id,
+        filename: file.name,
+        mimeType: task.mimeType,
+        size: file.size,
+        createdAt: new Date().toISOString(),
+        takenAt,
+        ...meta,
+        hash: `sha256:${fileHash}`,
+        chunkSize,
+        chunks: chunks.map((c) => ({ index: c.index, hash: c.hash, path: `objects/${c.hash.slice(0, 2)}/${c.hash}` })),
+        thumbnails,
+        editedFrom: task.options.editedFrom,
+        source: "web",
         deletedAt: null,
       };
 
-      this.update(task, { status: "committing", message: "Committing metadata + manifest…" });
-      const commitRes = await fetch("/api/media/upload/commit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ record, chunkBlobShas, thumbnailBlobShas }),
-        signal,
-      });
-      if (!commitRes.ok) throw new Error((await commitRes.json()).error ?? "commit failed");
-
-      removeFileRecord(fileHash);
-      this.update(task, { status: "done", message: "Done" });
+      this.setPhase(task, "committing", MESSAGES.finishing);
+      const result = await this.commit(task, { record, chunkBlobShas, thumbnailBlobShas }, { fileHash, chunks, reused });
+      forgetFileProgress(fileHash);
+      if (result.duplicate) {
+        this.finishDuplicate(task, result.id, fileHash);
+      } else {
+        this.finish(task, { status: "done", message: MESSAGES.done, mediaId: result.id, bytesUploaded: file.size });
+      }
     } catch (err) {
-      if (err instanceof CanceledError || task.canceled) {
-        this.update(task, { status: "canceled", message: "Canceled" });
-        return;
+      if (err instanceof CanceledError || task.controller.signal.aborted) {
+        this.finish(task, { status: "canceled", message: MESSAGES.canceled });
+      } else {
+        this.finish(task, { status: "error", message: MESSAGES.failed, error: describeFailure(err) });
       }
-      this.update(task, { status: "error", message: "Failed", error: String(err) });
     }
   }
 
-  private recomputeBytesUploaded(task: FileTask, chunks: ChunkInfo[]): void {
-    const doneOrSkipped = new Set(
-      task.snapshot.chunks
-        .filter((c) => c.status === "done" || c.status === "skipped")
-        .map((c) => c.index)
-    );
-    const bytes = chunks
-      .filter((c) => doneOrSkipped.has(c.index))
-      .reduce((sum, c) => sum + c.size, 0);
-    this.update(task, { bytesUploaded: bytes });
+  private finishDuplicate(task: FileTask, existingId: string, fileHash: string): void {
+    forgetFileProgress(fileHash);
+    this.finish(task, {
+      status: "duplicate",
+      message: MESSAGES.duplicate,
+      duplicateOf: existingId,
+      bytesUploaded: task.snapshot.size,
+    });
   }
 
-  private async uploadChunkWithRetry(
-    task: FileTask,
-    chunk: ChunkInfo,
-    signal: AbortSignal
-  ): Promise<string> {
-    let attempt = 0;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      attempt += 1;
-      this.updateChunk(task, chunk.index, { attempts: attempt });
-      try {
-        const res = await fetch(
-          `/api/media/upload/chunk?hash=${encodeURIComponent(chunk.hash)}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/octet-stream" },
-            body: chunk.blob,
-            signal,
-          }
+  private reportPreparing(task: FileTask, done: number, total: number): void {
+    if (total < HASH_PROGRESS_MIN_BYTES) return;
+    const message = `${MESSAGES.preparing} ${Math.floor((done / total) * 100)}%`;
+    if (task.phase.message !== message) this.setPhase(task, "hashing", message);
+  }
+
+  private async captureDate(task: FileTask, file: File): Promise<string | undefined> {
+    const given = normalizeIso(task.options.takenAt);
+    if (given) return given;
+    try {
+      return await withTimeout(readCaptureDate(file), CAPTURE_DATE_TIMEOUT_MS);
+    } catch {
+      return file.lastModified > 0 ? new Date(file.lastModified).toISOString() : undefined;
+    }
+  }
+
+  private async readMediaMeta(
+    file: File,
+    mimeType: string
+  ): Promise<Pick<MediaRecord, "width" | "height" | "duration">> {
+    if (mimeType.startsWith("video/")) {
+      const meta = await withTimeout(extractVideoMetadata(file), METADATA_TIMEOUT_MS).catch(() => null);
+      return {
+        width: meta?.width || undefined,
+        height: meta?.height || undefined,
+        duration: meta && meta.duration > 0 ? meta.duration : undefined,
+      };
+    }
+    const decoded = await withTimeout(getImageDimensions(file), METADATA_TIMEOUT_MS).catch(() => null);
+    const dims = decoded && decoded.width > 0 ? decoded : await probeImageDimensions(file);
+    return { width: dims?.width || undefined, height: dims?.height || undefined };
+  }
+
+  /** Best-effort previews: on failure the file still uploads (images get a server-side retry). */
+  private async uploadThumbnails(task: FileTask, file: File): Promise<Record<string, string>> {
+    try {
+      const source = task.mimeType.startsWith("video/")
+        ? await withTimeout(captureVideoPosterFrame(file), METADATA_TIMEOUT_MS)
+        : file;
+      const thumbnails = await withTimeout(generateThumbnails(source), THUMBNAIL_TIMEOUT_MS);
+      const shas: Record<string, string> = {};
+      for (const thumb of thumbnails) {
+        const hash = await sha256Hex(await thumb.blob.arrayBuffer());
+        const { sha } = await this.request<BlobResponse>(
+          task,
+          `/api/media/upload/chunk?hash=${hash}`,
+          blobRequest(thumb.blob)
         );
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error ?? `chunk upload failed (${res.status})`);
-        }
-        const { sha } = (await res.json()) as { sha: string };
-        return sha;
-      } catch (err) {
-        if (signal.aborted || task.canceled) throw new CanceledError();
-        if (attempt >= MAX_CHUNK_ATTEMPTS) {
-          this.updateChunk(task, chunk.index, { status: "error" });
-          throw err instanceof Error ? err : new Error(String(err));
-        }
-        const delay = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1) + Math.random() * 250;
-        await sleep(delay);
+        shas[String(thumb.size)] = sha;
       }
+      return shas;
+    } catch (err) {
+      if (err instanceof CanceledError || task.controller.signal.aborted) throw new CanceledError();
+      return {};
     }
+  }
+
+  private async uploadChunks(
+    task: FileTask,
+    fileHash: string,
+    chunks: ChunkInfo[],
+    shas: Record<string, string>
+  ): Promise<void> {
+    const pending = Array.from(new Map(chunks.map((c) => [c.hash, c])).values());
+    let next = 0;
+    let failed = false;
+    const worker = async (): Promise<void> => {
+      while (!failed && next < pending.length) {
+        const chunk = pending[next++];
+        const isThis = (c: ChunkTaskState) => c.hash === chunk.hash;
+        try {
+          this.setChunkStatus(task, (c) => (isThis(c) ? "uploading" : undefined));
+          const { sha } = await this.request<BlobResponse>(
+            task,
+            `/api/media/upload/chunk?hash=${chunk.hash}`,
+            blobRequest(chunk.blob),
+            (attempt) =>
+              this.update(task, {
+                chunks: task.snapshot.chunks.map((c) => (isThis(c) ? { ...c, attempts: attempt } : c)),
+              })
+          );
+          shas[chunk.hash] = sha;
+          rememberChunkSha(fileHash, chunk.hash, sha, { filename: task.snapshot.filename, size: task.snapshot.size });
+          this.setChunkStatus(task, (c) => (isThis(c) ? "done" : undefined));
+        } catch (err) {
+          failed = true;
+          if (!(err instanceof CanceledError)) this.setChunkStatus(task, (c) => (isThis(c) ? "error" : undefined));
+          throw err;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(this.concurrency, pending.length) }, worker));
+  }
+
+  /** Commits, recovering once from stale remembered blobs or chunks the server says are missing. */
+  private async commit(
+    task: FileTask,
+    body: CommitBody,
+    context: { fileHash: string; chunks: ChunkInfo[]; reused: Set<string> }
+  ): Promise<CommitResponse> {
+    try {
+      return await this.request<CommitResponse>(task, "/api/media/upload/commit", jsonRequest(body));
+    } catch (err) {
+      if (!(err instanceof ApiResponseError)) throw err;
+      let redo = new Set<string>();
+      if (err.code === "unknown_blob") {
+        forgetFileProgress(context.fileHash);
+        redo = context.reused.size > 0 ? context.reused : new Set(Object.keys(body.chunkBlobShas));
+      } else if (err.code === "missing_chunks" && Array.isArray(err.body.missing)) {
+        redo = new Set(err.body.missing.filter((hash): hash is string => typeof hash === "string"));
+      }
+      const chunks = context.chunks.filter((c) => redo.has(c.hash));
+      if (chunks.length === 0) throw err;
+
+      for (const hash of redo) delete body.chunkBlobShas[hash];
+      this.setChunkStatus(task, (c) => (redo.has(c.hash) ? "pending" : undefined));
+      this.setPhase(task, "uploading", MESSAGES.uploading);
+      await this.uploadChunks(task, context.fileHash, chunks, body.chunkBlobShas);
+      this.setPhase(task, "committing", MESSAGES.finishing);
+      return this.request<CommitResponse>(task, "/api/media/upload/commit", jsonRequest(body));
+    }
+  }
+
+  /** One API call: waits while blocked, 429 waits Retry-After (not a failure), retries network/5xx, times out stalls. */
+  private async request<T>(
+    task: FileTask,
+    url: string,
+    init: RequestInit,
+    onAttempt?: (attempt: number) => void
+  ): Promise<T> {
+    let failures = 0;
+    for (;;) {
+      await this.waitWhileBlocked(task);
+      this.throwIfCanceled(task);
+      onAttempt?.(failures + 1);
+
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      task.controller.signal.addEventListener("abort", abort, { once: true });
+      const timer = setTimeout(abort, REQUEST_TIMEOUT_MS);
+      let res: Response;
+      let body: Record<string, unknown> | null;
+      try {
+        res = await fetch(url, { ...init, signal: controller.signal });
+        const parsed: unknown = await res.json().catch(() => null);
+        body = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+      } catch {
+        this.throwIfCanceled(task);
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          this.offline = true;
+          this.refreshBlocked();
+          continue;
+        }
+        failures += 1;
+        if (failures >= MAX_REQUEST_ATTEMPTS) {
+          throw new UploadError("Couldn't reach the server — check your connection and try again");
+        }
+        await this.backoff(task, failures);
+        continue;
+      } finally {
+        clearTimeout(timer);
+        task.controller.signal.removeEventListener("abort", abort);
+      }
+
+      if (res.ok && body) return body as T;
+      if (res.status === 429) {
+        this.rateLimitedUntil = Math.max(this.rateLimitedUntil, Date.now() + rateLimitSeconds(res, body) * 1000);
+        this.refreshBlocked();
+        continue;
+      }
+      if (res.status === 401) throw new UploadError("You're signed out — sign in again, then retry");
+      if (res.ok || res.status >= 500 || res.status === 408) {
+        failures += 1;
+        if (failures >= MAX_REQUEST_ATTEMPTS) throw new ApiResponseError(res.status, body ?? {});
+        await this.backoff(task, failures, parseRetryAfter(res.headers.get("Retry-After")));
+        continue;
+      }
+      throw new ApiResponseError(res.status, body ?? {});
+    }
+  }
+
+  private async backoff(task: FileTask, failures: number, hintSeconds?: number): Promise<void> {
+    const exponential = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** (failures - 1)) + Math.random() * 500;
+    const delay = hintSeconds && hintSeconds > 0 ? Math.min(hintSeconds * 1000, 4 * MAX_BACKOFF_MS) : exponential;
+    await this.waitForChange(task.controller.signal, delay);
+    this.throwIfCanceled(task);
   }
 }

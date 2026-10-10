@@ -13,8 +13,8 @@ import { sha256 as sha256Incremental } from "js-sha256";
 // (https://vercel.com/docs/functions/limitations). 4 MiB leaves real headroom
 // under that cap for HTTP overhead instead of cutting it close.
 export const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024; // 4 MiB
-/** How many chunk uploads may be in flight at once (Section 20 Phase 3). */
-export const DEFAULT_UPLOAD_CONCURRENCY = 3;
+/** Parallel chunk uploads; GitHub allows ~80 blob creations a minute, so more mostly buys 429s. */
+export const DEFAULT_UPLOAD_CONCURRENCY = 2;
 
 // Vercel Functions cap RESPONSE bodies at the same hard, non-configurable
 // 4.5 MB the request-body cap above enforces

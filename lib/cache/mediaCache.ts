@@ -28,13 +28,7 @@ export interface MediaDiff {
   changed: boolean;
 }
 
-/**
- * Diffs a freshly-fetched media-index.json against the cached copy (by id +
- * a shallow shape comparison), per Section 11: "diff against the cached
- * copy, update IndexedDB". Only entries that are new or actually changed
- * are written back — a large library doesn't get its whole cache rewritten
- * on every sync, just the delta.
- */
+/** New, removed, and changed-in-any-field entries (so edits from other devices propagate). */
 export function diffMediaIndex(
   cached: MediaIndexEntry[],
   fresh: MediaIndexEntry[]
@@ -45,7 +39,7 @@ export function diffMediaIndex(
   const upserts: MediaIndexEntry[] = [];
   for (const entry of fresh) {
     const prior = cachedById.get(entry.id);
-    if (!prior || !shallowEqual(prior, entry)) {
+    if (!prior || !entriesEqual(prior, entry)) {
       upserts.push(entry);
     }
   }
@@ -56,14 +50,13 @@ export function diffMediaIndex(
   return { upserts, removedIds, changed: upserts.length > 0 || removedIds.length > 0 };
 }
 
-function shallowEqual(a: MediaIndexEntry, b: MediaIndexEntry): boolean {
-  return (
-    a.hash === b.hash &&
-    a.filename === b.filename &&
-    a.thumb === b.thumb &&
-    a.mimeType === b.mimeType &&
-    a.createdAt === b.createdAt
-  );
+/** Compares every key either entry has (future fields too); missing equals undefined. */
+function entriesEqual(a: MediaIndexEntry, b: MediaIndexEntry): boolean {
+  const left = a as unknown as Record<string, unknown>;
+  const right = b as unknown as Record<string, unknown>;
+  for (const key of Object.keys(left)) if (left[key] !== right[key]) return false;
+  for (const key of Object.keys(right)) if (!(key in left) && right[key] !== undefined) return false;
+  return true;
 }
 
 /** Applies a diff (upserts + removals) to the cached media store for a repo. */

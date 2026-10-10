@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "404GB",
   "short_name": "404GB",
   "description": "Your phone is full. Your repo isn't.",
@@ -8,6 +9,7 @@
   "background_color": "#060609",
   "theme_color": "#060609",
   "orientation": "any",
+  "categories": ["photo", "productivity"],
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -26,6 +28,12 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    },
+    {
+      "src": "/icons/brand.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ]
 }
