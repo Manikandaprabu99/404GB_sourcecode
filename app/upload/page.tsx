@@ -21,6 +21,7 @@ function formatBytes(bytes: number): string {
 
 const STATUS_STYLES: Record<FileTaskSnapshot["status"], string> = {
   done: "bg-success/15 text-success",
+  duplicate: "bg-surface-3 text-ink-muted",
   error: "bg-danger/15 text-danger",
   canceled: "bg-surface-3 text-ink-faint",
   paused: "bg-warning/15 text-warning",

@@ -5,6 +5,8 @@ import localFont from "next/font/local";
 import Script from "next/script";
 import ServiceWorkerRegister from "./components/ServiceWorkerRegister";
 import NativeAuthHandler from "./components/NativeAuthHandler";
+import { ToastProvider } from "./components/ui/Toast";
+import { ConfirmProvider } from "./components/ui/ConfirmDialog";
 
 // Self-hosted as static files checked into app/fonts/ (Inter and JetBrains
 // Mono, latin subset, variable-weight woff2) rather than next/font/google —
@@ -83,7 +85,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </Script>
         <ServiceWorkerRegister />
         <NativeAuthHandler />
-        {children}
+        <ToastProvider>
+          <ConfirmProvider>{children}</ConfirmProvider>
+        </ToastProvider>
       </body>
     </html>
   );

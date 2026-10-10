@@ -7,9 +7,17 @@ export type FileUploadStatus =
   | "processing" // thumbnails/poster generation
   | "committing"
   | "done"
+  | "duplicate" // same whole-file hash is already in the library; nothing uploaded
   | "error"
   | "canceled"
   | "paused";
+
+export interface AddFilesOptions {
+  /** Original media id when this file is an edited copy of it. */
+  editedFrom?: string;
+  /** Capture time (ISO 8601) to record instead of reading it from the file. */
+  takenAt?: string;
+}
 
 export type ChunkUploadStatus = "pending" | "uploading" | "done" | "error" | "skipped";
 
@@ -33,6 +41,8 @@ export interface FileTaskSnapshot {
   chunks: ChunkTaskState[];
   bytesUploaded: number;
   mediaId?: string;
+  /** Existing media id when status is "duplicate". */
+  duplicateOf?: string;
 }
 
 /** What gets persisted to localStorage, keyed by whole-file hash, so a page

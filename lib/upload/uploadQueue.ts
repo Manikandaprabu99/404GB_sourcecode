@@ -24,7 +24,7 @@ import {
 import { generateThumbnails } from "@/lib/thumbnails";
 import { extractVideoMetadata, captureVideoPosterFrame } from "@/lib/media/video";
 import { loadFileRecord, saveFileRecord, markChunkUploaded, removeFileRecord } from "./persist";
-import type { ChunkTaskState, FileTaskSnapshot, FileUploadStatus } from "./types";
+import type { AddFilesOptions, ChunkTaskState, FileTaskSnapshot, FileUploadStatus } from "./types";
 
 const MAX_CHUNK_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 600;
@@ -92,6 +92,7 @@ class CanceledError extends Error {
 interface FileTask {
   clientId: string;
   file: File;
+  options: AddFilesOptions;
   controller: AbortController;
   paused: boolean;
   canceled: boolean;
@@ -171,13 +172,17 @@ export class UploadQueue {
     this.emit();
   }
 
-  addFiles(files: File[]): void {
+  /** Queues files for upload and returns their queue ids (non-media files are skipped). */
+  addFiles(files: File[], options: AddFilesOptions = {}): string[] {
+    const added: string[] = [];
     for (const file of files) {
       if (!isImage(file) && !isVideo(file)) continue;
       const clientId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      added.push(clientId);
       const task: FileTask = {
         clientId,
         file,
+        options,
         controller: new AbortController(),
         paused: false,
         canceled: false,
@@ -207,6 +212,7 @@ export class UploadQueue {
     }
     this.emit();
     this.pump();
+    return added;
   }
 
   pauseAll(): void {

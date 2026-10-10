@@ -35,12 +35,17 @@ export interface ChunkRef {
   path: string;
 }
 
+export type MediaSource = "web" | "android-backup";
+
 export interface MediaRecord {
   id: string;
   filename: string;
   mimeType: string;
   size: number;
+  /** When it was uploaded (ISO 8601). */
   createdAt: string;
+  /** When it was taken (ISO 8601), from EXIF, video metadata or MediaStore. */
+  takenAt?: string;
   width?: number;
   height?: number;
   /** Video only (seconds). Undefined for images. */
@@ -49,6 +54,10 @@ export interface MediaRecord {
   chunkSize: number;
   chunks: ChunkRef[];
   thumbnails?: Record<string, string>;
+  favorite?: boolean;
+  /** Original media id when this is an edited copy. */
+  editedFrom?: string;
+  source?: MediaSource;
   deletedAt: string | null;
 }
 
@@ -58,10 +67,14 @@ export interface MediaIndexEntry {
   hash: string;
   mimeType: string;
   createdAt: string;
+  takenAt?: string;
   thumb?: string;
   width?: number;
   height?: number;
   duration?: number;
+  size?: number;
+  favorite?: boolean;
+  editedFrom?: string;
 }
 
 /** Repo-relative path for a stored thumbnail: thumbnails/<media-id>/<size>.webp */
