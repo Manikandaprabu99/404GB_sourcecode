@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import localFont from "next/font/local";
 import Script from "next/script";
 import ServiceWorkerRegister from "./components/ServiceWorkerRegister";
+import NativeAuthHandler from "./components/NativeAuthHandler";
 
 // Self-hosted as static files checked into app/fonts/ (Inter and JetBrains
 // Mono, latin subset, variable-weight woff2) rather than next/font/google —
@@ -81,6 +82,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           {THEME_INIT_SCRIPT}
         </Script>
         <ServiceWorkerRegister />
+        <NativeAuthHandler />
         {children}
       </body>
     </html>
