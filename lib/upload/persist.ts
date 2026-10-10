@@ -1,61 +1,87 @@
-// localStorage-backed resumability record (Phase 3). Keyed by whole-file
-// hash so re-selecting the same file after a reload finds its prior state.
-// This does NOT store file bytes — only which chunk hashes are believed
-// already uploaded, so the queue can skip re-uploading them (the server-side
-// /api/media/upload/init dedup check is the real safety net; this is just
-// an optimization + a way to show "resumed" in the UI without needing
-// IndexedDB, which is Phase 4 scope).
+// Best-effort localStorage memory of uploaded-but-uncommitted chunk blobs, per file hash, for resuming.
 
 import type { PersistedFileRecord } from "./types";
 
-const STORAGE_KEY = "404gb:uploadQueue:v1";
+const STORAGE_KEY = "404gb:uploadProgress:v2";
+const LEGACY_KEYS = ["404gb:uploadQueue:v1"];
+const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_RECORDS = 40;
 
 type StoredMap = Record<string, PersistedFileRecord>;
 
-function readAll(): StoredMap {
-  if (typeof window === "undefined") return {};
+let legacyCleared = false;
+
+function storage(): Storage | null {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as StoredMap;
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readAll(): StoredMap {
+  const store = storage();
+  if (!store) return {};
+  try {
+    if (!legacyCleared) {
+      legacyCleared = true;
+      for (const key of LEGACY_KEYS) store.removeItem(key);
+    }
+    const raw = store.getItem(STORAGE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as StoredMap) : {};
   } catch {
     return {};
   }
 }
 
 function writeAll(map: StoredMap): void {
-  if (typeof window === "undefined") return;
+  const store = storage();
+  if (!store) return;
+  const now = Date.now();
+  const kept = Object.values(map)
+    .filter((record) => now - Date.parse(record.updatedAt) < MAX_AGE_MS)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, MAX_RECORDS);
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
+    store.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(kept.map((r) => [r.fileHash, r]))));
   } catch {
-    // localStorage full/unavailable — resumability is best-effort, never
-    // block the upload on it.
+    // Storage full or disabled: resuming just re-uploads.
   }
 }
 
-export function loadFileRecord(fileHash: string): PersistedFileRecord | null {
-  return readAll()[fileHash] ?? null;
+/** Blob shas of this file's already-uploaded chunks, keyed by chunk hash. */
+export function loadChunkShas(fileHash: string): Record<string, string> {
+  const record = readAll()[fileHash];
+  return record && record.chunkBlobShas && typeof record.chunkBlobShas === "object"
+    ? { ...record.chunkBlobShas }
+    : {};
 }
 
-export function saveFileRecord(record: PersistedFileRecord): void {
+export function rememberChunkSha(
+  fileHash: string,
+  chunkHash: string,
+  blobSha: string,
+  file: { filename: string; size: number }
+): void {
   const all = readAll();
-  all[record.fileHash] = record;
-  writeAll(all);
-}
-
-export function markChunkUploaded(fileHash: string, chunkHash: string): void {
-  const all = readAll();
-  const record = all[fileHash];
-  if (!record) return;
-  if (!record.uploadedChunkHashes.includes(chunkHash)) {
-    record.uploadedChunkHashes.push(chunkHash);
-  }
+  const record = all[fileHash] ?? {
+    fileHash,
+    filename: file.filename,
+    size: file.size,
+    chunkBlobShas: {},
+    updatedAt: "",
+  };
+  record.chunkBlobShas = { ...record.chunkBlobShas, [chunkHash]: blobSha };
   record.updatedAt = new Date().toISOString();
+  all[fileHash] = record;
   writeAll(all);
 }
 
-export function removeFileRecord(fileHash: string): void {
+/** Drops the record once the file is committed (or its shas proved stale). */
+export function forgetFileProgress(fileHash: string): void {
   const all = readAll();
+  if (!(fileHash in all)) return;
   delete all[fileHash];
   writeAll(all);
 }

@@ -2,46 +2,36 @@
 
 import { useEffect, useState } from "react";
 import { loadThumbnailObjectUrl } from "@/lib/cache";
+import {
+  adoptThumbUrl,
+  peekThumbUrl,
+  releaseThumbUrl,
+  retainThumbUrl,
+  thumbKey,
+} from "@/lib/library/thumbUrls";
 import MediaPlaceholder from "./MediaPlaceholder";
 
-// Session-lived guard against re-firing a backfill request for the same
-// item every time it scrolls in and out of the virtualized grid's mounted
-// window (VirtualGrid only mounts rows near the viewport, so a given
-// GalleryThumb instance mounts/unmounts repeatedly as the user scrolls —
-// without this, each remount would re-request a backfill for an item
-// that's already known to have none, or whose generation already failed).
-// Deliberately a plain module-level Set, not persisted anywhere: it only
-// needs to survive for this page session, and a fresh attempt per item on
-// the next full page load is the desired behavior, not a bug.
+// One backfill request per item per page load, however often its tile remounts.
 const attemptedBackfillIds = new Set<string>();
 
 interface GalleryThumbProps {
   repoKey: string;
   mediaId: string;
   alt: string;
-  /** Whether this item has a cached thumbnail at all (see
-   * MediaIndexEntry.thumb — thumbnail generation during upload is
-   * best-effort and can fail, e.g. an undecodable image). When false, no
-   * network request is attempted and a placeholder tile is shown instead of
-   * a request that would just 404. */
+  /** False when the item was stored without thumbnails: shows a placeholder
+   * (and asks the server to generate them) instead of requesting a 404. */
   hasThumbnail: boolean;
   isVideo?: boolean;
+  size?: 320 | 800;
   className?: string;
-  /** Called once a server-side thumbnail backfill (see the effect below and
-   * lib/media.backfillThumbnailIfMissing) succeeds for this item, with the
-   * new 320px thumbnail's repo-relative path — so the parent can update its
-   * in-memory item list + IndexedDB cache and this tile re-renders showing
-   * the real image instead of the placeholder. Omitted entirely for video
-   * items (see the effect below — video posters are out of scope here). */
+  /** Called with the new 320px thumbnail path after a server-side backfill. */
   onThumbnailBackfilled?: (mediaId: string, thumbPath: string) => void;
 }
 
 /**
- * A 320px gallery thumbnail, backed by the IndexedDB thumbnail cache
- * (lib/cache/thumbnailLoader): checks the cache first, only hits
- * /api/media/thumb/:id/320 on a miss, and caches the result for next time.
- * Only mounted for rows the virtualized grid actually renders, so this is
- * also where the "don't fetch offscreen images" behavior lives.
+ * A thumbnail backed by the IndexedDB cache (lib/cache/thumbnailLoader) and an
+ * in-memory object-URL cache (lib/library/thumbUrls), so a remounted tile shows
+ * its image on the first frame.
  */
 export default function GalleryThumb({
   repoKey,
@@ -49,28 +39,24 @@ export default function GalleryThumb({
   alt,
   hasThumbnail,
   isVideo,
+  size = 320,
   className,
   onThumbnailBackfilled,
 }: GalleryThumbProps) {
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  const key = thumbKey(repoKey, mediaId, size);
+  const [loaded, setLoaded] = useState<{ key: string; url: string; fresh: boolean } | null>(() => {
+    const url = hasThumbnail ? peekThumbUrl(key) : null;
+    return url ? { key, url, fresh: false } : null;
+  });
+  const [failedKey, setFailedKey] = useState<string | null>(null);
 
-  // Self-healing for images stored with no thumbnail at all (uploaded
-  // before the server-side `sharp` fallback existed, or whose client-side
-  // generation failed) — see lib/media.backfillThumbnailIfMissing and
-  // POST /api/media/:id/thumbnail/backfill. Fire-and-forget: this never
-  // blocks or affects what renders below, it just repairs the stored data
-  // in the background so a *future* render of this same id shows a real
-  // thumbnail. Video is out of scope (video posters are captured
-  // client-side at upload time — see lib/media/video.ts — not backfilled
-  // here).
   useEffect(() => {
     if (hasThumbnail || isVideo) return;
     if (attemptedBackfillIds.has(mediaId)) return;
     attemptedBackfillIds.add(mediaId);
 
     let cancelled = false;
-    fetch(`/api/media/${mediaId}/thumbnail/backfill`, { method: "POST" })
+    fetch(`/api/media/${encodeURIComponent(mediaId)}/thumbnail/backfill`, { method: "POST" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data: { ok?: boolean; thumbnails?: Record<string, string> } | null) => {
         if (cancelled || !data?.ok) return;
@@ -78,62 +64,60 @@ export default function GalleryThumb({
         if (path) onThumbnailBackfilled?.(mediaId, path);
       })
       .catch(() => {
-        // Best-effort — leave the placeholder showing, exactly as if
-        // generation had failed client-side too. attemptedBackfillIds
-        // already guards against retry-spamming this same id again.
+        // Best-effort: the placeholder stays, exactly as if generation had failed.
       });
-
     return () => {
       cancelled = true;
     };
   }, [mediaId, hasThumbnail, isVideo, onThumbnailBackfilled]);
 
   useEffect(() => {
-    setObjectUrl(null);
-    setFailed(false);
     if (!hasThumbnail) return;
+    const cached = peekThumbUrl(key);
+    if (cached) {
+      retainThumbUrl(key);
+      setLoaded((prev) => (prev?.key === key && prev.url === cached ? prev : { key, url: cached, fresh: false }));
+      return () => releaseThumbUrl(key);
+    }
 
     let cancelled = false;
-    let ownedUrl: string | null = null;
+    let retained = false;
     const controller = new AbortController();
-
-    loadThumbnailObjectUrl(repoKey, mediaId, 320, controller.signal)
+    loadThumbnailObjectUrl(repoKey, mediaId, size, controller.signal)
       .then((url) => {
-        if (cancelled) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-        ownedUrl = url;
-        setObjectUrl(url);
+        // Kept even if this tile already unmounted: scrolling back shows it instantly.
+        const adopted = adoptThumbUrl(key, url);
+        if (cancelled) return;
+        retainThumbUrl(key);
+        retained = true;
+        setLoaded({ key, url: adopted, fresh: true });
       })
       .catch(() => {
-        // No cached/served thumbnail (offline, 404, etc.) — fall back to
-        // the placeholder tile rather than leaving a spinner up forever.
-        if (!cancelled) setFailed(true);
+        if (!cancelled) setFailedKey(key);
       });
-
     return () => {
       cancelled = true;
       controller.abort();
-      if (ownedUrl) URL.revokeObjectURL(ownedUrl);
+      if (retained) releaseThumbUrl(key);
     };
-  }, [repoKey, mediaId, hasThumbnail]);
+  }, [key, repoKey, mediaId, size, hasThumbnail]);
 
-  if (!hasThumbnail || failed) {
+  if (!hasThumbnail || failedKey === key) {
     return <MediaPlaceholder isVideo={isVideo} className={className} />;
   }
 
-  if (!objectUrl) {
+  if (!loaded || loaded.key !== key) {
     return <div className={`${className ?? ""} skeleton`} />;
   }
 
-  // eslint-disable-next-line @next/next/no-img-element
   return (
+    // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={objectUrl}
+      src={loaded.url}
       alt={alt}
-      loading="lazy"
-      className={`${className ?? ""} animate-fade-in`}
+      draggable={false}
+      decoding="async"
+      className={`${className ?? ""} ${loaded.fresh ? "animate-fade-in" : ""}`}
     />
   );
 }

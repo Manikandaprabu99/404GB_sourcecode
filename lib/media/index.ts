@@ -1,282 +1,236 @@
-import {
-  commitBlobs,
-  commitBlobsWithManifestUpdate,
-  createBlob,
-  getContentJson,
-  getDefaultBranch,
-  objectPathForHash,
-  contentsExists,
-  getContentBinary,
-  type BlobInput,
-} from "@/lib/github";
 import { mapWithConcurrency } from "@/lib/concurrency";
-// Constant only — safe to import into this server-side module (see the
-// backfillThumbnailIfMissing doc comment below for why the rest of that
-// client-oriented module is never pulled in at runtime here).
+import {
+  branchReader,
+  commitReader,
+  CorruptJsonError,
+  fetchRawContent,
+  getOctokit,
+  githubRetryAfterSeconds,
+  objectPathForHash,
+  runTransaction,
+  serializeJsonArray,
+  TreeWriteError,
+  type BlobInput,
+  type RepoReader,
+  type RepoRef,
+} from "@/lib/github";
+import { ALBUMS_PATH, normalizeAlbums, removeMediaFromAlbums } from "@/lib/albums/server";
+import { ApiError } from "@/lib/session/api";
+// Constant only — the rest of that client-oriented module never runs here.
 import { THUMBNAIL_SIZES } from "@/lib/thumbnails";
-// Type-only: `sharp` itself is loaded via a runtime `await import("sharp")`
-// inside backfillThumbnailIfMissing (see its doc comment for why), but its
-// .d.ts uses `export =`, which TypeScript's dynamic-`import()` typing
-// doesn't synthesize a `.default` for the way a static default import gets
-// one — hence importing just the type here under its own name and casting
-// the dynamic import's result to it below.
+// Type-only: sharp loads via runtime import() so a broken native binary is a catchable failure.
 import type SharpModule from "sharp";
+import {
+  isMediaId,
+  makeMediaId,
+  MEDIA_INDEX_PATH,
+  metadataPath,
+  thumbnailPath,
+  toIndexEntry,
+  type MediaIndexEntry,
+  type MediaRecord,
+} from "./types";
+import { normalizeUploadRecord, pickBlobShas, pickThumbnailShas, withMediaId } from "./validate";
 
-/** How many chunk objects to fetch from GitHub in parallel when
- * reconstructing a media file (Section 20 Phase 4 — Performance). Previously
- * this was a sequential for-loop (one chunk at a time), which meant a large
- * video with many 5 MiB chunks paid its full network round-trip latency N
- * times over instead of ~N/CONCURRENCY times. */
+export * from "./types";
+
+/** Parallel chunk fetches when reassembling a file server-side. */
 const CHUNK_FETCH_CONCURRENCY = 4;
+// sharp's prebuilt libvips decodes AVIF but not HEVC-coded HEIC/HEIF.
+const SHARP_UNSUPPORTED = new Set(["image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"]);
+const BACKFILL_MAX_BYTES = 48 * 1024 * 1024;
 
-export interface ChunkRef {
-  index: number;
-  hash: string;
-  path: string;
+function readIndex(reader: RepoReader): Promise<MediaIndexEntry[]> {
+  return reader.readJsonArray<MediaIndexEntry>(MEDIA_INDEX_PATH);
 }
 
-export interface MediaRecord {
-  id: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-  createdAt: string;
-  width?: number;
-  height?: number;
-  /** Video only (seconds). Undefined for images. */
-  duration?: number;
-  hash: string; // "sha256:<hex>"
-  chunkSize: number;
-  chunks: ChunkRef[];
-  thumbnails?: Record<string, string>;
-  deletedAt: string | null;
+/** manifest/media-index.json at `commitSha`, or at the branch head when omitted. */
+export async function readMediaIndex(repo: RepoRef, commitSha?: string): Promise<MediaIndexEntry[]> {
+  return readIndex(commitSha ? commitReader(repo, commitSha) : branchReader(repo));
 }
 
-export interface MediaIndexEntry {
-  id: string;
-  filename: string;
-  hash: string;
-  mimeType: string;
-  createdAt: string;
-  thumb?: string;
-  width?: number;
-  height?: number;
-  duration?: number;
+/** One metadata/<id>.json record. */
+export async function readMediaRecord(repo: RepoRef, id: string): Promise<MediaRecord | null> {
+  if (!isMediaId(id)) return null;
+  const octokit = getOctokit(repo.accessToken);
+  const buf = await fetchRawContent(octokit, repo.owner, repo.repo, metadataPath(id), repo.branch);
+  if (!buf) return null;
+  try {
+    return JSON.parse(buf.toString("utf-8")) as MediaRecord;
+  } catch {
+    return null;
+  }
 }
 
-/** Repo-relative path for a stored thumbnail: thumbnails/<media-id>/<size>.webp */
-export function thumbnailPath(mediaId: string, size: number | string): string {
-  return `thumbnails/${mediaId}/${size}.webp`;
-}
-
-export function makeMediaId(): string {
-  const rand = Math.random().toString(36).slice(2, 10);
-  return `media_${Date.now().toString(36)}${rand}`;
-}
-
-/** Read manifest/media-index.json (returns [] if not yet created). */
-export async function readMediaIndex(
-  accessToken: string,
-  owner: string,
-  repo: string
-): Promise<MediaIndexEntry[]> {
-  const data = await getContentJson<MediaIndexEntry[]>(
-    accessToken,
-    owner,
-    repo,
-    "manifest/media-index.json"
-  );
-  return data ?? [];
-}
-
-/** Read one metadata/<id>.json record. */
-export async function readMediaRecord(
-  accessToken: string,
-  owner: string,
-  repo: string,
-  id: string
-): Promise<MediaRecord | null> {
-  return getContentJson<MediaRecord>(
-    accessToken,
-    owner,
-    repo,
-    `metadata/${id}.json`
-  );
-}
-
-/**
- * Fetch and reassemble a media record's chunks into one Buffer, in order.
- * Chunks are fetched with bounded concurrency rather than one at a time —
- * `mapWithConcurrency` preserves output order by index, so concatenation is
- * still correct regardless of which request lands first.
- */
-export async function reconstructMedia(
-  accessToken: string,
-  owner: string,
-  repo: string,
-  record: MediaRecord
-): Promise<Buffer> {
+/** Fetches a record's chunks (bounded concurrency) and concatenates them in order. */
+export async function reconstructMedia(repo: RepoRef, record: MediaRecord): Promise<Buffer> {
+  const octokit = getOctokit(repo.accessToken);
   const ordered = [...record.chunks].sort((a, b) => a.index - b.index);
-  const parts = await mapWithConcurrency(
-    ordered,
-    CHUNK_FETCH_CONCURRENCY,
-    async (chunk) => {
-      const bytes = await getContentBinary(accessToken, owner, repo, chunk.path);
-      if (!bytes) {
-        throw new Error(`Missing chunk object at ${chunk.path}`);
-      }
-      return Buffer.from(bytes);
-    }
-  );
+  const parts = await mapWithConcurrency(ordered, CHUNK_FETCH_CONCURRENCY, async (chunk) => {
+    const path = objectPathForHash(chunk.hash);
+    const bytes = await fetchRawContent(octokit, repo.owner, repo.repo, path, repo.branch);
+    if (!bytes) throw new Error(`Missing chunk object at ${path}`);
+    return bytes;
+  });
   return Buffer.concat(parts);
 }
 
-/** Which of the given chunk hashes are missing from objects/. */
-export async function findMissingChunkHashes(
-  accessToken: string,
-  owner: string,
-  repo: string,
-  hashes: string[]
-): Promise<string[]> {
-  const missing: string[] = [];
-  for (const hash of hashes) {
-    const exists = await contentsExists(
-      accessToken,
-      owner,
-      repo,
-      objectPathForHash(hash)
-    );
-    if (!exists) missing.push(hash);
+export interface UploadCheck {
+  /** Chunk hashes with no objects/ file yet — the ones the client must upload. */
+  missing: string[];
+  /** Id of an indexed item with the same whole-file hash; nothing needs uploading then. */
+  duplicateOf: string | null;
+  /** The duplicate has no capture date: send this file's via POST /api/media/<id>/taken-at. */
+  duplicateNeedsDate?: boolean;
+}
+
+/** POST /api/media/upload/init: duplicate check plus which chunks are missing. */
+export async function checkUpload(
+  repo: RepoRef,
+  chunkHashes: readonly string[],
+  fileHash?: string
+): Promise<UploadCheck> {
+  const reader = branchReader(repo);
+  if (fileHash) {
+    const hash = `sha256:${fileHash}`;
+    const existing = (await readIndex(reader)).find((entry) => entry.hash === hash);
+    if (existing) return { missing: [], duplicateOf: existing.id, duplicateNeedsDate: !existing.takenAt };
   }
-  return missing;
+  const unique = Array.from(new Set(chunkHashes));
+  const stored = await reader.existingObjects(unique);
+  return { missing: unique.filter((hash) => !stored.has(hash)), duplicateOf: null };
 }
 
 export interface CommitUploadInput {
-  record: MediaRecord;
-  /** Git blob shas for chunks already uploaded via /api/media/upload/chunk, keyed by chunk hash. */
-  chunkBlobShas: Record<string, string>;
-  /** Git blob shas for thumbnail webp images already uploaded via /api/media/upload/chunk,
-   *  keyed by size ("320" | "800" | "1600"). */
-  thumbnailBlobShas?: Record<string, string>;
+  record: unknown;
+  /** Blob shas of chunks uploaded via /api/media/upload/chunk, keyed by chunk hash. */
+  chunkBlobShas?: unknown;
+  /** Blob shas of thumbnail webps uploaded the same way, keyed by "320" | "800" | "1600". */
+  thumbnailBlobShas?: unknown;
+}
+
+export interface CommitUploadResult {
+  id: string;
+  /** The same file (by whole-file hash) was already indexed; nothing was added. */
+  duplicate: boolean;
+  commitSha: string | null;
+  entry: MediaIndexEntry;
+  /** The stored record; null for duplicates. */
+  record: MediaRecord | null;
+}
+
+type CommitOutcome = Omit<CommitUploadResult, "commitSha">;
+
+/** One commit for chunks, thumbnails, metadata and index entry; idempotent by hash even under concurrent uploads. */
+export async function commitMediaUpload(
+  repo: RepoRef,
+  input: CommitUploadInput
+): Promise<CommitUploadResult> {
+  const thumbnailBlobShas = pickThumbnailShas(input.thumbnailBlobShas);
+  let record = normalizeUploadRecord(input.record, thumbnailBlobShas);
+  const chunkHashes = new Set(record.chunks.map((chunk) => chunk.hash));
+  const chunkBlobShas = pickBlobShas(input.chunkBlobShas, (key) => chunkHashes.has(key));
+
+  // A record must never reference chunks that aren't stored.
+  const unsupplied = Array.from(chunkHashes).filter((hash) => !chunkBlobShas[hash]);
+  if (unsupplied.length > 0) {
+    const stored = await branchReader(repo).existingObjects(unsupplied);
+    const missing = unsupplied.filter((hash) => !stored.has(hash));
+    if (missing.length > 0) {
+      throw new ApiError(409, "Some parts of this file haven't been uploaded yet", "missing_chunks", { missing });
+    }
+  }
+
+  try {
+    const { result, commitSha } = await runTransaction<CommitOutcome>(repo, async (snapshot) => {
+      const index = await readIndex(snapshot);
+      const existing = index.find((entry) => entry.hash === record.hash);
+      if (existing) {
+        return { result: { id: existing.id, duplicate: true, entry: existing, record: null } };
+      }
+      if (index.some((entry) => entry.id === record.id)) record = withMediaId(record, makeMediaId());
+
+      const entry = toIndexEntry(record);
+      const blobs: BlobInput[] = [
+        ...Object.entries(chunkBlobShas).map(([hash, sha]) => ({ path: objectPathForHash(hash), sha })),
+        ...Object.entries(thumbnailBlobShas).map(([size, sha]) => ({ path: thumbnailPath(record.id, size), sha })),
+        { path: metadataPath(record.id), text: JSON.stringify(record, null, 2) },
+        { path: MEDIA_INDEX_PATH, text: serializeJsonArray([...index, entry]) },
+      ];
+      return {
+        result: { id: record.id, duplicate: false, entry, record },
+        commit: { blobs, message: `404gb: upload ${record.filename}` },
+      };
+    });
+    return { ...result, commitSha };
+  } catch (err) {
+    if (err instanceof TreeWriteError) {
+      throw new ApiError(
+        422,
+        "Some uploaded parts are no longer on GitHub — upload them again",
+        "unknown_blob"
+      );
+    }
+    throw err;
+  }
+}
+
+export interface SetTakenAtResult {
+  /** False when the item is gone or already had a capture date (which is never overwritten). */
+  changed: boolean;
+  entry: MediaIndexEntry | null;
 }
 
 /**
- * Single commit covering: new chunk objects (only the missing ones) +
- * metadata/<id>.json + updated manifest/media-index.json.
+ * Gives an item uploaded without a capture date (older web uploads) the date
+ * a later upload of the same file knew, so it sorts under the day it was taken.
  */
-export async function commitMediaUpload(
-  accessToken: string,
-  owner: string,
-  repo: string,
-  input: CommitUploadInput
-): Promise<string> {
-  const branch = await getDefaultBranch(accessToken, owner, repo);
-
-  const currentIndex = await readMediaIndex(accessToken, owner, repo);
-  const newEntry: MediaIndexEntry = {
-    id: input.record.id,
-    filename: input.record.filename,
-    hash: input.record.hash,
-    mimeType: input.record.mimeType,
-    createdAt: input.record.createdAt,
-    thumb: input.record.thumbnails?.["320"],
-    width: input.record.width,
-    height: input.record.height,
-    duration: input.record.duration,
-  };
-  const updatedIndex = [...currentIndex, newEntry];
-
-  const blobs = [
-    ...Object.entries(input.chunkBlobShas).map(([hash, sha]) => ({
-      path: objectPathForHash(hash),
-      sha,
-    })),
-    ...Object.entries(input.thumbnailBlobShas ?? {}).map(([size, sha]) => ({
-      path: thumbnailPath(input.record.id, size),
-      sha,
-    })),
-    {
-      path: `metadata/${input.record.id}.json`,
-      base64Content: Buffer.from(
-        JSON.stringify(input.record, null, 2)
-      ).toString("base64"),
-    },
-    {
-      path: "manifest/media-index.json",
-      base64Content: Buffer.from(
-        JSON.stringify(updatedIndex, null, 2)
-      ).toString("base64"),
-    },
-  ];
-
-  return commitBlobs(
-    accessToken,
-    owner,
-    repo,
-    branch,
-    blobs,
-    `404gb: upload ${input.record.filename}`
-  );
+export async function setTakenAtIfMissing(repo: RepoRef, id: string, takenAt: string): Promise<SetTakenAtResult> {
+  if (!isMediaId(id)) return { changed: false, entry: null };
+  const { result } = await runTransaction<SetTakenAtResult>(repo, async (snapshot) => {
+    const index = await readIndex(snapshot);
+    const entry = index.find((item) => item.id === id);
+    if (!entry || entry.takenAt) return { result: { changed: false, entry: entry ?? null } };
+    const updated: MediaIndexEntry = { ...entry, takenAt };
+    const blobs: BlobInput[] = [
+      { path: MEDIA_INDEX_PATH, text: serializeJsonArray(index.map((item) => (item.id === id ? updated : item))) },
+    ];
+    const record = await snapshot.readJson<MediaRecord>(metadataPath(id));
+    if (record && !record.takenAt) {
+      blobs.push({ path: metadataPath(id), text: JSON.stringify({ ...record, takenAt }, null, 2) });
+    }
+    return {
+      result: { changed: true, entry: updated },
+      commit: { blobs, message: `404gb: set capture date of ${entry.filename}` },
+    };
+  });
+  return result;
 }
 
 export type ThumbnailBackfillStatus = "created" | "skipped" | "failed";
 
 export interface ThumbnailBackfillResult {
   status: ThumbnailBackfillStatus;
-  /** Present only when status is "created" — size -> repo-relative path,
-   * same shape as MediaRecord.thumbnails. */
+  /** size -> repo-relative path (same shape as MediaRecord.thumbnails), when thumbnails exist. */
   thumbnails?: Record<string, string>;
 }
 
-/**
- * Server-side thumbnail fallback (Section 20 follow-up, 2026-09-23).
- *
- * Client-side thumbnail generation (lib/thumbnails: browser
- * createImageBitmap()/<img>.decode(), see uploadQueue.ts) is inherently
- * best-effort — some real-world photos still fail to decode in a browser
- * canvas even with that module's resize-hint + <img>-fallback strategies.
- * `sharp` (libvips) decodes a much wider range of real-world images
- * reliably, including large ones, so this is a second attempt run
- * server-side (Vercel's Node serverless runtime, not Edge) rather than
- * another client-side patch.
- *
- * Used two ways:
- *  1. Immediately after a fresh upload's commit, when the client reports an
- *     empty thumbnail map (POST /api/media/upload/commit).
- *  2. On demand for items ALREADY stored without a thumbnail — e.g. ones
- *     uploaded before this fallback existed — via
- *     POST /api/media/:id/thumbnail/backfill, which
- *     app/gallery/GalleryThumb.tsx calls, once per item per session,
- *     whenever it renders a placeholder for an image.
- *
- * Best-effort in both cases: if `sharp` itself also can't decode the file
- * (rare — e.g. a genuinely corrupt upload), thumbnails are left empty
- * exactly as they already are today, no error is thrown, and the caller (an
- * API route) turns this into a 200 with `status: "failed"` rather than a
- * 500 — the placeholder simply keeps showing, same as before this feature
- * existed.
- *
- * NOTE on bundling: this function does a runtime `await import("sharp")`
- * (not a static `import ... from "sharp"` at the top of this file) so a
- * decode failure or the package being unavailable can be caught with an
- * ordinary try/catch, same as every other decode strategy in this file.
- * `sharp` itself must never be reachable from client bundles — it isn't:
- * every "use client" component that needs types from this module does
- * `import type { MediaRecord, ... }`, and the only runtime importers of
- * this file's value exports are `app/api/**\/route.ts` handlers, which
- * Next.js always compiles for the server only.
- */
+function hasThumbnails(record: MediaRecord): boolean {
+  return !!record.thumbnails && Object.keys(record.thumbnails).length > 0;
+}
+
+/** Best-effort sharp thumbnails for images the browser couldn't decode; only rate limits throw. */
 export async function backfillThumbnailIfMissing(
-  accessToken: string,
-  owner: string,
-  repo: string,
-  mediaId: string
+  repo: RepoRef,
+  mediaId: string,
+  /** The record when the caller already has it (it's re-checked before committing). */
+  knownRecord?: MediaRecord
 ): Promise<ThumbnailBackfillResult> {
-  const record = await readMediaRecord(accessToken, owner, repo, mediaId);
-  if (!record) return { status: "skipped" };
-  if (record.deletedAt) return { status: "skipped" };
-  if (!record.mimeType.startsWith("image/")) return { status: "skipped" };
-  if (record.thumbnails && Object.keys(record.thumbnails).length > 0) {
+  const record = knownRecord ?? (await readMediaRecord(repo, mediaId));
+  if (!record || record.deletedAt) return { status: "skipped" };
+  if (hasThumbnails(record)) return { status: "skipped", thumbnails: record.thumbnails };
+  const mimeType = record.mimeType?.toLowerCase() ?? "";
+  if (!mimeType.startsWith("image/") || SHARP_UNSUPPORTED.has(mimeType) || record.size > BACKFILL_MAX_BYTES) {
     return { status: "skipped" };
   }
 
@@ -285,190 +239,171 @@ export async function backfillThumbnailIfMissing(
     const mod = await import("sharp");
     sharpFactory = (mod as unknown as { default: typeof SharpModule }).default;
   } catch {
-    // Package not installed/available in this runtime — nothing to do.
     return { status: "failed" };
   }
 
   let original: Buffer;
   try {
-    original = await reconstructMedia(accessToken, owner, repo, record);
-  } catch {
-    // Couldn't even fetch the chunks back (missing object, network) — leave
-    // thumbnails empty, same as a client-side generation failure would.
+    original = await reconstructMedia(repo, record);
+  } catch (err) {
+    if (githubRetryAfterSeconds(err) !== null) throw err;
     return { status: "failed" };
   }
 
-  const generated: Array<{ size: (typeof THUMBNAIL_SIZES)[number]; buffer: Buffer }> = [];
+  const generated: Array<{ size: string; buffer: Buffer }> = [];
   try {
+    // rotate() bakes in EXIF orientation so the thumbnail isn't sideways.
+    const source = sharpFactory(original, { failOn: "none" }).rotate();
     for (const size of THUMBNAIL_SIZES) {
-      const buffer = await sharpFactory(original)
-        .rotate() // respect EXIF orientation instead of baking in a sideways thumbnail
+      const buffer = await source
+        .clone()
         .resize({ width: size, height: size, fit: "inside", withoutEnlargement: true })
         .webp({ quality: 82 })
         .toBuffer();
-      generated.push({ size, buffer });
+      generated.push({ size: String(size), buffer });
     }
   } catch {
-    // Genuinely undecodable by sharp too (e.g. a corrupt file) — best-effort,
-    // not a hard requirement (see doc comment above).
     return { status: "failed" };
   }
 
-  const branch = await getDefaultBranch(accessToken, owner, repo);
-
-  const thumbBlobShas: Record<string, string> = {};
+  const octokit = getOctokit(repo.accessToken);
+  const thumbShas: Record<string, string> = {};
   for (const { size, buffer } of generated) {
-    thumbBlobShas[String(size)] = await createBlob(
-      accessToken,
-      owner,
-      repo,
-      buffer.toString("base64")
+    const { data } = await octokit.git.createBlob({
+      owner: repo.owner,
+      repo: repo.repo,
+      content: buffer.toString("base64"),
+      encoding: "base64",
+    });
+    thumbShas[size] = data.sha;
+  }
+
+  const { result } = await runTransaction<ThumbnailBackfillResult>(repo, async (snapshot) => {
+    const current = await snapshot.readJson<MediaRecord>(metadataPath(mediaId));
+    if (!current || current.deletedAt) return { result: { status: "skipped" } };
+    if (hasThumbnails(current)) return { result: { status: "skipped", thumbnails: current.thumbnails } };
+    const index = await readIndex(snapshot);
+    if (!index.some((entry) => entry.id === mediaId)) return { result: { status: "skipped" } };
+
+    const thumbnails: Record<string, string> = {};
+    for (const size of Object.keys(thumbShas)) thumbnails[size] = thumbnailPath(mediaId, size);
+    const updatedIndex = index.map((entry) =>
+      entry.id === mediaId ? { ...entry, thumb: thumbnails["320"] } : entry
     );
-  }
-
-  const thumbnailPaths: Record<string, string> = {};
-  for (const size of Object.keys(thumbBlobShas)) {
-    thumbnailPaths[size] = thumbnailPath(mediaId, size);
-  }
-
-  const updatedRecord: MediaRecord = { ...record, thumbnails: thumbnailPaths };
-
-  const currentIndex = await readMediaIndex(accessToken, owner, repo);
-  const updatedIndex = currentIndex.map((entry) =>
-    entry.id === mediaId ? { ...entry, thumb: thumbnailPaths["320"] } : entry
-  );
-
-  const blobs: BlobInput[] = [
-    ...Object.entries(thumbBlobShas).map(([size, sha]) => ({
-      path: thumbnailPath(mediaId, size),
-      sha,
-    })),
-    {
-      path: `metadata/${mediaId}.json`,
-      base64Content: Buffer.from(JSON.stringify(updatedRecord, null, 2)).toString("base64"),
-    },
-    {
-      path: "manifest/media-index.json",
-      base64Content: Buffer.from(JSON.stringify(updatedIndex, null, 2)).toString("base64"),
-    },
-  ];
-
-  await commitBlobs(
-    accessToken,
-    owner,
-    repo,
-    branch,
-    blobs,
-    `404gb: backfill thumbnail for ${record.filename}`
-  );
-
-  return { status: "created", thumbnails: thumbnailPaths };
+    return {
+      result: { status: "created", thumbnails },
+      commit: {
+        blobs: [
+          ...Object.entries(thumbShas).map(([size, sha]) => ({ path: thumbnailPath(mediaId, size), sha })),
+          { path: metadataPath(mediaId), text: JSON.stringify({ ...current, thumbnails }, null, 2) },
+          { path: MEDIA_INDEX_PATH, text: serializeJsonArray(updatedIndex) },
+        ],
+        message: `404gb: backfill thumbnail for ${current.filename}`,
+      },
+    };
+  });
+  return result;
 }
 
 export interface DeleteMediaResult {
-  /** Ids that were actually present in the index and removed. A caller-
-   * supplied id that no longer exists (already deleted, or never did) is
-   * silently dropped from this list rather than erroring the whole call. */
+  /** Ids that were present and removed; unknown or already-deleted ids are dropped. */
   deletedIds: string[];
-  /** Null when deletedIds is empty — nothing changed, so no commit was made. */
+  /** Null when nothing changed (no commit made). */
   commitSha: string | null;
 }
 
-/**
- * Deletes one or more media items (docs/ARCHITECTURE.md Section 7 / the
- * product spec's Section 16): removes each id's entry from
- * manifest/media-index.json (so the gallery grid and full-screen viewer,
- * which both read from this index, immediately stop showing it) and removes
- * its metadata/<id>.json file from the tree entirely, via the Git Data
- * API's create-tree "sha: null deletes this path" mechanism (see
- * lib/github.commitBlobs' `delete` flag) — NOT a literal
- * octokit.repos.deleteFile call, which would be its own separate commit per
- * path.
- *
- * Deliberately does NOT touch anything under objects/ or thumbnails/. Chunk
- * objects are content-addressed by hash and may be shared by other
- * surviving records via upload-time dedup (see lib/chunking and the
- * upload/init missing-chunk check), so only a future garbage-collection
- * pass ("Storage Cleanup" — Section 16 of the product spec, see this repo's
- * docs/ARCHITECTURE.md Section 6's "Push/fetch bandwidth" note) that
- * verifies no surviving record still references a chunk should ever remove
- * one. Because this function only ever removes the specific id(s)
- * requested and never touches objects/, deleting a dedup-shared item is
- * correct by construction — the other record(s) still referencing that
- * chunk hash are untouched and keep working.
- *
- * Batches everything into a single commit regardless of how many ids are
- * passed, same pattern as commitMediaUpload — one network round trip
- * whether this is a single-item delete (the viewer's trash button) or a
- * multi-select bulk delete (the gallery grid's selection toolbar).
- *
- * The manifest read-modify-write goes through
- * lib/github.commitBlobsWithManifestUpdate rather than a plain
- * readMediaIndex(...) + commitBlobs(...) pair: the latter reads the index
- * once up front, but commitBlobs independently re-fetches whatever the
- * branch's *actual* current tree is right before committing, so a commit
- * that landed in that window (e.g. a concurrent upload from another tab)
- * would have its manifest change silently reverted by this delete even
- * though the delete's own commit still lands cleanly as a valid
- * fast-forward. commitBlobsWithManifestUpdate reads the index from the
- * exact tree it's about to commit against and retries the whole
- * read+recompute if the branch head moves before it can land, so the
- * removal is always computed from an up-to-date snapshot.
- */
-export async function deleteMedia(
-  accessToken: string,
-  owner: string,
-  repo: string,
-  ids: string[]
-): Promise<DeleteMediaResult> {
-  const requested = Array.from(new Set(ids.filter((id) => typeof id === "string" && id.length > 0)));
-  if (requested.length === 0) return { deletedIds: [], commitSha: null };
-  const idSet = new Set(requested);
+/** One commit removing index entries, metadata files and album membership; objects/ stay (chunks may be shared). */
+export async function deleteMedia(repo: RepoRef, ids: readonly string[]): Promise<DeleteMediaResult> {
+  const requested = new Set(ids.filter(isMediaId));
+  if (requested.size === 0) return { deletedIds: [], commitSha: null };
 
-  const branch = await getDefaultBranch(accessToken, owner, repo);
+  const { result, commitSha } = await runTransaction<string[]>(repo, async (snapshot) => {
+    const index = await readIndex(snapshot);
+    const deletedIds = index.filter((entry) => requested.has(entry.id)).map((entry) => entry.id);
+    if (deletedIds.length === 0) return { result: [] };
+    const deleted = new Set(deletedIds);
 
-  let deletedIds: string[] = [];
+    const metadataShas = await snapshot.fileShas(deletedIds.map(metadataPath));
+    const blobs: BlobInput[] = Array.from(metadataShas)
+      .filter(([, sha]) => sha !== null)
+      .map(([path]) => ({ path, delete: true as const }));
+    blobs.push({ path: MEDIA_INDEX_PATH, text: serializeJsonArray(index.filter((entry) => !deleted.has(entry.id))) });
 
-  const commitSha = await commitBlobsWithManifestUpdate<MediaIndexEntry>(
-    accessToken,
-    owner,
-    repo,
-    branch,
-    "manifest/media-index.json",
-    (freshIndex, pathExists) => {
-      deletedIds = freshIndex.filter((entry) => idSet.has(entry.id)).map((entry) => entry.id);
-      if (deletedIds.length === 0) {
-        // None of the requested ids are actually present in the index as of
-        // this exact attempt's snapshot (already deleted, or bad ids) —
-        // nothing to change, so don't create an empty commit.
-        return null;
-      }
-
-      const remainingIndex = freshIndex.filter((entry) => !idSet.has(entry.id));
-
-      // GitHub's create-tree API errors if asked to delete a path that
-      // isn't actually present in base_tree — guard against an index entry
-      // whose metadata file is already gone for some other reason (the
-      // index removal above still stands either way). `pathExists` checks
-      // against the same tree snapshot the commit is based on, so this is
-      // race-free too, unlike a separate contentsExists() call per id would
-      // be.
-      const blobs: BlobInput[] = deletedIds
-        .map((id) => `metadata/${id}.json`)
-        .filter((path) => pathExists(path))
-        .map((path) => ({ path, delete: true as const }));
-
-      return {
-        blobs,
-        updatedManifest: remainingIndex,
-        commitMessage:
-          deletedIds.length === 1
-            ? `404gb: delete ${deletedIds[0]}`
-            : `404gb: delete ${deletedIds.length} items`,
-      };
+    try {
+      const albums = normalizeAlbums(await snapshot.readJsonArray<unknown>(ALBUMS_PATH));
+      const pruned = removeMediaFromAlbums(albums, deleted, new Date().toISOString());
+      if (pruned.changed) blobs.push({ path: ALBUMS_PATH, text: serializeJsonArray(pruned.albums) });
+    } catch (err) {
+      // A damaged albums.json must not block deleting photos; album writes report it.
+      if (!(err instanceof CorruptJsonError)) throw err;
     }
-  );
 
-  if (commitSha === null) return { deletedIds: [], commitSha: null };
-  return { deletedIds, commitSha };
+    return {
+      result: deletedIds,
+      commit: {
+        blobs,
+        message:
+          deletedIds.length === 1 ? `404gb: delete ${deletedIds[0]}` : `404gb: delete ${deletedIds.length} items`,
+      },
+    };
+  });
+
+  return commitSha ? { deletedIds: result, commitSha } : { deletedIds: [], commitSha: null };
+}
+
+function withFavorite<T extends { favorite?: boolean }>(item: T, favorite: boolean): T {
+  const copy = { ...item };
+  if (favorite) copy.favorite = true;
+  else delete copy.favorite;
+  return copy;
+}
+
+export interface SetFavoriteResult {
+  /** Index entries of the requested ids that exist, after the change. */
+  entries: MediaIndexEntry[];
+  commitSha: string | null;
+}
+
+/** Sets or clears `favorite` on index entries and metadata records, in one commit. */
+export async function setFavorite(
+  repo: RepoRef,
+  ids: readonly string[],
+  favorite: boolean
+): Promise<SetFavoriteResult> {
+  const requested = new Set(ids.filter(isMediaId));
+  if (requested.size === 0) return { entries: [], commitSha: null };
+
+  const { result, commitSha } = await runTransaction<MediaIndexEntry[]>(repo, async (snapshot) => {
+    const index = await readIndex(snapshot);
+    const changing = new Set(
+      index.filter((entry) => requested.has(entry.id) && !!entry.favorite !== favorite).map((entry) => entry.id)
+    );
+    const updatedIndex = index.map((entry) => (changing.has(entry.id) ? withFavorite(entry, favorite) : entry));
+    const entries = updatedIndex.filter((entry) => requested.has(entry.id));
+    if (changing.size === 0) return { result: entries };
+
+    const blobs: BlobInput[] = [];
+    const records = await snapshot.readTexts(Array.from(changing, metadataPath));
+    for (const [path, text] of records) {
+      if (text === null) continue;
+      let record: MediaRecord;
+      try {
+        record = JSON.parse(text) as MediaRecord;
+      } catch {
+        continue;
+      }
+      blobs.push({ path, text: JSON.stringify(withFavorite(record, favorite), null, 2) });
+    }
+    blobs.push({ path: MEDIA_INDEX_PATH, text: serializeJsonArray(updatedIndex) });
+
+    const verb = favorite ? "favorite" : "unfavorite";
+    return {
+      result: entries,
+      commit: {
+        blobs,
+        message: changing.size === 1 ? `404gb: ${verb} ${[...changing][0]}` : `404gb: ${verb} ${changing.size} items`,
+      },
+    };
+  });
+  return { entries: result, commitSha };
 }

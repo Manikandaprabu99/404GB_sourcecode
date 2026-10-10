@@ -15,8 +15,10 @@
   --accent: 129 140 248;
   --accent-strong: 99 102 241;
   --accent-ink: 12 12 18;
+  --accent-inverse: 79 70 229;
   --success: 74 222 128;
   --danger: 248 113 113;
+  --danger-ink: 28 8 8;
   --warning: 250 204 21;
 
   color-scheme: dark;
@@ -36,8 +38,10 @@
     --accent: 99 102 241;
     --accent-strong: 79 70 229;
     --accent-ink: 255 255 255;
+    --accent-inverse: 165 180 252;
     --success: 22 163 74;
     --danger: 220 38 38;
+    --danger-ink: 255 255 255;
     --warning: 161 98 7;
 
     color-scheme: light;
@@ -57,8 +61,10 @@
   --accent: 99 102 241;
   --accent-strong: 79 70 229;
   --accent-ink: 255 255 255;
+  --accent-inverse: 165 180 252;
   --success: 22 163 74;
   --danger: 220 38 38;
+  --danger-ink: 255 255 255;
   --warning: 161 98 7;
 
   color-scheme: light;
@@ -74,6 +80,9 @@
 
 html {
   -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  /* Painted behind overscroll/bounce areas and before <body> renders. */
+  background: rgb(var(--bg));
 }
 
 body {
@@ -83,6 +92,18 @@ body {
 
 ::selection {
   background: rgb(var(--accent) / 0.35);
+}
+
+/* ---------- Focus ---------- */
+/* In the base layer so a component can still opt out with outline utilities. */
+@layer base {
+  :where(a, button, input, select, textarea, summary, [role="button"], [role="switch"], [tabindex]):focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 2px;
+  }
+  :where([tabindex="-1"]):focus-visible {
+    outline: none;
+  }
 }
 
 /* ---------- Motion-safety ---------- */
@@ -119,6 +140,14 @@ body {
 }
 
 /* ---------- Skeleton shimmer (gallery thumbnails while loading) ---------- */
+/* The keyframes live here, not in tailwind.config.js: Tailwind only emits
+ * config keyframes for animate-* classes it finds, and this is plain CSS. */
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 .skeleton {
   position: relative;
   overflow: hidden;
@@ -146,21 +175,65 @@ body {
   -webkit-backdrop-filter: blur(16px) saturate(1.4);
 }
 
-/* ---------- Safe-area helpers (installed PWA) ---------- */
-.pt-safe {
-  padding-top: env(safe-area-inset-top);
-}
-.pb-safe {
-  padding-bottom: env(safe-area-inset-bottom);
-}
-/* Extra bottom padding on phones so content can't sit under the fixed
- * mobile tab bar (see NavBar.tsx). Scoped to an explicit max-width media
- * query (rather than a base rule + a `sm:` reset) so it never has to
- * override anything at >= sm, where the tab bar is hidden — an unscoped
- * reset would have to set `padding-bottom: 0`, clobbering whatever bottom
- * padding the page's own `sm:p-8` etc. was already contributing there. */
+/* ---------- Safe areas ---------- */
+/* pt-safe / pb-safe / pt-safe-4 … come from the plugin in tailwind.config.js
+ * and add the inset to a base value. Extra bottom padding on phones keeps
+ * content clear of the fixed mobile tab bar (NavBar.tsx); scoped to a
+ * max-width query so it never overrides `sm:p-8` etc. on larger screens. */
 @media (max-width: 639.98px) {
   .pb-tabbar-safe {
-    padding-bottom: calc(4.75rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(4.75rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   }
+}
+
+/* ---------- Media scrubber (video viewer) ---------- */
+.range-media {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 28px;
+  width: 100%;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+  --range-fill: 0%;
+}
+.range-media::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    #fff var(--range-fill),
+    rgb(255 255 255 / 0.3) var(--range-fill)
+  );
+}
+.range-media::-moz-range-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.3);
+}
+.range-media::-moz-range-progress {
+  height: 4px;
+  border-radius: 9999px;
+  background: #fff;
+}
+.range-media::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  margin-top: -5px;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+  transition: transform 120ms ease-out;
+}
+.range-media:active::-webkit-slider-thumb {
+  transform: scale(1.25);
+}
+.range-media::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border: 0;
+  border-radius: 9999px;
+  background: #fff;
 }
