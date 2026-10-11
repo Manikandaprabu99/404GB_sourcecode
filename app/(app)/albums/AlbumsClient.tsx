@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import type { Album } from "@/lib/albums/types";
 import type { MediaIndexEntry } from "@/lib/media";
 import { repoKeyFor } from "@/lib/cache";
-import { albumCoverId, createAlbum, loadAlbums } from "@/lib/library/albumsStore";
+import { albumCoverId, albumHref, createAlbum, loadAlbums } from "@/lib/library/albumsStore";
 import { afterOverlayClosed } from "@/lib/library/history";
 import { useAlbums, useLibrary } from "@/lib/library/hooks";
 import { rememberAlbumListOrigin } from "@/lib/library/viewState";
@@ -32,7 +32,7 @@ function AlbumCard({ album, repoKey, cover }: { album: Album; repoKey: string; c
   const coverId = albumCoverId(album);
   return (
     <Link
-      href={`/albums/${encodeURIComponent(album.id)}`}
+      href={albumHref(album.id)}
       onClick={() => rememberAlbumListOrigin(album.id)}
       className="group block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
     >
@@ -85,7 +85,7 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
     const album = await createAlbum(name);
     setCreating(false);
     rememberAlbumListOrigin(album.id);
-    afterOverlayClosed(() => router.push(`/albums/${encodeURIComponent(album.id)}`));
+    afterOverlayClosed(() => router.push(albumHref(album.id)));
   }
 
   let content: JSX.Element;

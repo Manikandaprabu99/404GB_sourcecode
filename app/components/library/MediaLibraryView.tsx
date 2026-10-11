@@ -10,7 +10,7 @@ import { useToast } from "@/app/components/ui/Toast";
 import { addToAlbum, removeFromAlbum, setAlbumCover } from "@/lib/library/albumsStore";
 import { afterOverlayClosed } from "@/lib/library/history";
 import { useIsomorphicLayoutEffect } from "@/lib/library/hooks";
-import { syncLibrary, updateEntryLocally } from "@/lib/library/mediaStore";
+import { syncLibrary } from "@/lib/library/mediaStore";
 import { getHeaderHeight, getScrollPosition, setHeaderHeight } from "@/lib/library/viewState";
 import { stepZoom, useZoom } from "@/lib/library/zoom";
 import AddToAlbumSheet from "./AddToAlbumSheet";
@@ -185,10 +185,6 @@ export default function MediaLibraryView({
     [openId, neighborOf, removeFromThisAlbum]
   );
 
-  const handleThumbnailBackfilled = useCallback((mediaId: string, thumbPath: string) => {
-    updateEntryLocally(mediaId, { thumb: thumbPath });
-  }, []);
-
   const toggleGroup = useCallback(
     (groupKey: string) => {
       const group = groups.find((g) => g.key === groupKey);
@@ -302,7 +298,6 @@ export default function MediaLibraryView({
               onToggleSelect={selection.toggle}
               onStartSelect={selection.start}
               onToggleGroup={toggleGroup}
-              onThumbnailBackfilled={handleThumbnailBackfilled}
             />
           )}
         </div>

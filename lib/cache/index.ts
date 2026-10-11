@@ -19,4 +19,4 @@ export { getSyncState, setSyncState } from "./syncState";
 
 export { getCachedThumbnail, putCachedThumbnail } from "./thumbnailCache";
 
-export { loadThumbnailObjectUrl } from "./thumbnailLoader";
+export { loadThumbnailBlob, loadThumbnailObjectUrl, type ThumbnailSize } from "./thumbnailLoader";

@@ -132,28 +132,6 @@ export function startBackupWatcher(): void {
   });
 }
 
-let reportedLibrary: string | null = null;
-
-/** Tells the phone's backup which repo ("owner/name") the app shows, so a switch
- * re-queues everything for the new repo, and resumes backup after a fresh sign-in. */
-export async function syncBackupLibrary(repo: string): Promise<void> {
-  startBackupWatcher();
-  if (snapshot.support !== "available" || reportedLibrary === repo) return;
-  reportedLibrary = repo;
-  let status: BackupStatus | null = null;
-  try {
-    status = await Backup.setLibrary({ repo });
-    applyBackupStatus(status);
-  } catch {
-    // Older app builds lack setLibrary; their uploads follow the session's repo anyway.
-    status = await Backup.getStatus().catch(() => null);
-  }
-  if (status?.enabled && status.state === "needs_sign_in") {
-    await Backup.backupNow().catch(() => {});
-    await refreshBackupStatus();
-  }
-}
-
 export function backupRunProgress(
   status: BackupStatus,
   run: BackupRun | null
@@ -298,7 +276,7 @@ export function describeBackup(backup: BackupSnapshot): BackupPill | null {
 
   switch (status.state) {
     case "needs_sign_in":
-      // Settings, not "/": while the page's own session is fine, "/" would just bounce back here.
+      // Settings, not "/": while the page's own session is fine, "/" would just route back here.
       return { label: "Sign in to keep backing up", tone: "warn", icon: "lock", href: "/settings" };
     case "needs_permission":
       return { label: "Allow photo access", tone: "warn", icon: "alert", href: "/settings" };

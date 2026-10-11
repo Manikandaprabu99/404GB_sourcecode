@@ -1,15 +1,17 @@
-// App-wide albums list (manifest/albums.json via /api/albums). Cached in
-// localStorage per repo so the Albums tab paints instantly, and every edit is
-// optimistic with a rollback when the server refuses it.
+// App-wide albums list (manifest/albums.json in the repo). Cached in localStorage per
+// repo so the Albums tab paints instantly, and every edit is optimistic with a rollback
+// when the commit fails.
 
+import * as repoAlbums from "@/lib/albums";
 import type { Album } from "@/lib/albums/types";
-import { apiJson, retryWhenBusy, toLibraryError, type LibraryError } from "./api";
+import { retryWhenBusy, toLibraryError, withRepo, type LibraryError } from "./api";
+import { onSessionChange } from "@/lib/session";
 import { onMediaDeleted } from "./mediaStore";
 
 export interface AlbumsSnapshot {
   repoKey: string | null;
   albums: Album[];
-  /** A server response arrived since the page loaded (cached albums may be stale before that). */
+  /** The repo's list arrived since the page loaded (cached albums may be stale before that). */
   loaded: boolean;
   loading: boolean;
   error: LibraryError | null;
@@ -76,6 +78,20 @@ export function ensureAlbums(repoKey: string): void {
   for (const listener of listeners) listener();
 }
 
+/** Forgets the albums in memory (signing out). */
+export function resetAlbums(): void {
+  generation += 1;
+  inflight = null;
+  lastLoadAt = 0;
+  snapshot = EMPTY;
+  for (const listener of listeners) listener();
+}
+
+/** Where an album opens (a query parameter: the static export has no dynamic routes). */
+export function albumHref(albumId: string): string {
+  return `/albums/view?id=${encodeURIComponent(albumId)}`;
+}
+
 export function loadAlbums(options: { force?: boolean } = {}): Promise<void> {
   if (!snapshot.repoKey) return Promise.resolve();
   if (inflight) return inflight;
@@ -83,15 +99,16 @@ export function loadAlbums(options: { force?: boolean } = {}): Promise<void> {
     return Promise.resolve();
   }
   const gen = generation;
+  const key = snapshot.repoKey ?? undefined;
   const startedAt = Date.now();
   set({ loading: true });
-  const run: Promise<void> = apiJson<{ albums?: Album[] }>("/api/albums")
-    .then((data) => {
+  const run: Promise<void> = withRepo((repo) => repoAlbums.listAlbums(repo), key)
+    .then((albums) => {
       if (gen !== generation) return;
       lastLoadAt = Date.now();
-      // An edit made while this was in flight already has the newer server copy.
+      // An edit made while this was in flight already has the newer copy.
       if (lastMutationAt > startedAt) set({ loaded: true, loading: false, error: null });
-      else set({ albums: data.albums ?? [], loaded: true, loading: false, error: null });
+      else set({ albums, loaded: true, loading: false, error: null });
     })
     .catch((err: unknown) => {
       if (gen !== generation) return;
@@ -117,18 +134,17 @@ function replaceAlbum(album: Album) {
 async function mutateAlbum(
   id: string,
   optimistic: (album: Album) => Album,
-  body: Record<string, unknown>
+  patch: repoAlbums.AlbumPatch
 ): Promise<Album> {
   const before = snapshot.albums.find((a) => a.id === id);
   if (!before) throw new Error("This album no longer exists.");
   const gen = generation;
+  const key = snapshot.repoKey ?? undefined;
   lastMutationAt = Date.now();
   replaceAlbum(optimistic(before));
   try {
-    const { album } = await enqueue(() =>
-      retryWhenBusy(() =>
-        apiJson<{ album: Album }>(`/api/albums/${encodeURIComponent(id)}`, { method: "PATCH", body })
-      )
+    const album = await enqueue(() =>
+      retryWhenBusy(() => withRepo((repo) => repoAlbums.updateAlbum(repo, id, patch), key))
     );
     if (gen === generation && snapshot.albums.some((a) => a.id === id)) replaceAlbum(album);
     return album;
@@ -140,14 +156,10 @@ async function mutateAlbum(
 
 export async function createAlbum(name: string, mediaIds: readonly string[] = []): Promise<Album> {
   const gen = generation;
+  const key = snapshot.repoKey ?? undefined;
   lastMutationAt = Date.now();
-  const { album } = await enqueue(() =>
-    retryWhenBusy(() =>
-      apiJson<{ album: Album }>("/api/albums", {
-        method: "POST",
-        body: mediaIds.length > 0 ? { name, mediaIds } : { name },
-      })
-    )
+  const album = await enqueue(() =>
+    retryWhenBusy(() => withRepo((repo) => repoAlbums.createAlbum(repo, { name, mediaIds: [...mediaIds] }), key))
   );
   if (gen === generation) {
     set({ albums: [album, ...snapshot.albums.filter((a) => a.id !== album.id)] });
@@ -192,12 +204,12 @@ export async function deleteAlbum(id: string): Promise<void> {
   if (index < 0) return;
   const album = snapshot.albums[index];
   const gen = generation;
+  const key = snapshot.repoKey ?? undefined;
   lastMutationAt = Date.now();
   set({ albums: snapshot.albums.filter((a) => a.id !== id) });
   try {
-    await enqueue(() =>
-      retryWhenBusy(() => apiJson(`/api/albums/${encodeURIComponent(id)}`, { method: "DELETE" }))
-    );
+    // False means it was already gone, which is what the user asked for.
+    await enqueue(() => retryWhenBusy(() => withRepo((repo) => repoAlbums.deleteAlbum(repo, id), key)));
   } catch (err) {
     if (gen === generation && !snapshot.albums.some((a) => a.id === id)) {
       const albums = [...snapshot.albums];
@@ -214,7 +226,7 @@ export function albumCoverId(album: Album): string | undefined {
   return album.mediaIds[0];
 }
 
-// The server drops deleted media from albums in the same commit; mirror that locally.
+// Deleting media drops it from albums in the same commit; mirror that locally.
 onMediaDeleted((ids) => {
   const gone = new Set(ids);
   let changed = false;
@@ -228,4 +240,9 @@ onMediaDeleted((ids) => {
     };
   });
   if (changed) set({ albums });
+});
+
+// See mediaStore: a new sign-in or repo choice clears a stale "signed out" error.
+onSessionChange(() => {
+  if (snapshot.error?.kind === "auth") set({ error: null });
 });

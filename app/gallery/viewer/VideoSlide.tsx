@@ -8,7 +8,7 @@ import { formatDuration } from "./format";
 import type { Size } from "./geometry";
 import { DownloadIcon, PauseIcon, PlayIcon, ProgressRing, Spinner, VolumeIcon } from "./icons";
 import { describeLoadError, type OriginalEntry, type ProgressListener } from "./originals";
-import { thumbUrl, useCachedThumb } from "./useCachedThumb";
+import { useCachedThumb, usePreviewThumb } from "./useCachedThumb";
 
 interface VideoSlideProps {
   item: MediaIndexEntry;
@@ -48,8 +48,8 @@ function VideoSlide({
 }: VideoSlideProps) {
   const hasThumb = Boolean(item.thumb);
   const small = useCachedThumb(repoKey, item.id, 320, hasThumb);
-  const [posterSize, setPosterSize] = useState<1600 | 800 | null>(hasThumb ? 1600 : null);
-  const [posterLoaded, setPosterLoaded] = useState(false);
+  const poster = usePreviewThumb(repoKey, item.id, hasThumb);
+  const [posterLoaded, setPosterLoaded] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("poster");
   const [source, setSource] = useState<Source | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
@@ -155,7 +155,7 @@ function VideoSlide({
 
   const onPosterLoad = (event: SyntheticEvent<HTMLImageElement>) => {
     measure(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight);
-    setPosterLoaded(true);
+    setPosterLoaded(event.currentTarget.getAttribute("src"));
   };
 
   const playing = phase === "playing" && source !== null;
@@ -171,20 +171,16 @@ function VideoSlide({
               // eslint-disable-next-line @next/next/no-img-element
               <img src={small} alt="" aria-hidden="true" draggable={false} className={`${LAYER} scale-105 blur-md`} />
             )}
-            {posterSize && (
+            {poster && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                key={posterSize}
-                src={thumbUrl(item.id, posterSize)}
+                key={poster}
+                src={poster}
                 alt={item.filename}
                 draggable={false}
                 decoding="async"
                 onLoad={onPosterLoad}
-                onError={() => {
-                  setPosterLoaded(false);
-                  setPosterSize((size) => (size === 1600 ? 800 : null));
-                }}
-                className={`${LAYER} transition-opacity duration-250 ${posterLoaded ? "opacity-100" : "opacity-0"}`}
+                className={`${LAYER} transition-opacity duration-250 ${posterLoaded === poster ? "opacity-100" : "opacity-0"}`}
               />
             )}
           </>
@@ -196,7 +192,7 @@ function VideoSlide({
           <video
             ref={videoRef}
             src={source.url}
-            poster={posterSize ? thumbUrl(item.id, posterSize) : undefined}
+            poster={poster ?? undefined}
             autoPlay
             playsInline
             preload="auto"

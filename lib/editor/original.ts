@@ -1,7 +1,8 @@
 "use client";
 
-import type { MediaRecord } from "@/lib/media";
-import { MAX_DIRECT_FETCH_BYTES } from "@/lib/chunking";
+import { isAbortError } from "@/lib/github";
+import { ApiError, withRepo } from "@/lib/library/api";
+import { readMediaRecord, type MediaRecord } from "@/lib/media";
 import { reconstructMediaClient } from "@/lib/media/reconstructClient";
 
 export class OriginalLoadError extends Error {
@@ -14,47 +15,49 @@ export class OriginalLoadError extends Error {
   }
 }
 
-async function loadError(res: Response, fallback: string): Promise<OriginalLoadError> {
-  if (res.status === 401) return new OriginalLoadError("You're signed out. Sign in again to edit this photo.", 401);
-  const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-  const message = typeof body?.error === "string" ? body.error : `${fallback} (${res.status})`;
-  return new OriginalLoadError(message, res.status);
+function loadError(err: unknown, fallback: string): OriginalLoadError {
+  if (err instanceof ApiError) {
+    if (err.kind === "auth") return new OriginalLoadError("You're signed out. Sign in again to edit this photo.", 401);
+    if (err.kind === "offline") return new OriginalLoadError("You're offline. Connect to the internet and try again.", 0);
+    if (err.kind === "rate-limit") return new OriginalLoadError(err.message, 429);
+    if (err.kind === "not-found") {
+      return new OriginalLoadError("This photo couldn't be found. It may have been deleted.", 404);
+    }
+    if (err.code === "integrity") return new OriginalLoadError(err.message, err.status);
+    return new OriginalLoadError(`${fallback} (${err.status})`, err.status);
+  }
+  return new OriginalLoadError(fallback);
 }
 
 export async function fetchMediaRecord(id: string, signal?: AbortSignal): Promise<MediaRecord> {
-  const res = await fetch(`/api/media/${encodeURIComponent(id)}`, { signal });
-  if (!res.ok) throw await loadError(res, "Couldn't load this photo");
-  const body = (await res.json()) as { media?: MediaRecord };
-  if (!body.media) throw new OriginalLoadError("Couldn't load this photo");
-  return body.media;
+  let record: MediaRecord | null;
+  try {
+    record = await withRepo((repo) => readMediaRecord(repo, id, signal));
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    throw loadError(err, "Couldn't load this photo");
+  }
+  if (!record) throw new OriginalLoadError("This photo couldn't be found. It may have been deleted.", 404);
+  return record;
 }
 
-/** The original file: one request when small enough, otherwise chunk by chunk (SHA-256 verified). */
+/** The original file, chunk by chunk from GitHub (each chunk and the whole file SHA-256 verified). */
 export async function fetchOriginal(
   record: MediaRecord,
   onProgress: (fraction: number) => void,
   signal?: AbortSignal
 ): Promise<Blob> {
-  if (record.size > MAX_DIRECT_FETCH_BYTES) {
-    return reconstructMediaClient(record, (p) => onProgress(p.bytesTotal ? p.bytesDone / p.bytesTotal : 0));
+  try {
+    return await withRepo((repo) =>
+      reconstructMediaClient(
+        repo,
+        record,
+        (p) => onProgress(p.bytesTotal ? Math.min(1, Math.max(0, p.bytesDone / p.bytesTotal)) : 0),
+        signal
+      )
+    );
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    throw loadError(err, "Couldn't download the original");
   }
-  const res = await fetch(`/api/media/object/${encodeURIComponent(record.id)}`, { signal });
-  if (!res.ok) throw await loadError(res, "Couldn't download the original");
-  if (!res.body) {
-    const blob = await res.blob();
-    onProgress(1);
-    return blob;
-  }
-  const total = Number(res.headers.get("Content-Length")) || record.size || 1;
-  const reader = res.body.getReader();
-  const parts: BlobPart[] = [];
-  let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    parts.push(value);
-    received += value.byteLength;
-    onProgress(Math.min(1, received / total));
-  }
-  return new Blob(parts, { type: record.mimeType });
 }

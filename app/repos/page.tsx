@@ -1,20 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { apiJson, ApiError } from "@/lib/library/api";
+import { createRepo, getDefaultBranch, initRepoStructure, listRepos, type RepoSummary } from "@/lib/github";
+import { ApiError, withToken } from "@/lib/library/api";
+import { clearLocalLibraryData } from "@/lib/library/localData";
+import { leaveForSignIn } from "@/lib/library/signedOut";
+import { selectRepo, signOut } from "@/lib/session";
 import NavBar from "../components/NavBar";
+import { useRequiredSession } from "../components/useRequiredSession";
 import { useConfirm } from "../components/ui/ConfirmDialog";
-
-interface RepoSummary {
-  id: number;
-  name: string;
-  fullName: string;
-  owner: string;
-  private: boolean;
-  defaultBranch: string;
-}
 
 type Busy = { kind: "create" } | { kind: "use"; id: number } | null;
 
@@ -85,6 +80,12 @@ function GlobeIcon() {
 }
 
 export default function ReposPage() {
+  const session = useRequiredSession(false);
+  if (!session?.token) return null;
+  return <RepoPicker login={session.login} currentRepo={session.owner && session.repo ? `${session.owner}/${session.repo}` : null} />;
+}
+
+function RepoPicker({ login, currentRepo }: { login: string | null; currentRepo: string | null }) {
   const router = useRouter();
   const confirm = useConfirm();
   const [repos, setRepos] = useState<RepoSummary[]>([]);
@@ -101,9 +102,9 @@ export default function ReposPage() {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    apiJson<{ repos: RepoSummary[] }>("/api/repos")
-      .then((data) => {
-        if (!cancelled) setRepos(data.repos ?? []);
+    withToken((token) => listRepos(token))
+      .then((list) => {
+        if (!cancelled) setRepos(list);
       })
       .catch((err) => {
         if (!cancelled) setLoadError(describeError(err, "load"));
@@ -122,13 +123,23 @@ export default function ReposPage() {
     return q ? repos.filter((r) => r.fullName.toLowerCase().includes(q)) : repos;
   }, [repos, filter]);
 
-  async function initRepo(owner: string, repo: string, createNew: boolean, nextBusy: Busy) {
+  /** Creates the repo when asked, makes sure the manifest files exist, then makes it the library. */
+  async function initRepo(target: { owner: string; repo: string; branch?: string }, createNew: boolean, nextBusy: Busy) {
     setBusy(nextBusy);
     setActionError(null);
     try {
-      await apiJson("/api/repos/init", { method: "POST", body: { owner, repo, createNew } });
+      await withToken(async (token) => {
+        let { owner, repo, branch } = target;
+        if (createNew) {
+          const created = await createRepo(token, repo);
+          owner = created.owner;
+          repo = created.name;
+          branch = created.defaultBranch;
+        }
+        await initRepoStructure(token, owner, repo);
+        await selectRepo(owner, repo, branch || (await getDefaultBranch(token, owner, repo)));
+      });
       router.push("/gallery");
-      router.refresh();
     } catch (err) {
       setActionError(describeError(err, createNew ? "create" : "use"));
       setBusy(null);
@@ -139,7 +150,19 @@ export default function ReposPage() {
     event.preventDefault();
     setNameTouched(true);
     if (nameError || busy) return;
-    void initRepo("", newRepoName.trim(), true, { kind: "create" });
+    void initRepo({ owner: "", repo: newRepoName.trim() }, true, { kind: "create" });
+  }
+
+  async function onSwitchAccount() {
+    const ok = await confirm({
+      title: "Sign out of GitHub?",
+      message: "You can sign in again with another account or token.",
+      confirmLabel: "Sign out",
+    });
+    if (!ok) return;
+    await signOut();
+    await clearLocalLibraryData();
+    window.location.replace("/");
   }
 
   async function onUse(repo: RepoSummary) {
@@ -153,7 +176,7 @@ export default function ReposPage() {
       });
       if (!ok) return;
     }
-    void initRepo(repo.owner, repo.name, false, { kind: "use", id: repo.id });
+    void initRepo({ owner: repo.owner, repo: repo.name, branch: repo.defaultBranch }, false, { kind: "use", id: repo.id });
   }
 
   const error = actionError ?? loadError;
@@ -168,6 +191,21 @@ export default function ReposPage() {
             404GB keeps your photos and videos in a GitHub repository that you own. Create a new
             private one, or pick one you already have.
           </p>
+          {login && (
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-small text-ink-faint">
+              <span>
+                Signed in as <span className="font-mono text-ink-muted">@{login}</span>
+              </span>
+              <span aria-hidden>·</span>
+              <button
+                type="button"
+                onClick={() => void onSwitchAccount()}
+                className="-my-2 inline-flex h-11 items-center font-medium text-accent underline-offset-4 hover:underline"
+              >
+                Use another account
+              </button>
+            </p>
+          )}
         </header>
 
         {error && (
@@ -177,9 +215,13 @@ export default function ReposPage() {
           >
             <span>{error.message}</span>
             {error.signedOut ? (
-              <Link href="/" className="font-semibold underline-offset-4 hover:underline">
+              <button
+                type="button"
+                onClick={() => leaveForSignIn()}
+                className="font-semibold underline-offset-4 hover:underline"
+              >
                 Sign in again
-              </Link>
+              </button>
             ) : (
               loadError === error && (
                 <button
@@ -282,10 +324,13 @@ export default function ReposPage() {
             <ul className="flex flex-col gap-2.5">
               {visibleRepos.map((r) => {
                 const usingThis = busy?.kind === "use" && busy.id === r.id;
+                const current = r.fullName.toLowerCase() === currentRepo?.toLowerCase();
                 return (
                   <li
                     key={r.id}
-                    className="flex items-center gap-3 rounded-xl border border-border bg-surface p-3 pl-4 transition-colors duration-180 hover:border-border-strong animate-fade-in"
+                    className={`flex items-center gap-3 rounded-xl border bg-surface p-3 pl-4 transition-colors duration-180 hover:border-border-strong animate-fade-in ${
+                      current ? "border-accent/50" : "border-border"
+                    }`}
                   >
                     <span className={r.private ? "text-ink-faint" : "text-warning"}>
                       {r.private ? <LockIcon /> : <GlobeIcon />}
@@ -294,17 +339,18 @@ export default function ReposPage() {
                       <span className="block truncate font-mono text-small text-ink">{r.name}</span>
                       <span className="block truncate text-micro text-ink-faint">
                         {r.owner} · {r.private ? "Private" : "Public"}
+                        {current && <span className="font-semibold text-accent"> · In use</span>}
                       </span>
                     </span>
                     <button
                       type="button"
                       disabled={busy !== null}
-                      onClick={() => void onUse(r)}
-                      aria-label={`Use ${r.fullName}`}
+                      onClick={() => (current ? router.push("/gallery") : void onUse(r))}
+                      aria-label={current ? `Open ${r.fullName}` : `Use ${r.fullName}`}
                       className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full border border-border-strong px-4 text-small font-medium text-ink transition-colors duration-180 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-50"
                     >
                       {usingThis && <Spinner />}
-                      {usingThis ? "Setting up…" : "Use"}
+                      {usingThis ? "Setting up…" : current ? "Open" : "Use"}
                     </button>
                   </li>
                 );

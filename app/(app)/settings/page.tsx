@@ -1,17 +1,10 @@
-import { redirect } from "next/navigation";
-import { getSession } from "@/lib/session";
+"use client";
+
+import { useRequiredSession } from "@/app/components/useRequiredSession";
 import SettingsClient from "./SettingsClient";
 
-export const dynamic = "force-dynamic";
-
-export default async function SettingsPage() {
-  const session = await getSession();
-  if (!session.accessToken) redirect("/");
-  return (
-    <SettingsClient
-      githubLogin={session.githubLogin ?? null}
-      repoOwner={session.repoOwner ?? null}
-      repoName={session.repoName ?? null}
-    />
-  );
+export default function SettingsPage() {
+  const session = useRequiredSession(false);
+  if (!session) return null;
+  return <SettingsClient githubLogin={session.login} repoOwner={session.owner} repoName={session.repo} />;
 }

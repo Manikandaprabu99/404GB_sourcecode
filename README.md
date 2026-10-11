@@ -1,75 +1,40 @@
-# 404GB — Web (Phase 1)
+# 404GB — Web
 
-Personal photo gallery that stores media as chunked, content-addressed objects
-in a GitHub repo. This is the Phase 1 slice: GitHub OAuth login, a repo
-picker/init flow, uploading a single image end-to-end (chunk → dedup-check →
-upload missing chunks → single commit via the Git Data API), and a minimal
-gallery that reconstructs and displays that image. See `../../docs/ARCHITECTURE.md`
-for the full design.
+Personal photo gallery that stores media as chunked, content-addressed objects in a GitHub
+repo you own. There is no server: this Next.js app is a static export that talks to the
+GitHub REST API directly with your token. The Android app bundles the same export; a
+desktop browser can use it from any static host. See [`docs/STANDALONE.md`](docs/STANDALONE.md)
+for the design and the repo format shared with the Android backup worker.
 
-## 1. Register a GitHub OAuth App
-
-1. GitHub → **Settings → Developer settings → OAuth Apps → New OAuth App**.
-2. **Homepage URL**: `http://localhost:3000`
-3. **Authorization callback URL**: `http://localhost:3000/api/auth/github/callback`
-4. Save, then copy the **Client ID** and generate a **Client Secret**.
-
-## 2. Configure environment variables
-
-Copy the example file and fill in your values:
-
-```bash
-cp .env.local.example .env.local
-```
+## Configure (optional)
 
 ```
-GITHUB_CLIENT_ID=...        # from the OAuth App
-GITHUB_CLIENT_SECRET=...    # from the OAuth App — server-side only, never sent to the client
-SESSION_SECRET=...          # any random string, 32+ characters (e.g. `openssl rand -base64 32`)
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_GITHUB_CLIENT_ID=   # OAuth App client id for "Sign in with GitHub" (Device Flow, app only)
 ```
 
-`.env.local` is gitignored — never commit real secrets.
+Without it the app offers only personal-access-token sign-in, which works everywhere. The
+OAuth App needs **Enable Device Flow** ticked; no client secret is used anywhere.
 
-## 3. Install & run
+## Build & run
 
 ```bash
 npm install
-npm run dev
+npm run build      # static site in out/
+npx serve out      # or any static server; `npm run dev` for development
 ```
 
-Open `http://localhost:3000`, click **Connect GitHub**, authorize the `repo`
-scope, then pick or create a storage repo, upload a photo, and view it in the
-gallery.
-
-## What's implemented (Phase 1 scope only)
-
-- OAuth login/callback/logout with the GitHub access token kept only in an
-  encrypted, httpOnly `iron-session` cookie (never in the browser bundle,
-  localStorage, or IndexedDB).
-- Repo picker (`/repos`) listing the user's GitHub repos via `@octokit/rest`,
-  plus an init action that creates `manifest/media-index.json` (`[]`) and
-  `manifest/albums.json` (`[]`) in the chosen/new repo.
-- Single-image upload (`/upload`): client-side SHA-256 of the whole file and
-  of each 5 MiB (configurable) chunk, a server check of which chunk objects
-  already exist at `objects/<hash[0:2]>/<hash>`, upload of only the missing
-  chunks, and one Git Data API commit (blobs → tree → commit → ref update)
-  covering the new chunk objects, `metadata/<id>.json`, and the updated
-  `manifest/media-index.json`.
-- Minimal gallery (`/gallery`) that reads the index and metadata and
-  reconstructs the image server-side from its chunks (with a SHA-256
-  integrity check) for display.
-
-Out of scope for this phase (see architecture doc's later phases): gallery
-grid polish, video support, PWA/offline, IndexedDB caching, and albums.
+Open the site, sign in with a personal access token (classic with the `repo` scope, or
+fine-grained with Contents read & write + Metadata read on your photo repo), then pick or
+create a storage repo.
 
 ## Module layout
 
-- `lib/chunking` — storage-engine-ish module: client-side SHA-256 hashing and
-  fixed-size chunk splitting.
-- `lib/github` — github-adapter-ish module: all `@octokit/rest` / Git Data API
-  calls (repo listing/init, blob/tree/commit creation, Contents API lookups).
-- `lib/media` — metadata/manifest read-write helpers and chunk-based image
-  reconstruction.
-- `lib/session` — `iron-session` wrapper for the encrypted session cookie.
-- `app/api/**` — API routes per the architecture doc's Section 7.
+- `lib/github` — fetch-based GitHub client, repo reader and the race-safe commit transaction.
+- `lib/media` — the library operations (index sync, uploads, favorites, deletes, thumbnail
+  backfill), verified chunk reads and client-side reconstruction of originals.
+- `lib/albums` — `manifest/albums.json` reads and edits.
+- `lib/session` — the session store (native Backup plugin in the app, localStorage in a
+  browser) and its IndexedDB mirror for the service worker.
+- `lib/auth` — Device Flow (via CapacitorHttp) and token checks.
+- `lib/library`, `lib/upload`, `lib/cache` — the UI's stores, upload queue and local caches.
+- `public/sw.js` — offline shell and byte-range video streaming straight from GitHub.

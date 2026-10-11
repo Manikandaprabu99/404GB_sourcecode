@@ -1,8 +1,15 @@
-import type { Octokit } from "@octokit/rest";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { getCachedBlobText, putCachedBlobText } from "./blobCache";
-import { fetchRawBlob, toTreeEntryMap, type TreeEntry } from "./client";
-import { githubStatus } from "./errors";
+import { base64ToBytes, utf8Text, type Bytes } from "./bytes";
+import {
+  encodePath,
+  fetchRawBlob,
+  githubJson,
+  githubJsonOrNull,
+  repoPath,
+  toTreeEntryMap,
+  type TreeEntry,
+} from "./client";
 import { parseJsonArray } from "./jsonArray";
 
 const READ_CONCURRENCY = 8;
@@ -28,7 +35,22 @@ function unique(values: readonly string[]): string[] {
 
 interface FileMeta {
   sha: string;
-  inline: Buffer | null;
+  inline: Bytes | null;
+}
+
+interface TreeResponse {
+  sha: string;
+  truncated?: boolean;
+  tree: Array<{ path?: string; type?: string; sha?: string; size?: number }>;
+}
+
+interface ContentFile {
+  type: string;
+  name: string;
+  sha: string;
+  size: number;
+  encoding?: string;
+  content?: string;
 }
 
 /** Reads the repo as of one `ref`, memoizing listings and lookups: use one per request or attempt. */
@@ -37,14 +59,18 @@ export class RepoReader {
   private readonly metas = new Map<string, Promise<FileMeta | null>>();
 
   constructor(
-    protected readonly octokit: Octokit,
+    protected readonly token: string,
     protected readonly owner: string,
     protected readonly repo: string,
     /** Commit sha for a consistent snapshot, or a branch name for "latest". */
     readonly ref: string,
-    /** Root tree sha; a branch name also works since the trees API accepts refs. */
+    /** Root tree sha; a commit sha or branch name also works since the trees API accepts refs. */
     private readonly rootTree: string
   ) {}
+
+  private path(rest: string): string {
+    return repoPath(this.owner, this.repo, rest);
+  }
 
   /** Entries of a directory (non-recursive), or null when it doesn't exist. */
   listDir(dir: string): Promise<Map<string, TreeEntry> | null> {
@@ -64,11 +90,7 @@ export class RepoReader {
       if (!entry || entry.type !== "tree") return null;
       treeSha = entry.sha;
     }
-    const { data } = await this.octokit.git.getTree({
-      owner: this.owner,
-      repo: this.repo,
-      tree_sha: treeSha,
-    });
+    const data = await githubJson<TreeResponse>(this.token, this.path(`/git/trees/${encodeURIComponent(treeSha)}`));
     if (data.truncated) throw new Error(`${dir || "The repo root"} has too many entries to list`);
     return toTreeEntryMap(data.tree);
   }
@@ -89,24 +111,15 @@ export class RepoReader {
       const entry = (await this.listDir(dir))?.get(baseName(path));
       return entry?.type === "blob" ? { sha: entry.sha, inline: null } : null;
     }
-    try {
-      const { data } = await this.octokit.repos.getContent({
-        owner: this.owner,
-        repo: this.repo,
-        path,
-        ref: this.ref,
-      });
-      if (Array.isArray(data) || data.type !== "file") return null;
-      // Files up to 1 MB come back inline; bigger ones carry only the sha.
-      const inline =
-        data.encoding === "base64" && typeof data.content === "string"
-          ? Buffer.from(data.content, "base64")
-          : null;
-      return { sha: data.sha, inline: inline && inline.length === data.size ? inline : null };
-    } catch (err) {
-      if (githubStatus(err) === 404) return null;
-      throw err;
-    }
+    const data = await githubJsonOrNull<ContentFile | ContentFile[]>(
+      this.token,
+      this.path(`/contents/${encodePath(path)}?ref=${encodeURIComponent(this.ref)}`)
+    );
+    if (!data || Array.isArray(data) || data.type !== "file") return null;
+    // Files up to 1 MB come back inline; bigger ones carry only the sha.
+    const inline =
+      data.encoding === "base64" && typeof data.content === "string" ? base64ToBytes(data.content) : null;
+    return { sha: data.sha, inline: inline && inline.length === data.size ? inline : null };
   }
 
   /** Lists the directories that hold many of `paths`, so lookups below hit the listing. */
@@ -137,8 +150,8 @@ export class RepoReader {
   private async textOf(meta: FileMeta): Promise<string> {
     const cached = getCachedBlobText(meta.sha);
     if (cached !== undefined) return cached;
-    const bytes = meta.inline ?? (await fetchRawBlob(this.octokit, this.owner, this.repo, meta.sha));
-    const text = bytes.toString("utf-8");
+    const bytes = meta.inline ?? (await fetchRawBlob(this.token, this.owner, this.repo, meta.sha));
+    const text = utf8Text(bytes);
     putCachedBlobText(meta.sha, text);
     return text;
   }
@@ -214,32 +227,23 @@ export class RepoReader {
   }
 
   private async contentsDirNames(path: string): Promise<Set<string> | "overflow"> {
-    try {
-      const { data } = await this.octokit.repos.getContent({
-        owner: this.owner,
-        repo: this.repo,
-        path,
-        ref: this.ref,
-      });
-      if (!Array.isArray(data)) return new Set();
-      if (data.length >= CONTENTS_DIR_LIMIT) return "overflow";
-      return new Set(data.filter((entry) => entry.type === "file").map((entry) => entry.name));
-    } catch (err) {
-      if (githubStatus(err) === 404) return new Set();
-      throw err;
-    }
+    const data = await githubJsonOrNull<ContentFile | ContentFile[]>(
+      this.token,
+      this.path(`/contents/${encodePath(path)}?ref=${encodeURIComponent(this.ref)}`)
+    );
+    if (!data || !Array.isArray(data)) return new Set();
+    if (data.length >= CONTENTS_DIR_LIMIT) return "overflow";
+    return new Set(data.filter((entry) => entry.type === "file").map((entry) => entry.name));
   }
 
   /** Every object file name in one recursive listing, or null if GitHub truncated it. */
   private async allObjectNames(): Promise<Set<string> | null> {
     const objects = (await this.listDir(""))?.get("objects");
     if (!objects || objects.type !== "tree") return new Set();
-    const { data } = await this.octokit.git.getTree({
-      owner: this.owner,
-      repo: this.repo,
-      tree_sha: objects.sha,
-      recursive: "true",
-    });
+    const data = await githubJson<TreeResponse>(
+      this.token,
+      this.path(`/git/trees/${encodeURIComponent(objects.sha)}?recursive=1`)
+    );
     if (data.truncated) return null;
     const names = new Set<string>();
     for (const entry of data.tree) {

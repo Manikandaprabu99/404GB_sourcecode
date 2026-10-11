@@ -1,14 +1,11 @@
-import { redirect } from "next/navigation";
-import { getSession } from "@/lib/session";
+"use client";
+
 import GalleryClient from "@/app/gallery/GalleryClient";
+import { useRequiredSession } from "@/app/components/useRequiredSession";
 
-export const dynamic = "force-dynamic";
-
-export default async function GalleryPage() {
-  const session = await getSession();
-  if (!session.accessToken) redirect("/");
-  if (!session.repoOwner || !session.repoName) redirect("/repos");
-
-  // The index itself loads client-side: IndexedDB cache first, then the sinceSha sync.
-  return <GalleryClient repoOwner={session.repoOwner} repoName={session.repoName} />;
+export default function GalleryPage() {
+  const session = useRequiredSession(true);
+  if (!session?.owner || !session.repo) return null;
+  // The index itself loads client-side: IndexedDB cache first, then the head-sha sync.
+  return <GalleryClient repoOwner={session.owner} repoName={session.repo} />;
 }

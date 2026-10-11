@@ -1,18 +1,14 @@
 // Small, generic bounded-concurrency helpers (Phase 4 — Performance).
 //
-// Used in two places:
-//  - server-side: lib/media/reconstructMedia fetches a media file's chunks
-//    in parallel (capped) instead of one-at-a-time.
-//  - client-side: lib/cache/thumbnailLoader caps how many thumbnail fetches
-//    a scrolling gallery can have in flight at once.
+// Used for: fetching a file's chunks in parallel (capped) when reassembling an
+// original, capping how many thumbnail downloads a scrolling gallery has in
+// flight, and the GitHub reads/blob creations behind library writes.
 //
-// Pure Promise/timer code, no Node- or DOM-specific APIs, so the same module
-// works in an API route and in a browser component.
+// Pure Promise/timer code, no DOM-specific APIs.
 //
-// Note: lib/upload/uploadQueue.ts has its own `runWithConcurrency` — kept
-// separate on purpose, since it also needs pause/cancel awareness specific
-// to the upload flow. This module is for the simpler "just cap concurrency"
-// cases.
+// Note: lib/upload/uploadQueue.ts runs its own chunk workers — kept separate on
+// purpose, since it also needs pause/cancel awareness specific to the upload
+// flow. This module is for the simpler "just cap concurrency" cases.
 
 /** A counting semaphore: `await acquire()` blocks until a slot is free, and
  * resolves to a release function the caller must call exactly once. */

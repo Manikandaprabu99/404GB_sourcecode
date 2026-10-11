@@ -1,13 +1,17 @@
+// manifest/albums.json in the storage repo: reads and race-safe edits (one commit each).
+
 import {
   branchReader,
+  RepoError,
   runTransaction,
   serializeJsonArray,
   type RepoRef,
   type Snapshot,
 } from "@/lib/github";
 import { MEDIA_INDEX_PATH, type MediaIndexEntry } from "@/lib/media/types";
-import { ApiError } from "@/lib/session/api";
 import type { Album } from "./types";
+
+export type { Album } from "./types";
 
 export const ALBUMS_PATH = "manifest/albums.json";
 const NAME_MAX_LENGTH = 100;
@@ -45,7 +49,7 @@ export function normalizeAlbums(raw: unknown[]): Album[] {
 function albumName(value: unknown): string {
   const name = typeof value === "string" ? value.trim() : "";
   if (name.length < 1 || name.length > NAME_MAX_LENGTH) {
-    throw new ApiError(400, `Album name must be 1–${NAME_MAX_LENGTH} characters`);
+    throw new RepoError(400, `Album name must be 1–${NAME_MAX_LENGTH} characters`);
   }
   return name;
 }
@@ -87,6 +91,7 @@ export async function listAlbums(repo: RepoRef): Promise<Album[]> {
   return readAlbums(branchReader(repo));
 }
 
+/** A new album with the given name and (known) media; unknown media ids are ignored. */
 export async function createAlbum(
   repo: RepoRef,
   input: { name?: unknown; mediaIds?: unknown }
@@ -123,13 +128,13 @@ export async function updateAlbum(repo: RepoRef, albumId: string, patch: AlbumPa
   const additions = stringList(patch.addMediaIds);
   const removals = new Set(stringList(patch.removeMediaIds));
   if (patch.coverId !== undefined && patch.coverId !== null && typeof patch.coverId !== "string") {
-    throw new ApiError(400, "coverId must be a media id or null");
+    throw new RepoError(400, "coverId must be a media id or null");
   }
 
   const { result } = await runTransaction(repo, async (snapshot) => {
     const albums = await readAlbums(snapshot);
     const current = albums.find((album) => album.id === albumId);
-    if (!current) throw new ApiError(404, "Album not found");
+    if (!current) throw new RepoError(404, "Album not found");
 
     let mediaIds = current.mediaIds.filter((id) => !removals.has(id));
     const present = new Set(mediaIds);

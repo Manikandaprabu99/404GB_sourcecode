@@ -25,7 +25,7 @@ import {
   type ProgressListener,
 } from "./viewer/originals";
 import { canShareFiles, hasNativeBackup, isShareCancel, nativeTransfer, triggerDownload } from "./viewer/transfer";
-import { thumbUrl } from "./viewer/useCachedThumb";
+import { preloadPreviewThumb } from "./viewer/useCachedThumb";
 import { SLIDE_GAP, useViewerGestures } from "./viewer/useViewerGestures";
 
 const PhotoEditor = dynamic(() => import("./PhotoEditor"), {
@@ -215,7 +215,7 @@ export default function MediaViewer(props: MediaViewerProps) {
           message: "You're signed out. Sign in again to continue.",
           tone: "error",
           actionLabel: "Sign in",
-          onAction: () => leaveForSignIn({ force: true }),
+          onAction: () => leaveForSignIn(),
         });
         return;
       }
@@ -411,19 +411,12 @@ export default function MediaViewer(props: MediaViewerProps) {
   }, [item?.id, item?.mimeType]);
 
   // Warm the cache for the photos two steps away (the direct neighbours are already rendered).
-  const preloadRef = useRef<HTMLImageElement[]>([]);
   useEffect(() => {
-    const images: HTMLImageElement[] = [];
     for (const offset of [2, -2]) {
       const entry = items[safeIndex + offset];
-      if (!entry?.thumb) continue;
-      const img = new Image();
-      img.decoding = "async";
-      img.src = thumbUrl(entry.id, 1600);
-      images.push(img);
+      if (entry?.thumb) preloadPreviewThumb(repoKey, entry.id);
     }
-    preloadRef.current = images;
-  }, [items, safeIndex]);
+  }, [items, safeIndex, repoKey]);
 
   useEffect(() => {
     if (!infoOpen || !item) return;
@@ -517,13 +510,7 @@ export default function MediaViewer(props: MediaViewerProps) {
       }
       void runTransfer("Preparing download", async (progress) => {
         try {
-          const store = getStore();
-          const direct = await store.directUrl(target);
-          if (direct) {
-            triggerDownload(direct, target.filename);
-            return;
-          }
-          const entry = await store.load(target, progress);
+          const entry = await getStore().load(target, progress);
           triggerDownload(entry.url, target.filename);
         } catch (err) {
           notifyError(err, "Couldn't download this. Try again.");

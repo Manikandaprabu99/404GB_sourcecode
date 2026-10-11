@@ -1,6 +1,7 @@
-import { createHash } from "crypto";
+import { sha1HexOf, utf8Bytes } from "./bytes";
 
-// Blob texts by git sha; a sha names one content and is only learned via an authorized read.
+// Blob texts by git sha, so a transaction re-reading an unchanged (large) index doesn't
+// download it again. A sha names one content and is only learned via an authorized read.
 const MAX_TOTAL_CHARS = 48 * 1024 * 1024;
 const MAX_ENTRY_CHARS = 16 * 1024 * 1024;
 
@@ -27,11 +28,17 @@ export function putCachedBlobText(sha: string, text: string): void {
   }
 }
 
+export function clearBlobTextCache(): void {
+  entries.clear();
+  totalChars = 0;
+}
+
 /** The sha git assigns to a blob with this UTF-8 content. */
-export function gitBlobSha(text: string): string {
-  const body = Buffer.from(text, "utf-8");
-  return createHash("sha1")
-    .update(`blob ${body.length}\0`)
-    .update(body)
-    .digest("hex");
+export async function gitBlobSha(text: string): Promise<string> {
+  const body = utf8Bytes(text);
+  const header = utf8Bytes(`blob ${body.length}\0`);
+  const all = new Uint8Array(header.length + body.length);
+  all.set(header);
+  all.set(body, header.length);
+  return sha1HexOf(all);
 }

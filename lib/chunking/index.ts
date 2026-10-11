@@ -7,26 +7,11 @@
 
 import { sha256 as sha256Incremental } from "js-sha256";
 
-// 4 MiB, not 5: chunks now travel to /api/media/upload/chunk as raw bytes
-// (no base64 inflation — see lib/upload/uploadQueue.ts), and Vercel Functions
-// enforce a hard, non-configurable 4.5 MB cap on inbound request bodies
-// (https://vercel.com/docs/functions/limitations). 4 MiB leaves real headroom
-// under that cap for HTTP overhead instead of cutting it close.
+// 4 MiB: the repo format's chunk size (docs/STANDALONE.md), small enough that one chunk is
+// a quick blob upload or download and well inside GitHub's per-request limits.
 export const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024; // 4 MiB
 /** Parallel chunk uploads; GitHub allows ~80 blob creations a minute, so more mostly buys 429s. */
 export const DEFAULT_UPLOAD_CONCURRENCY = 2;
-
-// Vercel Functions cap RESPONSE bodies at the same hard, non-configurable
-// 4.5 MB the request-body cap above enforces
-// (https://vercel.com/docs/functions/limitations) — so
-// /api/media/object/:id can only safely return a whole file in one response
-// if it's under this. This reuses DEFAULT_CHUNK_SIZE itself on purpose: a
-// file this size or smaller is at most a single chunk, so returning it
-// directly is exactly as safe as returning one chunk already is (see
-// /api/media/chunk/:hash). Anything bigger must be fetched chunk-by-chunk
-// and reconstructed client-side — see lib/media/reconstructClient.ts and
-// docs/ARCHITECTURE.md's "Vercel Functions Body-Size Cap" section.
-export const MAX_DIRECT_FETCH_BYTES = DEFAULT_CHUNK_SIZE; // 4 MiB
 
 export interface ChunkInfo {
   index: number;
@@ -41,11 +26,7 @@ export interface ChunkedFile {
   chunks: ChunkInfo[];
 }
 
-/** SHA-256 hex digest of an ArrayBuffer, via the browser SubtleCrypto API.
- * Exported (not just used internally by chunkFile) so callers that need to
- * verify a whole reassembled file's hash — e.g.
- * lib/media/reconstructClient.ts checking against MediaRecord.hash — reuse
- * this instead of reimplementing digest-to-hex. */
+/** SHA-256 hex digest of an ArrayBuffer, via the browser SubtleCrypto API. */
 export async function sha256Hex(data: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest))

@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import type { MediaIndexEntry } from "@/lib/media";
 import { repoKeyFor } from "@/lib/cache";
 import { useBackupStatus, useLibrary, useOnline } from "@/lib/library/hooks";
-import { syncBackupLibrary } from "@/lib/library/backupStore";
 import { syncLibrary } from "@/lib/library/mediaStore";
 import { leaveForSignIn, signedOutAction } from "@/lib/library/signedOut";
 import { galleryView, type LibraryFilter } from "@/lib/library/viewState";
@@ -58,10 +57,6 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
     else if (action === "sign-in") leaveForSignIn();
   }, [library.error, router]);
 
-  useEffect(() => {
-    void syncBackupLibrary(`${repoOwner}/${repoName}`);
-  }, [repoOwner, repoName]);
-
   const visible = useMemo(
     () => applyFilter(library.items, filter, deferredQuery),
     [library.items, filter, deferredQuery]
@@ -76,9 +71,9 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
     hasLibrary && library.error?.kind === "auth" && library.error.code !== "no_repo" ? (
       <Notice
         action={
-          <a href="/?error=session_expired" className={noticeActionClass}>
+          <button type="button" onClick={() => leaveForSignIn()} className={noticeActionClass}>
             Sign in
-          </a>
+          </button>
         }
       >
         You&apos;re signed out. Sign in again to see new photos and keep backing up.

@@ -1,6 +1,5 @@
 // IndexedDB cache of thumbnail blobs, keyed by repo + media id + size, so
-// repeat gallery visits/scrolls don't re-fetch the same 320px webp from
-// GitHub through our API route every time.
+// repeat gallery visits/scrolls don't download the same webp from GitHub again.
 
 import { getDb } from "./db";
 

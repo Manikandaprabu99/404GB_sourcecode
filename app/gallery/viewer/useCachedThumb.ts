@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { loadThumbnailObjectUrl } from "@/lib/cache";
+import { loadThumbnailBlob, loadThumbnailObjectUrl, type ThumbnailSize } from "@/lib/cache";
 import {
   adoptThumbUrl,
   peekThumbUrl,
@@ -10,25 +10,31 @@ import {
   thumbKey,
 } from "@/lib/library/thumbUrls";
 
-export function thumbUrl(mediaId: string, size: 320 | 800 | 1600): string {
-  return `/api/media/thumb/${encodeURIComponent(mediaId)}/${size}`;
+interface ThumbState {
+  key: string;
+  url: string | null;
+  failed: boolean;
 }
 
-/** The grid's thumbnail object URL (ready on the first frame when its tile was on
- * screen); otherwise loaded through the IndexedDB cache and shared with the grid. */
-export function useCachedThumb(repoKey: string, mediaId: string, size: 320 | 800, enabled: boolean): string | null {
+/** A thumbnail object URL shared with the grid (ready on the first frame when it was on
+ * screen), otherwise loaded through the IndexedDB cache. `failed` when it doesn't exist. */
+function useThumbUrl(repoKey: string, mediaId: string, size: ThumbnailSize, enabled: boolean): ThumbState {
   const key = thumbKey(repoKey, mediaId, size);
-  const [url, setUrl] = useState<string | null>(() => (enabled ? peekThumbUrl(key) : null));
+  const [state, setState] = useState<ThumbState>(() => ({
+    key,
+    url: enabled ? peekThumbUrl(key) : null,
+    failed: false,
+  }));
 
   useEffect(() => {
     if (!enabled) {
-      setUrl(null);
+      setState({ key, url: null, failed: false });
       return;
     }
     const cached = peekThumbUrl(key);
     if (cached) {
       retainThumbUrl(key);
-      setUrl(cached);
+      setState((prev) => (prev.key === key && prev.url === cached ? prev : { key, url: cached, failed: false }));
       return () => releaseThumbUrl(key);
     }
     let cancelled = false;
@@ -40,10 +46,10 @@ export function useCachedThumb(repoKey: string, mediaId: string, size: 320 | 800
         if (cancelled) return;
         retainThumbUrl(key);
         retained = true;
-        setUrl(adopted);
+        setState({ key, url: adopted, failed: false });
       })
       .catch(() => {
-        if (!cancelled) setUrl(thumbUrl(mediaId, size));
+        if (!cancelled) setState({ key, url: null, failed: true });
       });
     return () => {
       cancelled = true;
@@ -52,5 +58,22 @@ export function useCachedThumb(repoKey: string, mediaId: string, size: 320 | 800
     };
   }, [key, repoKey, mediaId, size, enabled]);
 
-  return url;
+  return state.key === key ? state : { key, url: null, failed: false };
+}
+
+/** The grid's 320/800px thumbnail URL, or null while loading or when there is none. */
+export function useCachedThumb(repoKey: string, mediaId: string, size: 320 | 800, enabled: boolean): string | null {
+  return useThumbUrl(repoKey, mediaId, size, enabled).url;
+}
+
+/** The viewer's large preview: the 1600px thumbnail, else the 800px one. */
+export function usePreviewThumb(repoKey: string, mediaId: string, enabled: boolean): string | null {
+  const large = useThumbUrl(repoKey, mediaId, 1600, enabled);
+  const medium = useThumbUrl(repoKey, mediaId, 800, enabled && large.failed);
+  return large.url ?? medium.url;
+}
+
+/** Warms the cache for a preview the viewer is about to show. */
+export function preloadPreviewThumb(repoKey: string, mediaId: string): void {
+  void loadThumbnailBlob(repoKey, mediaId, 1600).catch(() => {});
 }

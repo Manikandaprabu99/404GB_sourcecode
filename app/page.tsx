@@ -1,17 +1,11 @@
-import { getSession } from "@/lib/session";
-import Link from "next/link";
-import { redirect } from "next/navigation";
-import ConnectGitHubButton from "./components/ConnectGitHubButton";
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useSession } from "@/lib/session/useSession";
+import SignInPanel from "./components/auth/SignInPanel";
 import BrandMark from "./components/ui/BrandMark";
-
-export const dynamic = "force-dynamic";
-
-const SIGN_IN_ERRORS: Record<string, string> = {
-  oauth_state: "Sign-in expired or was interrupted. Please try again.",
-  access_denied: "GitHub sign-in was cancelled.",
-  app_signin_failed: "Couldn't finish signing in to the app. Please try again.",
-  session_expired: "Your GitHub sign-in ended. Sign in again to continue — your photos are safe in your repo.",
-};
+import Splash from "./components/ui/Splash";
 
 const FEATURES = [
   {
@@ -31,25 +25,36 @@ const FEATURES = [
   },
 ];
 
-export default async function HomePage({
-  searchParams,
-}: {
-  searchParams: { error?: string | string[] };
-}) {
-  const session = await getSession();
-  const errorCode = typeof searchParams.error === "string" ? searchParams.error : null;
-  // After the app found the session dead, show sign-in even if a stale cookie survived.
-  const isLoggedIn = !!session.accessToken && errorCode !== "session_expired";
-  const errorMessage = errorCode
-    ? SIGN_IN_ERRORS[errorCode] ?? "Sign-in failed. Please try again."
-    : null;
+// Screens a signed-in session can land on directly. The app's local server answers every
+// path with this page, so a full load of /albums/view?id=… shows the home screen first.
+const APP_ROUTES = new Set(["/gallery", "/albums", "/albums/view", "/upload", "/settings", "/repos"]);
 
-  if (isLoggedIn && session.repoOwner && session.repoName) {
-    redirect("/gallery");
-  }
+function destination(hasRepo: boolean): string {
+  if (!hasRepo) return "/repos";
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  return APP_ROUTES.has(path) ? `${path}${window.location.search}` : "/gallery";
+}
+
+/** Home: the sign-in screen, or (once a session has loaded) a hop onward to the library. */
+export default function HomePage() {
+  const session = useSession();
+  const router = useRouter();
+  const signedIn = session.status === "ready" && Boolean(session.token);
+  const hasRepo = Boolean(session.owner && session.repo);
+
+  useEffect(() => {
+    if (!signedIn) return;
+    const target = destination(hasRepo);
+    // This page was served for the deeper path itself: the router has it cached as this
+    // page, so load the real screen in place instead of "navigating" to where it already is.
+    if (target !== "/" && target === `${window.location.pathname}${window.location.search}`) router.refresh();
+    else router.replace(target);
+  }, [signedIn, hasRepo, router]);
+
+  if (session.status !== "ready" || signedIn) return <Splash />;
 
   return (
-    <main className="relative isolate flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pb-safe-12 pt-safe-12">
+    <main className="relative isolate flex min-h-screen flex-col items-center justify-center overflow-hidden px-5 pb-safe-12 pt-safe-12 sm:px-6">
       {/* Ambient background: slow-drifting blurred color fields over a faint
        * fading grid, all pure CSS (globals.css .bg-blob / .bg-grid-fade). */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
@@ -69,41 +74,21 @@ export default async function HomePage({
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-bg/10 to-bg/70" />
       </div>
 
-      <div className="flex w-full max-w-md flex-col items-center gap-8 text-center animate-fade-in-up">
+      <div className="flex w-full max-w-md flex-col items-center gap-7 text-center animate-fade-in-up">
         <BrandMark className="h-20 w-20 drop-shadow-[0_12px_32px_rgb(99_102_241/0.45)]" />
 
         <div className="flex flex-col gap-3">
           <h1 className="text-display font-bold tracking-tight">404GB</h1>
-          <p className="text-body-lg text-ink-muted">
-            Your phone is full. Your repo isn&apos;t.
-          </p>
+          <p className="text-body-lg text-ink-muted">Your phone is full. Your repo isn&apos;t.</p>
         </div>
 
-        {isLoggedIn ? (
-          <div className="flex w-full flex-col items-center gap-4 rounded-2xl border border-border bg-surface/80 p-6 shadow-soft backdrop-blur">
-            <p className="text-body text-ink-muted">
-              Signed in as{" "}
-              <span className="font-mono text-ink">{session.githubLogin}</span>
-            </p>
-            <Link
-              href="/repos"
-              className="group inline-flex w-full items-center justify-center gap-2 rounded-full bg-ink px-5 py-3 text-body font-medium text-bg shadow-soft transition-all duration-180 ease-out-expo hover:-translate-y-0.5 hover:shadow-elevated active:translate-y-0 active:scale-[0.98]"
-            >
-              Choose a repo
-              <span aria-hidden className="transition-transform duration-180 ease-out-expo group-hover:translate-x-0.5">
-                →
-              </span>
-            </Link>
-          </div>
-        ) : (
-          <ConnectGitHubButton />
-        )}
-
-        {errorMessage && (
-          <p role="alert" className="rounded-full bg-danger/10 px-4 py-2 text-small text-danger">
-            {errorMessage}
+        {session.ended && (
+          <p role="alert" className="rounded-2xl bg-danger/10 px-4 py-2.5 text-small text-danger animate-fade-in">
+            Your GitHub sign-in ended. Sign in again to continue — your photos are safe in your repo.
           </p>
         )}
+
+        <SignInPanel lastLogin={session.login} />
 
         <ul className="grid w-full gap-3 text-left sm:grid-cols-3 sm:gap-4">
           {FEATURES.map((feature, i) => (
@@ -126,9 +111,8 @@ export default async function HomePage({
         </ul>
 
         <p className="max-w-sm text-small text-ink-faint">
-          Requests the <code className="rounded bg-surface-2 px-1 py-0.5 font-mono">repo</code> scope
-          so 404GB can read/write the storage repo you choose. Your GitHub token is stored only in an
-          encrypted, httpOnly session cookie — it never touches the browser bundle or IndexedDB.
+          404GB needs the <code className="rounded bg-surface-2 px-1 py-0.5 font-mono">repo</code> scope to read
+          and write the storage repo you choose. Your token stays on this device and is only ever sent to GitHub.
         </p>
       </div>
     </main>

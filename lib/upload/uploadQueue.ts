@@ -1,4 +1,5 @@
 // App-wide upload queue: one file at a time, bounded chunk concurrency, waits out pause/offline/rate limits.
+// Every step talks to GitHub directly (lib/media): dedup check, chunk and thumbnail blobs, one commit.
 
 import {
   chunkFile,
@@ -7,6 +8,15 @@ import {
   sha256Hex,
   type ChunkInfo,
 } from "@/lib/chunking";
+import { ApiError, withRepo } from "@/lib/library/api";
+import {
+  checkUpload,
+  commitMediaUpload,
+  setTakenAtIfMissing,
+  uploadBlob,
+  type CommitUploadResult,
+  type UploadCheck,
+} from "@/lib/media";
 import { makeMediaId, type MediaRecord } from "@/lib/media/types";
 import { captureVideoPosterFrame, extractVideoMetadata } from "@/lib/media/video";
 import { generateThumbnails } from "@/lib/thumbnails";
@@ -69,42 +79,28 @@ class UploadError extends Error {
   }
 }
 
-/** A non-retryable error response from our API. */
+/** A non-retryable refusal (bad input, missing parts…), with the library's code and details. */
 class ApiResponseError extends Error {
+  readonly status: number;
   readonly code?: string;
+  readonly details?: Record<string, unknown>;
 
-  constructor(readonly status: number, readonly body: Record<string, unknown>) {
-    super(typeof body.error === "string" && body.error ? body.error : `The server refused the upload (${status})`);
+  constructor(err: ApiError) {
+    super(err.message || `GitHub refused the upload (${err.status})`);
     this.name = "ApiResponseError";
-    this.code = typeof body.code === "string" ? body.code : undefined;
+    this.status = err.status;
+    this.code = err.code;
+    this.details = err.details;
   }
-}
-
-interface InitResponse {
-  missing: string[];
-  duplicateOf: string | null;
-  /** The library copy has no capture date; this upload can supply it. */
-  duplicateNeedsDate?: boolean;
 }
 
 /** Best effort: an older copy without a capture date gets this file's, so it sorts by when it was taken. */
 function fillMissingCaptureDate(mediaId: string, takenAt: string): void {
-  void fetch(`/api/media/${encodeURIComponent(mediaId)}/taken-at`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ takenAt }),
-    credentials: "same-origin",
-  }).catch(() => {});
+  void withRepo((repo) => setTakenAtIfMissing(repo, mediaId, takenAt)).catch(() => {});
 }
 
-interface BlobResponse {
-  sha: string;
-}
-
-interface CommitResponse {
-  id: string;
-  duplicate?: boolean;
-}
+/** A finished commit, with the library ("owner/repo") it went into. */
+export type CommittedUpload = CommitUploadResult & { repoKey: string };
 
 interface CommitBody {
   record: MediaRecord;
@@ -143,27 +139,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-function jsonRequest(body: unknown): RequestInit {
-  return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
-}
-
-function blobRequest(blob: Blob): RequestInit {
-  return { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: blob };
-}
-
-function parseRetryAfter(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) return seconds;
-  const at = Date.parse(value);
-  return Number.isNaN(at) ? undefined : (at - Date.now()) / 1000;
-}
-
-function rateLimitSeconds(res: Response, body: Record<string, unknown> | null): number {
-  let seconds = parseRetryAfter(res.headers.get("Retry-After"));
-  if (seconds === undefined && typeof body?.retryAfter === "number") seconds = body.retryAfter;
-  if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) seconds = DEFAULT_RATE_LIMIT_WAIT_S;
+function rateLimitSeconds(retryAfterSec: number | undefined): number {
+  const seconds = retryAfterSec !== undefined && Number.isFinite(retryAfterSec) && retryAfterSec > 0
+    ? retryAfterSec
+    : DEFAULT_RATE_LIMIT_WAIT_S;
   return Math.min(MAX_RATE_LIMIT_WAIT_S, Math.ceil(seconds));
+}
+
+async function blobBytes(blob: Blob): Promise<Uint8Array<ArrayBuffer>> {
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 function normalizeIso(value: string | undefined): string | undefined {
@@ -198,6 +182,7 @@ function getImageDimensions(file: File): Promise<{ width: number; height: number
 export class UploadQueue {
   private tasks: FileTask[] = [];
   private readonly listeners = new Set<QueueListener>();
+  private readonly committedListeners = new Set<(upload: CommittedUpload) => void>();
   private readonly waiters = new Set<() => void>();
   private readonly concurrency: number;
   private running = false;
@@ -244,6 +229,14 @@ export class UploadQueue {
 
   getSnapshots(): FileTaskSnapshot[] {
     return this.snapshots();
+  }
+
+  /** Called after each new item is committed (not for duplicates), e.g. to show it in the library at once. */
+  onCommitted(listener: (upload: CommittedUpload) => void): () => void {
+    this.committedListeners.add(listener);
+    return () => {
+      this.committedListeners.delete(listener);
+    };
   }
 
   /** Queues files for upload and returns their queue ids (non-media files are skipped). */
@@ -489,10 +482,8 @@ export class UploadQueue {
         })),
       });
 
-      const init = await this.request<InitResponse>(
-        task,
-        "/api/media/upload/init",
-        jsonRequest({ chunkHashes: chunks.map((c) => c.hash), fileHash })
+      const init = await this.request<UploadCheck>(task, () =>
+        withRepo((repo) => checkUpload(repo, chunks.map((c) => c.hash), fileHash))
       );
       if (init.duplicateOf) {
         this.finishDuplicate(task, init.duplicateOf, fileHash);
@@ -546,6 +537,7 @@ export class UploadQueue {
         this.finishDuplicate(task, result.id, fileHash);
       } else {
         this.finish(task, { status: "done", message: MESSAGES.done, mediaId: result.id, bytesUploaded: file.size });
+        for (const listener of this.committedListeners) listener(result);
       }
     } catch (err) {
       if (err instanceof CanceledError || task.controller.signal.aborted) {
@@ -599,7 +591,7 @@ export class UploadQueue {
     return { width: dims?.width || undefined, height: dims?.height || undefined };
   }
 
-  /** Best-effort previews: on failure the file still uploads (images get a server-side retry). */
+  /** Best-effort previews: on failure the file still uploads (the gallery retries images it can decode later). */
   private async uploadThumbnails(task: FileTask, file: File): Promise<Record<string, string>> {
     try {
       const source = task.mimeType.startsWith("video/")
@@ -608,13 +600,11 @@ export class UploadQueue {
       const thumbnails = await withTimeout(generateThumbnails(source), THUMBNAIL_TIMEOUT_MS);
       const shas: Record<string, string> = {};
       for (const thumb of thumbnails) {
-        const hash = await sha256Hex(await thumb.blob.arrayBuffer());
-        const { sha } = await this.request<BlobResponse>(
-          task,
-          `/api/media/upload/chunk?hash=${hash}`,
-          blobRequest(thumb.blob)
+        const bytes = await blobBytes(thumb.blob);
+        const hash = await sha256Hex(bytes.buffer);
+        shas[String(thumb.size)] = await this.request(task, (signal) =>
+          withRepo((repo) => uploadBlob(repo, bytes, hash, signal))
         );
-        shas[String(thumb.size)] = sha;
       }
       return shas;
     } catch (err) {
@@ -638,10 +628,12 @@ export class UploadQueue {
         const isThis = (c: ChunkTaskState) => c.hash === chunk.hash;
         try {
           this.setChunkStatus(task, (c) => (isThis(c) ? "uploading" : undefined));
-          const { sha } = await this.request<BlobResponse>(
+          const sha = await this.request(
             task,
-            `/api/media/upload/chunk?hash=${chunk.hash}`,
-            blobRequest(chunk.blob),
+            async (signal) => {
+              const bytes = await blobBytes(chunk.blob);
+              return withRepo((repo) => uploadBlob(repo, bytes, chunk.hash, signal));
+            },
             (attempt) =>
               this.update(task, {
                 chunks: task.snapshot.chunks.map((c) => (isThis(c) ? { ...c, attempts: attempt } : c)),
@@ -660,22 +652,30 @@ export class UploadQueue {
     await Promise.all(Array.from({ length: Math.min(this.concurrency, pending.length) }, worker));
   }
 
-  /** Commits, recovering once from stale remembered blobs or chunks the server says are missing. */
+  /** One commit; resolves with the library it went into. */
+  private commitOnce(task: FileTask, body: CommitBody): Promise<CommittedUpload> {
+    return this.request(task, () =>
+      withRepo(async (repo) => ({ ...(await commitMediaUpload(repo, body)), repoKey: `${repo.owner}/${repo.repo}` }))
+    );
+  }
+
+  /** Commits, recovering once from stale remembered blobs or chunks that turn out to be missing. */
   private async commit(
     task: FileTask,
     body: CommitBody,
     context: { fileHash: string; chunks: ChunkInfo[]; reused: Set<string> }
-  ): Promise<CommitResponse> {
+  ): Promise<CommittedUpload> {
     try {
-      return await this.request<CommitResponse>(task, "/api/media/upload/commit", jsonRequest(body));
+      return await this.commitOnce(task, body);
     } catch (err) {
       if (!(err instanceof ApiResponseError)) throw err;
       let redo = new Set<string>();
+      const missing = err.details?.missing;
       if (err.code === "unknown_blob") {
         forgetFileProgress(context.fileHash);
         redo = context.reused.size > 0 ? context.reused : new Set(Object.keys(body.chunkBlobShas));
-      } else if (err.code === "missing_chunks" && Array.isArray(err.body.missing)) {
-        redo = new Set(err.body.missing.filter((hash): hash is string => typeof hash === "string"));
+      } else if (err.code === "missing_chunks" && Array.isArray(missing)) {
+        redo = new Set(missing.filter((hash): hash is string => typeof hash === "string"));
       }
       const chunks = context.chunks.filter((c) => redo.has(c.hash));
       if (chunks.length === 0) throw err;
@@ -685,15 +685,14 @@ export class UploadQueue {
       this.setPhase(task, "uploading", MESSAGES.uploading);
       await this.uploadChunks(task, context.fileHash, chunks, body.chunkBlobShas);
       this.setPhase(task, "committing", MESSAGES.finishing);
-      return this.request<CommitResponse>(task, "/api/media/upload/commit", jsonRequest(body));
+      return this.commitOnce(task, body);
     }
   }
 
-  /** One API call: waits while blocked, 429 waits Retry-After (not a failure), retries network/5xx, times out stalls. */
+  /** One GitHub call: waits while blocked, waits out rate limits (not a failure), retries network/5xx, times out stalls. */
   private async request<T>(
     task: FileTask,
-    url: string,
-    init: RequestInit,
+    call: (signal: AbortSignal) => Promise<T>,
     onAttempt?: (attempt: number) => void
   ): Promise<T> {
     let failures = 0;
@@ -706,44 +705,45 @@ export class UploadQueue {
       const abort = () => controller.abort();
       task.controller.signal.addEventListener("abort", abort, { once: true });
       const timer = setTimeout(abort, REQUEST_TIMEOUT_MS);
-      let res: Response;
-      let body: Record<string, unknown> | null;
       try {
-        res = await fetch(url, { ...init, signal: controller.signal });
-        const parsed: unknown = await res.json().catch(() => null);
-        body = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
-      } catch {
+        return await call(controller.signal);
+      } catch (err) {
         this.throwIfCanceled(task);
-        if (typeof navigator !== "undefined" && navigator.onLine === false) {
-          this.offline = true;
+        // Anything that isn't an ApiError here is the stall timeout aborting the request.
+        const apiError = err instanceof ApiError ? err : null;
+        if (apiError?.kind === "rate-limit") {
+          this.rateLimitedUntil = Math.max(
+            this.rateLimitedUntil,
+            Date.now() + rateLimitSeconds(apiError.retryAfterSec) * 1000
+          );
           this.refreshBlocked();
           continue;
         }
-        failures += 1;
-        if (failures >= MAX_REQUEST_ATTEMPTS) {
-          throw new UploadError("Couldn't reach the server — check your connection and try again");
+        if (apiError?.kind === "auth") throw new UploadError("You're signed out — sign in again, then retry");
+        if (!apiError || apiError.kind === "offline") {
+          if (typeof navigator !== "undefined" && navigator.onLine === false) {
+            this.offline = true;
+            this.refreshBlocked();
+            continue;
+          }
+          failures += 1;
+          if (failures >= MAX_REQUEST_ATTEMPTS) {
+            throw new UploadError("Couldn't reach GitHub — check your connection and try again");
+          }
+          await this.backoff(task, failures);
+          continue;
         }
-        await this.backoff(task, failures);
-        continue;
+        if (apiError.status >= 500 || apiError.status === 408) {
+          failures += 1;
+          if (failures >= MAX_REQUEST_ATTEMPTS) throw new ApiResponseError(apiError);
+          await this.backoff(task, failures, apiError.retryAfterSec);
+          continue;
+        }
+        throw new ApiResponseError(apiError);
       } finally {
         clearTimeout(timer);
         task.controller.signal.removeEventListener("abort", abort);
       }
-
-      if (res.ok && body) return body as T;
-      if (res.status === 429) {
-        this.rateLimitedUntil = Math.max(this.rateLimitedUntil, Date.now() + rateLimitSeconds(res, body) * 1000);
-        this.refreshBlocked();
-        continue;
-      }
-      if (res.status === 401) throw new UploadError("You're signed out — sign in again, then retry");
-      if (res.ok || res.status >= 500 || res.status === 408) {
-        failures += 1;
-        if (failures >= MAX_REQUEST_ATTEMPTS) throw new ApiResponseError(res.status, body ?? {});
-        await this.backoff(task, failures, parseRetryAfter(res.headers.get("Retry-After")));
-        continue;
-      }
-      throw new ApiResponseError(res.status, body ?? {});
     }
   }
 

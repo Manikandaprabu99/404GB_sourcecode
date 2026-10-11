@@ -3,7 +3,6 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import localFont from "next/font/local";
 import ServiceWorkerRegister from "./components/ServiceWorkerRegister";
-import NativeAuthHandler from "./components/NativeAuthHandler";
 import SystemBarsSync from "./components/SystemBarsSync";
 import { ToastProvider } from "./components/ui/Toast";
 import { ConfirmProvider } from "./components/ui/ConfirmDialog";
@@ -80,7 +79,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body className="min-h-screen font-sans">
         <ServiceWorkerRegister />
-        <NativeAuthHandler />
         <SystemBarsSync />
         <ToastProvider>
           <ConfirmProvider>{children}</ConfirmProvider>

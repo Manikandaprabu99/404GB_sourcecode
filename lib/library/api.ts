@@ -1,5 +1,23 @@
-// Small JSON fetch helper for the library UI: classifies failures so screens can
-// tell "signed out" from "rate limited" from "offline" from a real server error.
+// How the library UI talks to the storage repo: every operation runs through withRepo (or
+// withToken), which supplies the signed-in session and turns whatever went wrong into an
+// ApiError, so screens can tell "signed out" from "rate limited" from "offline" from a
+// real failure.
+
+import {
+  CorruptJsonError,
+  getDefaultBranch,
+  githubMessage,
+  githubRetryAfterSeconds,
+  githubStatus,
+  isAbortError,
+  isGitHubAuthError,
+  isGitHubUnreachable,
+  RepoError,
+  TransactionConflictError,
+  TreeWriteError,
+  type RepoRef,
+} from "@/lib/github";
+import { getSession, loadSession, setBranch } from "@/lib/session";
 
 export type ApiErrorKind = "offline" | "auth" | "rate-limit" | "not-found" | "server";
 
@@ -7,16 +25,25 @@ export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   readonly status: number;
   readonly retryAfterSec?: number;
-  /** The API's machine-readable code, e.g. "reauth", "signed_out" or "no_repo" on a 401. */
+  /** Machine-readable code, e.g. "reauth", "signed_out" or "no_repo" on a 401, "busy" on a 503. */
   readonly code?: string;
+  readonly details?: Record<string, unknown>;
 
-  constructor(kind: ApiErrorKind, message: string, status: number, retryAfterSec?: number, code?: string) {
+  constructor(
+    kind: ApiErrorKind,
+    message: string,
+    status: number,
+    retryAfterSec?: number,
+    code?: string,
+    details?: Record<string, unknown>
+  ) {
     super(message);
     this.name = "ApiError";
     this.kind = kind;
     this.status = status;
     this.retryAfterSec = retryAfterSec;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -34,72 +61,101 @@ export function toLibraryError(err: unknown): LibraryError {
   return { kind: "server", message: err instanceof Error ? err.message : String(err) };
 }
 
-function parseRetryAfter(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) return Math.max(0, Math.round(seconds));
-  const at = Date.parse(value);
-  if (Number.isNaN(at)) return undefined;
-  return Math.max(0, Math.round((at - Date.now()) / 1000));
-}
-
 export function rateLimitMessage(retryAfterSec?: number): string {
   if (retryAfterSec === undefined) return "GitHub is limiting requests right now. Try again in a few minutes.";
   if (retryAfterSec < 90) return "GitHub is limiting requests right now. Try again in a minute.";
   return `GitHub is limiting requests right now. Try again in about ${Math.ceil(retryAfterSec / 60)} minutes.`;
 }
 
-export interface ApiRequest {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
-  /** JSON-serialized as the request body. */
-  body?: unknown;
-  keepalive?: boolean;
-  signal?: AbortSignal;
+function kindForStatus(status: number): ApiErrorKind {
+  if (status === 401) return "auth";
+  if (status === 404) return "not-found";
+  if (status === 429) return "rate-limit";
+  return "server";
 }
 
-export async function apiJson<T>(url: string, request: ApiRequest = {}): Promise<T> {
-  const { method = "GET", body, keepalive, signal } = request;
-  let res: Response;
+/** Any thrown error as an ApiError; GitHub rate limits become "rate-limit" with the wait in seconds. */
+export function toApiError(err: unknown): ApiError {
+  if (err instanceof ApiError) return err;
+  if (err instanceof RepoError) {
+    return new ApiError(kindForStatus(err.status), err.message, err.status, undefined, err.code, err.details);
+  }
+  const githubError = err instanceof TreeWriteError ? err.githubError : err;
+
+  const retryAfter = githubRetryAfterSeconds(githubError);
+  if (retryAfter !== null) {
+    return new ApiError("rate-limit", rateLimitMessage(retryAfter), 429, retryAfter, "rate_limited");
+  }
+  if (isGitHubAuthError(githubError)) {
+    return new ApiError("auth", "Your GitHub sign-in ended — sign in again.", 401, undefined, "reauth");
+  }
+  if (err instanceof TransactionConflictError) {
+    return new ApiError("server", "Your library is busy — try again", 503, 2, "busy");
+  }
+  if (err instanceof CorruptJsonError) {
+    return new ApiError("server", err.message, 500, undefined, "corrupt_manifest");
+  }
+  if (err instanceof Error && (err.name === "MediaIntegrityError" || err.name === "ChunkIntegrityError")) {
+    return new ApiError("server", "The download didn't come through intact. Try again.", 502, undefined, "integrity");
+  }
+  if (isGitHubUnreachable(githubError)) {
+    const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+    return new ApiError("offline", offline ? "You're offline." : "Couldn't reach GitHub. Check your connection.", 0);
+  }
+
+  const status = githubStatus(githubError);
+  if (status !== undefined && status >= 500) {
+    return new ApiError("server", "GitHub is having trouble — try again", 502, undefined, "github_unavailable");
+  }
+  if (status === 403 || status === 404 || status === 409 || status === 422) {
+    return new ApiError(kindForStatus(status), `GitHub: ${githubMessage(githubError)}`, status, undefined, "github_error");
+  }
+
+  console.error("[404gb] unexpected error", err);
+  return new ApiError("server", "Something went wrong — try again", 500);
+}
+
+/** Runs `task` with the signed-in token; failures come out as ApiError (aborts stay AbortErrors). */
+export async function withToken<T>(task: (token: string) => Promise<T>): Promise<T> {
+  await loadSession();
+  const { token } = getSession();
+  if (!token) throw new ApiError("auth", "You're signed out.", 401, undefined, "signed_out");
   try {
-    res = await fetch(url, {
-      method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      cache: "no-store",
-      credentials: "same-origin",
-      keepalive,
-      signal,
-    });
+    return await task(token);
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") throw err;
-    throw new ApiError("offline", "You're offline.", 0);
+    if (isAbortError(err)) throw err;
+    throw toApiError(err);
   }
+}
 
-  if (res.ok) {
-    if (res.status === 204) return {} as T;
-    return (await res.json()) as T;
+/**
+ * Runs `task` against the selected library (resolving its default branch once if unknown).
+ * `repoKey` guards work started for a library the session has since switched away from.
+ */
+export async function withRepo<T>(task: (repo: RepoRef) => Promise<T>, repoKey?: string): Promise<T> {
+  await loadSession();
+  const { token, owner, repo, branch } = getSession();
+  if (!token) throw new ApiError("auth", "You're signed out.", 401, undefined, "signed_out");
+  if (!owner || !repo) throw new ApiError("auth", "No storage repo selected.", 401, undefined, "no_repo");
+  if (repoKey && repoKey !== `${owner}/${repo}`) {
+    throw new ApiError("server", "You switched to another library.", 409, undefined, "repo_changed");
   }
-
-  const payload = (await res.json().catch(() => null)) as { error?: unknown; code?: unknown } | null;
-  const serverMessage = typeof payload?.error === "string" ? payload.error : null;
-  const code = typeof payload?.code === "string" ? payload.code : undefined;
-  if (res.status === 401) throw new ApiError("auth", "You're signed out.", 401, undefined, code);
-  if (res.status === 429) {
-    const retryAfterSec = parseRetryAfter(res.headers.get("Retry-After"));
-    throw new ApiError("rate-limit", rateLimitMessage(retryAfterSec), 429, retryAfterSec);
+  try {
+    let resolved = branch;
+    if (!resolved) {
+      resolved = await getDefaultBranch(token, owner, repo);
+      setBranch(resolved);
+    }
+    return await task({ token, owner, repo, branch: resolved });
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    throw toApiError(err);
   }
-  if (res.status === 404) throw new ApiError("not-found", serverMessage ?? "Not found.", 404);
-  throw new ApiError(
-    "server",
-    serverMessage ?? `Something went wrong (${res.status}).`,
-    res.status,
-    res.status === 503 ? parseRetryAfter(res.headers.get("Retry-After")) : undefined
-  );
 }
 
 const BUSY_RETRIES = 2;
 
-/** Retries a write the server turned away because the library was mid-commit (503). */
+/** Retries a write that lost the race against other writers too many times (503 "busy"). */
 export async function retryWhenBusy<T>(request: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {

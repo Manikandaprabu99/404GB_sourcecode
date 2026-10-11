@@ -1,9 +1,17 @@
 /** Service worker generation this build registers; must match SW_VERSION in public/sw.js. */
-export const SW_VERSION = 2;
+export const SW_VERSION = 3;
 /** Versioned so the controlling worker's scriptURL alone shows (synchronously) that it can stream. */
 export const SW_SCRIPT_URL = `/sw.js?v=${SW_VERSION}`;
 
-const STREAMING_SINCE_VERSION = 2;
+// Shared with public/sw.js (keep in sync): the worker's verified-chunk cache, which the
+// page reads before downloading an original and fills through STORE_CHUNK_MESSAGE.
+export const CHUNK_CACHE = "404gb-chunks-v2";
+export const CHUNK_KEY_PREFIX = "/__404gb__/chunk/";
+export const STORE_CHUNK_MESSAGE = "404gb:store-chunk";
+export const PURGE_MESSAGE = "404gb:purge-user-data";
+
+// v3 is the first worker that reads from GitHub directly; older ones streamed through /api.
+const STREAMING_SINCE_VERSION = 3;
 const HANDSHAKE_TIMEOUT_MS = 4000;
 
 /** URL a <video> element can play while the file is still downloading. The
@@ -51,8 +59,13 @@ function probe(worker: ServiceWorker): void {
   };
   const timer = window.setTimeout(() => settle(null), HANDSHAKE_TIMEOUT_MS);
   channel.port1.onmessage = (event: MessageEvent) => {
-    const data = event.data as { type?: unknown; features?: unknown } | null;
-    settle(data?.type === "404gb:sw-info" && Array.isArray(data.features) && data.features.includes("stream"));
+    const data = event.data as { type?: unknown; version?: unknown; features?: unknown } | null;
+    settle(
+      data?.type === "404gb:sw-info" &&
+        Number(data.version) >= STREAMING_SINCE_VERSION &&
+        Array.isArray(data.features) &&
+        data.features.includes("stream")
+    );
   };
   try {
     worker.postMessage({ type: "404gb:sw-info" }, [channel.port2]);
@@ -76,7 +89,7 @@ function hasServiceWorkers(): boolean {
 }
 
 /** True when a streaming-capable service worker controls this page. Synchronous and
- * cheap, so it's safe to call during render; it is false on the server, in dev
+ * cheap, so it's safe to call during render; it is false during prerendering, in dev
  * builds, after a hard reload, and on a first visit until the worker takes over. */
 export function canStream(): boolean {
   if (!hasServiceWorkers()) return false;
@@ -96,4 +109,17 @@ export function subscribeStreamSupport(listener: () => void): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+/** Posts a message to the controlling service worker, if any (best effort). */
+export function postToServiceWorker(message: unknown, transfer?: Transferable[]): boolean {
+  if (!hasServiceWorkers()) return false;
+  const controller = navigator.serviceWorker.controller;
+  if (!controller) return false;
+  try {
+    controller.postMessage(message, transfer ?? []);
+    return true;
+  } catch {
+    return false;
+  }
 }

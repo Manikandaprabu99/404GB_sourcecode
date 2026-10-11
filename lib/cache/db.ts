@@ -64,6 +64,17 @@ interface GalleryDB extends DBSchema {
 
 let dbPromise: Promise<IDBPDatabase<GalleryDB>> | null = null;
 
+/** Closes the database (before deleting it); the next getDb() opens a fresh one. */
+export async function closeDb(): Promise<void> {
+  const pending = dbPromise;
+  dbPromise = null;
+  try {
+    (await pending)?.close();
+  } catch {
+    // It never opened.
+  }
+}
+
 /** Resolves to the open database, or null if IndexedDB isn't usable in this
  * context. Callers must treat null as "cache disabled" and fall back to the
  * network, never throw. */

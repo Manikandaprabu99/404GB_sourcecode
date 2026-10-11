@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { loadThumbnailObjectUrl } from "@/lib/cache";
+import { backfillThumbnail } from "@/lib/library/mediaStore";
 import {
   adoptThumbUrl,
   peekThumbUrl,
@@ -11,21 +12,19 @@ import {
 } from "@/lib/library/thumbUrls";
 import MediaPlaceholder from "./MediaPlaceholder";
 
-// One backfill request per item per page load, however often its tile remounts.
+// One backfill attempt per item per page load, however often its tile remounts.
 const attemptedBackfillIds = new Set<string>();
 
 interface GalleryThumbProps {
   repoKey: string;
   mediaId: string;
   alt: string;
-  /** False when the item was stored without thumbnails: shows a placeholder
-   * (and asks the server to generate them) instead of requesting a 404. */
+  /** False when the item was stored without thumbnails: shows a placeholder (and makes
+   * them in this browser when it can decode the image) instead of requesting a 404. */
   hasThumbnail: boolean;
   isVideo?: boolean;
   size?: 320 | 800;
   className?: string;
-  /** Called with the new 320px thumbnail path after a server-side backfill. */
-  onThumbnailBackfilled?: (mediaId: string, thumbPath: string) => void;
 }
 
 /**
@@ -41,7 +40,6 @@ export default function GalleryThumb({
   isVideo,
   size = 320,
   className,
-  onThumbnailBackfilled,
 }: GalleryThumbProps) {
   const key = thumbKey(repoKey, mediaId, size);
   const [loaded, setLoaded] = useState<{ key: string; url: string; fresh: boolean } | null>(() => {
@@ -54,22 +52,10 @@ export default function GalleryThumb({
     if (hasThumbnail || isVideo) return;
     if (attemptedBackfillIds.has(mediaId)) return;
     attemptedBackfillIds.add(mediaId);
-
-    let cancelled = false;
-    fetch(`/api/media/${encodeURIComponent(mediaId)}/thumbnail/backfill`, { method: "POST" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { ok?: boolean; thumbnails?: Record<string, string> } | null) => {
-        if (cancelled || !data?.ok) return;
-        const path = data.thumbnails?.["320"];
-        if (path) onThumbnailBackfilled?.(mediaId, path);
-      })
-      .catch(() => {
-        // Best-effort: the placeholder stays, exactly as if generation had failed.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [mediaId, hasThumbnail, isVideo, onThumbnailBackfilled]);
+    // Best-effort: on success the library entry gains a thumb and this tile re-renders with it;
+    // otherwise the placeholder stays.
+    void backfillThumbnail(mediaId);
+  }, [mediaId, hasThumbnail, isVideo]);
 
   useEffect(() => {
     if (!hasThumbnail) return;

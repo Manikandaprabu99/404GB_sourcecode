@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MediaIndexEntry } from "@/lib/media";
+import { loadThumbnailBlob } from "@/lib/cache";
+import { currentRepoKey } from "@/lib/session";
 import { decodeImage, type DecodedImage } from "@/lib/editor/decode";
 import { alignToDecoded, readImageInfo } from "@/lib/editor/imageInfo";
 import { fetchMediaRecord, fetchOriginal } from "@/lib/editor/original";
@@ -27,7 +29,7 @@ export interface EditorSource {
 
 /** Long side of the decoded original kept for the live preview (the export re-decodes at full size). */
 const PREVIEW_MAX_SIDE = 2560;
-const THUMB_SIZES = [1600, 800];
+const THUMB_SIZES = [1600, 800] as const;
 
 export function useEditorSource(media: MediaIndexEntry): EditorSource {
   const [preview, setPreview] = useState<PreviewSource | null>(null);
@@ -56,14 +58,13 @@ export function useEditorSource(media: MediaIndexEntry): EditorSource {
 
   // The large thumbnail appears right away, so editing can start while the original downloads.
   useEffect(() => {
-    if (!media.thumb) return;
+    const repoKey = currentRepoKey();
+    if (!media.thumb || !repoKey) return;
     let cancelled = false;
     void (async () => {
       for (const size of THUMB_SIZES) {
         try {
-          const res = await fetch(`/api/media/thumb/${encodeURIComponent(media.id)}/${size}`);
-          if (!res.ok) continue;
-          const decoded = await decodeImage(await res.blob());
+          const decoded = await decodeImage(await loadThumbnailBlob(repoKey, media.id, size));
           if (cancelled || hasOriginalRef.current) {
             decoded.close();
           } else {

@@ -7,7 +7,7 @@ import { canDisplayOriginal } from "./format";
 import type { Size } from "./geometry";
 import { DownloadIcon, ProgressRing } from "./icons";
 import type { OriginalView } from "./originals";
-import { thumbUrl, useCachedThumb } from "./useCachedThumb";
+import { useCachedThumb, usePreviewThumb } from "./useCachedThumb";
 
 interface ImageSlideProps {
   item: MediaIndexEntry;
@@ -37,8 +37,8 @@ function ImageSlide({
 }: ImageSlideProps) {
   const hasThumb = Boolean(item.thumb);
   const small = useCachedThumb(repoKey, item.id, 320, hasThumb);
-  const [previewSize, setPreviewSize] = useState<1600 | 800 | null>(hasThumb ? 1600 : null);
-  const [previewLoaded, setPreviewLoaded] = useState(false);
+  const preview = usePreviewThumb(repoKey, item.id, hasThumb);
+  const [previewLoaded, setPreviewLoaded] = useState<string | null>(null);
   const [originalShown, setOriginalShown] = useState<string | null>(null);
   // Once the original has faded in, the preview layers go: transparent PNGs and
   // animated GIFs must not show the (static, opaque-composited) previews beneath.
@@ -124,23 +124,19 @@ function ImageSlide({
         // eslint-disable-next-line @next/next/no-img-element
         <img src={small} alt="" aria-hidden="true" draggable={false} onLoad={measure} className={LAYER} />
       )}
-      {underlay && previewSize && (
+      {underlay && preview && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          key={previewSize}
-          src={thumbUrl(item.id, previewSize)}
+          key={preview}
+          src={preview}
           alt={item.filename}
           draggable={false}
           decoding="async"
           onLoad={(e) => {
             measure(e);
-            setPreviewLoaded(true);
+            setPreviewLoaded(preview);
           }}
-          onError={() => {
-            setPreviewLoaded(false);
-            setPreviewSize((size) => (size === 1600 ? 800 : null));
-          }}
-          className={`${LAYER} transition-opacity duration-250 ease-out ${previewLoaded ? "opacity-100" : "opacity-0"}`}
+          className={`${LAYER} transition-opacity duration-250 ease-out ${previewLoaded === preview ? "opacity-100" : "opacity-0"}`}
         />
       )}
       {active && originalUrl && (

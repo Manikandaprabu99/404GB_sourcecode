@@ -6,7 +6,7 @@ import Sheet from "@/app/components/ui/Sheet";
 import { useToast } from "@/app/components/ui/Toast";
 import GalleryThumb from "@/app/gallery/GalleryThumb";
 import type { Album } from "@/lib/albums/types";
-import { addToAlbum, albumCoverId, createAlbum, loadAlbums } from "@/lib/library/albumsStore";
+import { addToAlbum, albumCoverId, albumHref, createAlbum, loadAlbums } from "@/lib/library/albumsStore";
 import { useAlbums, useLibrary } from "@/lib/library/hooks";
 import { AlbumsIcon, CheckIcon, PlusIcon } from "./icons";
 
@@ -59,7 +59,7 @@ export default function AddToAlbumSheet({
     [albumsState.albums, excludeAlbumId]
   );
 
-  const viewAlbum = (album: Album) => router.push(`/albums/${encodeURIComponent(album.id)}`);
+  const viewAlbum = (album: Album) => router.push(albumHref(album.id));
 
   function pick(album: Album) {
     if (!mediaIds) return;

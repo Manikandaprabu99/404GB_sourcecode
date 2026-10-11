@@ -1,12 +1,10 @@
-import { redirect } from "next/navigation";
-import { getSession } from "@/lib/session";
+"use client";
+
+import { useRequiredSession } from "@/app/components/useRequiredSession";
 import UploadClient from "./UploadClient";
 
-export const dynamic = "force-dynamic";
-
-export default async function UploadPage() {
-  const session = await getSession();
-  if (!session.accessToken) redirect("/");
-  if (!session.repoOwner || !session.repoName) redirect("/repos");
+export default function UploadPage() {
+  const session = useRequiredSession(true);
+  if (!session) return null;
   return <UploadClient />;
 }

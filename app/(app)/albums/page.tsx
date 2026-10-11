@@ -1,12 +1,10 @@
-import { redirect } from "next/navigation";
-import { getSession } from "@/lib/session";
+"use client";
+
+import { useRequiredSession } from "@/app/components/useRequiredSession";
 import AlbumsClient from "./AlbumsClient";
 
-export const dynamic = "force-dynamic";
-
-export default async function AlbumsPage() {
-  const session = await getSession();
-  if (!session.accessToken) redirect("/");
-  if (!session.repoOwner || !session.repoName) redirect("/repos");
-  return <AlbumsClient repoOwner={session.repoOwner} repoName={session.repoName} />;
+export default function AlbumsPage() {
+  const session = useRequiredSession(true);
+  if (!session?.owner || !session.repo) return null;
+  return <AlbumsClient repoOwner={session.owner} repoName={session.repo} />;
 }

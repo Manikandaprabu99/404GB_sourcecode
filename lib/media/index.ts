@@ -1,25 +1,34 @@
-import { mapWithConcurrency } from "@/lib/concurrency";
+// Library operations on the storage repo, run in the browser: the index sync, records,
+// uploads (dedup check, blobs, one commit), favorites, capture dates, thumbnail backfill
+// and deletes. Writes go through lib/github's race-safe transaction.
+
+import { ALBUMS_PATH, normalizeAlbums, removeMediaFromAlbums } from "@/lib/albums";
+import { DEFAULT_CHUNK_SIZE } from "@/lib/chunking";
 import {
   branchReader,
-  commitReader,
+  bytesToBase64,
   CorruptJsonError,
-  fetchRawContent,
-  getOctokit,
+  createBlob,
+  getContentBinary,
+  getHead,
   githubRetryAfterSeconds,
+  isAbortError,
+  isGitHubAuthError,
   objectPathForHash,
+  parseJsonArray,
+  RepoError,
   runTransaction,
   serializeJsonArray,
+  sha256HexOf,
   TreeWriteError,
+  utf8Text,
   type BlobInput,
+  type Bytes,
   type RepoReader,
   type RepoRef,
 } from "@/lib/github";
-import { ALBUMS_PATH, normalizeAlbums, removeMediaFromAlbums } from "@/lib/albums/server";
-import { ApiError } from "@/lib/session/api";
-// Constant only — the rest of that client-oriented module never runs here.
-import { THUMBNAIL_SIZES } from "@/lib/thumbnails";
-// Type-only: sharp loads via runtime import() so a broken native binary is a catchable failure.
-import type SharpModule from "sharp";
+import { generateThumbnails } from "@/lib/thumbnails";
+import { reconstructMediaClient } from "./reconstructClient";
 import {
   isMediaId,
   makeMediaId,
@@ -30,49 +39,87 @@ import {
   type MediaIndexEntry,
   type MediaRecord,
 } from "./types";
-import { normalizeUploadRecord, pickBlobShas, pickThumbnailShas, withMediaId } from "./validate";
+import {
+  isChunkHash,
+  normalizeDate,
+  normalizeUploadRecord,
+  pickBlobShas,
+  pickThumbnailShas,
+  withMediaId,
+} from "./validate";
 
 export * from "./types";
 
-/** Parallel chunk fetches when reassembling a file server-side. */
-const CHUNK_FETCH_CONCURRENCY = 4;
-// sharp's prebuilt libvips decodes AVIF but not HEVC-coded HEIC/HEIF.
-const SHARP_UNSUPPORTED = new Set(["image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"]);
+/** Commit bookkeeping returned by writes, so the library can skip re-reading its own commits. */
+export interface CommitInfo {
+  /** Null when nothing changed (no commit made). */
+  commitSha: string | null;
+  /** The commit the change was built on. */
+  parentSha: string;
+}
+
+// Images the browser can decode into thumbnails (HEIC/HEIF and RAW formats can't be).
+const BACKFILL_DECODABLE = /^image\/(jpeg|jpg|pjpeg|png|apng|webp|gif|avif|bmp|x-ms-bmp)$/i;
 const BACKFILL_MAX_BYTES = 48 * 1024 * 1024;
+// 32,768 chunks × 4 MiB = 128 GiB, far beyond anything a GitHub repo can hold.
+const MAX_CHUNKS = 32768;
+
+/** Whether this browser can make thumbnails from an image of this type. */
+export function canMakeThumbnails(mimeType: string): boolean {
+  return BACKFILL_DECODABLE.test(mimeType);
+}
 
 function readIndex(reader: RepoReader): Promise<MediaIndexEntry[]> {
   return reader.readJsonArray<MediaIndexEntry>(MEDIA_INDEX_PATH);
 }
 
-/** manifest/media-index.json at `commitSha`, or at the branch head when omitted. */
+/** manifest/media-index.json at `commitSha` (the branch head when omitted): one raw read. */
 export async function readMediaIndex(repo: RepoRef, commitSha?: string): Promise<MediaIndexEntry[]> {
-  return readIndex(commitSha ? commitReader(repo, commitSha) : branchReader(repo));
+  const bytes = await getContentBinary(repo, MEDIA_INDEX_PATH, commitSha);
+  return parseJsonArray<MediaIndexEntry>(MEDIA_INDEX_PATH, bytes ? utf8Text(bytes) : null);
 }
 
-/** One metadata/<id>.json record. */
-export async function readMediaRecord(repo: RepoRef, id: string): Promise<MediaRecord | null> {
+export interface IndexSync {
+  unchanged: boolean;
+  sha: string;
+  /** The whole index at `sha`, when it moved past `sinceSha`. */
+  index?: MediaIndexEntry[];
+}
+
+// Last ref answer per repo + branch, so the head check can be an ETag revalidation.
+const heads = new Map<string, { etag: string; sha: string }>();
+
+/** Sync check: the head sha (a 304 when unchanged costs no rate limit), plus the index read at exactly that sha when it differs from `sinceSha`. */
+export async function syncMediaIndex(repo: RepoRef, sinceSha?: string): Promise<IndexSync> {
+  const key = `${repo.owner}/${repo.repo}@${repo.branch}`;
+  const memo = heads.get(key);
+  const head = await getHead(repo, memo?.etag);
+  let sha: string;
+  if (head.modified) {
+    sha = head.sha;
+    if (head.etag) heads.set(key, { etag: head.etag, sha });
+    else heads.delete(key);
+  } else if (memo) {
+    sha = memo.sha;
+  } else {
+    const fresh = await getHead(repo);
+    if (!fresh.modified) throw new Error("GitHub didn't return the branch head");
+    sha = fresh.sha;
+  }
+  if (sinceSha && sinceSha === sha) return { unchanged: true, sha };
+  return { unchanged: false, sha, index: await readMediaIndex(repo, sha) };
+}
+
+/** One metadata/<id>.json record (null when it doesn't exist). */
+export async function readMediaRecord(repo: RepoRef, id: string, signal?: AbortSignal): Promise<MediaRecord | null> {
   if (!isMediaId(id)) return null;
-  const octokit = getOctokit(repo.accessToken);
-  const buf = await fetchRawContent(octokit, repo.owner, repo.repo, metadataPath(id), repo.branch);
-  if (!buf) return null;
+  const bytes = await getContentBinary(repo, metadataPath(id), undefined, signal);
+  if (!bytes) return null;
   try {
-    return JSON.parse(buf.toString("utf-8")) as MediaRecord;
+    return JSON.parse(utf8Text(bytes)) as MediaRecord;
   } catch {
     return null;
   }
-}
-
-/** Fetches a record's chunks (bounded concurrency) and concatenates them in order. */
-export async function reconstructMedia(repo: RepoRef, record: MediaRecord): Promise<Buffer> {
-  const octokit = getOctokit(repo.accessToken);
-  const ordered = [...record.chunks].sort((a, b) => a.index - b.index);
-  const parts = await mapWithConcurrency(ordered, CHUNK_FETCH_CONCURRENCY, async (chunk) => {
-    const path = objectPathForHash(chunk.hash);
-    const bytes = await fetchRawContent(octokit, repo.owner, repo.repo, path, repo.branch);
-    if (!bytes) throw new Error(`Missing chunk object at ${path}`);
-    return bytes;
-  });
-  return Buffer.concat(parts);
 }
 
 export interface UploadCheck {
@@ -80,16 +127,24 @@ export interface UploadCheck {
   missing: string[];
   /** Id of an indexed item with the same whole-file hash; nothing needs uploading then. */
   duplicateOf: string | null;
-  /** The duplicate has no capture date: send this file's via POST /api/media/<id>/taken-at. */
+  /** The duplicate has no capture date: give it this file's with setTakenAtIfMissing. */
   duplicateNeedsDate?: boolean;
 }
 
-/** POST /api/media/upload/init: duplicate check plus which chunks are missing. */
+/** Duplicate check plus which chunks are missing; a duplicate needs no upload, so `missing` is []. */
 export async function checkUpload(
   repo: RepoRef,
-  chunkHashes: readonly string[],
-  fileHash?: string
+  rawChunkHashes: readonly string[],
+  rawFileHash?: string
 ): Promise<UploadCheck> {
+  if (!Array.isArray(rawChunkHashes) || rawChunkHashes.length > MAX_CHUNKS) {
+    throw new RepoError(400, `chunkHashes must be an array of at most ${MAX_CHUNKS} hashes`);
+  }
+  const chunkHashes = rawChunkHashes.map((hash) => hash.toLowerCase());
+  if (!chunkHashes.every(isChunkHash)) throw new RepoError(400, "chunkHashes must be lowercase sha256 hex digests");
+  const fileHash = rawFileHash?.toLowerCase();
+  if (fileHash !== undefined && !isChunkHash(fileHash)) throw new RepoError(400, "fileHash must be a sha256 hex digest");
+
   const reader = branchReader(repo);
   if (fileHash) {
     const hash = `sha256:${fileHash}`;
@@ -101,31 +156,39 @@ export async function checkUpload(
   return { missing: unique.filter((hash) => !stored.has(hash)), duplicateOf: null };
 }
 
+/** One chunk or thumbnail (≤ 4 MiB) as a Git blob; returns its blob sha for the commit. */
+export async function uploadBlob(repo: RepoRef, bytes: Bytes, hash: string, signal?: AbortSignal): Promise<string> {
+  if (!isChunkHash(hash)) throw new RepoError(400, "hash must be the sha256 hex digest of the content");
+  if (bytes.length === 0) throw new RepoError(400, "A part of this file is empty");
+  if (bytes.length > DEFAULT_CHUNK_SIZE) throw new RepoError(413, `chunks must be at most ${DEFAULT_CHUNK_SIZE} bytes`);
+  // Content addressing only holds if the bytes really hash to the path they'll be stored at.
+  if ((await sha256HexOf(bytes)) !== hash) {
+    throw new RepoError(400, "This file changed while it was uploading. Add it again.", "hash_mismatch");
+  }
+  return createBlob(repo, bytesToBase64(bytes), signal);
+}
+
 export interface CommitUploadInput {
   record: unknown;
-  /** Blob shas of chunks uploaded via /api/media/upload/chunk, keyed by chunk hash. */
+  /** Blob shas of chunks uploaded with uploadBlob, keyed by chunk hash. */
   chunkBlobShas?: unknown;
   /** Blob shas of thumbnail webps uploaded the same way, keyed by "320" | "800" | "1600". */
   thumbnailBlobShas?: unknown;
 }
 
-export interface CommitUploadResult {
+export interface CommitUploadResult extends CommitInfo {
   id: string;
   /** The same file (by whole-file hash) was already indexed; nothing was added. */
   duplicate: boolean;
-  commitSha: string | null;
   entry: MediaIndexEntry;
   /** The stored record; null for duplicates. */
   record: MediaRecord | null;
 }
 
-type CommitOutcome = Omit<CommitUploadResult, "commitSha">;
+type CommitOutcome = Omit<CommitUploadResult, keyof CommitInfo>;
 
 /** One commit for chunks, thumbnails, metadata and index entry; idempotent by hash even under concurrent uploads. */
-export async function commitMediaUpload(
-  repo: RepoRef,
-  input: CommitUploadInput
-): Promise<CommitUploadResult> {
+export async function commitMediaUpload(repo: RepoRef, input: CommitUploadInput): Promise<CommitUploadResult> {
   const thumbnailBlobShas = pickThumbnailShas(input.thumbnailBlobShas);
   let record = normalizeUploadRecord(input.record, thumbnailBlobShas);
   const chunkHashes = new Set(record.chunks.map((chunk) => chunk.hash));
@@ -137,12 +200,12 @@ export async function commitMediaUpload(
     const stored = await branchReader(repo).existingObjects(unsupplied);
     const missing = unsupplied.filter((hash) => !stored.has(hash));
     if (missing.length > 0) {
-      throw new ApiError(409, "Some parts of this file haven't been uploaded yet", "missing_chunks", { missing });
+      throw new RepoError(409, "Some parts of this file haven't been uploaded yet", "missing_chunks", { missing });
     }
   }
 
   try {
-    const { result, commitSha } = await runTransaction<CommitOutcome>(repo, async (snapshot) => {
+    const { result, commitSha, parentSha } = await runTransaction<CommitOutcome>(repo, async (snapshot) => {
       const index = await readIndex(snapshot);
       const existing = index.find((entry) => entry.hash === record.hash);
       if (existing) {
@@ -162,20 +225,16 @@ export async function commitMediaUpload(
         commit: { blobs, message: `404gb: upload ${record.filename}` },
       };
     });
-    return { ...result, commitSha };
+    return { ...result, commitSha, parentSha };
   } catch (err) {
     if (err instanceof TreeWriteError) {
-      throw new ApiError(
-        422,
-        "Some uploaded parts are no longer on GitHub — upload them again",
-        "unknown_blob"
-      );
+      throw new RepoError(422, "Some uploaded parts are no longer on GitHub — upload them again", "unknown_blob");
     }
     throw err;
   }
 }
 
-export interface SetTakenAtResult {
+export interface SetTakenAtResult extends CommitInfo {
   /** False when the item is gone or already had a capture date (which is never overwritten). */
   changed: boolean;
   entry: MediaIndexEntry | null;
@@ -185,9 +244,11 @@ export interface SetTakenAtResult {
  * Gives an item uploaded without a capture date (older web uploads) the date
  * a later upload of the same file knew, so it sorts under the day it was taken.
  */
-export async function setTakenAtIfMissing(repo: RepoRef, id: string, takenAt: string): Promise<SetTakenAtResult> {
-  if (!isMediaId(id)) return { changed: false, entry: null };
-  const { result } = await runTransaction<SetTakenAtResult>(repo, async (snapshot) => {
+export async function setTakenAtIfMissing(repo: RepoRef, id: string, rawTakenAt: string): Promise<SetTakenAtResult> {
+  const takenAt = normalizeDate(rawTakenAt);
+  if (!takenAt) throw new RepoError(400, "takenAt must be a plausible ISO 8601 date");
+  if (!isMediaId(id)) throw new RepoError(404, "not found");
+  const { result, commitSha, parentSha } = await runTransaction(repo, async (snapshot) => {
     const index = await readIndex(snapshot);
     const entry = index.find((item) => item.id === id);
     if (!entry || entry.takenAt) return { result: { changed: false, entry: entry ?? null } };
@@ -204,7 +265,7 @@ export async function setTakenAtIfMissing(repo: RepoRef, id: string, takenAt: st
       commit: { blobs, message: `404gb: set capture date of ${entry.filename}` },
     };
   });
-  return result;
+  return { ...result, commitSha, parentSha };
 }
 
 export type ThumbnailBackfillStatus = "created" | "skipped" | "failed";
@@ -213,13 +274,14 @@ export interface ThumbnailBackfillResult {
   status: ThumbnailBackfillStatus;
   /** size -> repo-relative path (same shape as MediaRecord.thumbnails), when thumbnails exist. */
   thumbnails?: Record<string, string>;
+  commit?: CommitInfo;
 }
 
 function hasThumbnails(record: MediaRecord): boolean {
   return !!record.thumbnails && Object.keys(record.thumbnails).length > 0;
 }
 
-/** Best-effort sharp thumbnails for images the browser couldn't decode; only rate limits throw. */
+/** Best-effort thumbnails, made in this browser, for an image stored without any; only rate limits, sign-in problems and aborts throw. */
 export async function backfillThumbnailIfMissing(
   repo: RepoRef,
   mediaId: string,
@@ -230,55 +292,29 @@ export async function backfillThumbnailIfMissing(
   if (!record || record.deletedAt) return { status: "skipped" };
   if (hasThumbnails(record)) return { status: "skipped", thumbnails: record.thumbnails };
   const mimeType = record.mimeType?.toLowerCase() ?? "";
-  if (!mimeType.startsWith("image/") || SHARP_UNSUPPORTED.has(mimeType) || record.size > BACKFILL_MAX_BYTES) {
-    return { status: "skipped" };
-  }
+  if (!canMakeThumbnails(mimeType) || record.size > BACKFILL_MAX_BYTES) return { status: "skipped" };
 
-  let sharpFactory: typeof SharpModule;
+  let original: Blob;
   try {
-    const mod = await import("sharp");
-    sharpFactory = (mod as unknown as { default: typeof SharpModule }).default;
-  } catch {
-    return { status: "failed" };
-  }
-
-  let original: Buffer;
-  try {
-    original = await reconstructMedia(repo, record);
+    original = await reconstructMediaClient(repo, record);
   } catch (err) {
-    if (githubRetryAfterSeconds(err) !== null) throw err;
+    if (githubRetryAfterSeconds(err) !== null || isGitHubAuthError(err) || isAbortError(err)) throw err;
     return { status: "failed" };
   }
 
-  const generated: Array<{ size: string; buffer: Buffer }> = [];
+  let generated: Awaited<ReturnType<typeof generateThumbnails>>;
   try {
-    // rotate() bakes in EXIF orientation so the thumbnail isn't sideways.
-    const source = sharpFactory(original, { failOn: "none" }).rotate();
-    for (const size of THUMBNAIL_SIZES) {
-      const buffer = await source
-        .clone()
-        .resize({ width: size, height: size, fit: "inside", withoutEnlargement: true })
-        .webp({ quality: 82 })
-        .toBuffer();
-      generated.push({ size: String(size), buffer });
-    }
+    generated = await generateThumbnails(original);
   } catch {
     return { status: "failed" };
   }
 
-  const octokit = getOctokit(repo.accessToken);
   const thumbShas: Record<string, string> = {};
-  for (const { size, buffer } of generated) {
-    const { data } = await octokit.git.createBlob({
-      owner: repo.owner,
-      repo: repo.repo,
-      content: buffer.toString("base64"),
-      encoding: "base64",
-    });
-    thumbShas[size] = data.sha;
+  for (const thumb of generated) {
+    thumbShas[String(thumb.size)] = await createBlob(repo, bytesToBase64(new Uint8Array(await thumb.blob.arrayBuffer())));
   }
 
-  const { result } = await runTransaction<ThumbnailBackfillResult>(repo, async (snapshot) => {
+  const { result, commitSha, parentSha } = await runTransaction<ThumbnailBackfillResult>(repo, async (snapshot) => {
     const current = await snapshot.readJson<MediaRecord>(metadataPath(mediaId));
     if (!current || current.deletedAt) return { result: { status: "skipped" } };
     if (hasThumbnails(current)) return { result: { status: "skipped", thumbnails: current.thumbnails } };
@@ -287,9 +323,7 @@ export async function backfillThumbnailIfMissing(
 
     const thumbnails: Record<string, string> = {};
     for (const size of Object.keys(thumbShas)) thumbnails[size] = thumbnailPath(mediaId, size);
-    const updatedIndex = index.map((entry) =>
-      entry.id === mediaId ? { ...entry, thumb: thumbnails["320"] } : entry
-    );
+    const updatedIndex = index.map((entry) => (entry.id === mediaId ? { ...entry, thumb: thumbnails["320"] } : entry));
     return {
       result: { status: "created", thumbnails },
       commit: {
@@ -302,22 +336,20 @@ export async function backfillThumbnailIfMissing(
       },
     };
   });
-  return result;
+  return { ...result, commit: { commitSha, parentSha } };
 }
 
-export interface DeleteMediaResult {
+export interface DeleteMediaResult extends CommitInfo {
   /** Ids that were present and removed; unknown or already-deleted ids are dropped. */
   deletedIds: string[];
-  /** Null when nothing changed (no commit made). */
-  commitSha: string | null;
 }
 
 /** One commit removing index entries, metadata files and album membership; objects/ stay (chunks may be shared). */
-export async function deleteMedia(repo: RepoRef, ids: readonly string[]): Promise<DeleteMediaResult> {
+export async function deleteMedia(repo: RepoRef, ids: readonly string[]): Promise<DeleteMediaResult | null> {
   const requested = new Set(ids.filter(isMediaId));
-  if (requested.size === 0) return { deletedIds: [], commitSha: null };
+  if (requested.size === 0) return null;
 
-  const { result, commitSha } = await runTransaction<string[]>(repo, async (snapshot) => {
+  const { result, commitSha, parentSha } = await runTransaction<string[]>(repo, async (snapshot) => {
     const index = await readIndex(snapshot);
     const deletedIds = index.filter((entry) => requested.has(entry.id)).map((entry) => entry.id);
     if (deletedIds.length === 0) return { result: [] };
@@ -348,7 +380,7 @@ export async function deleteMedia(repo: RepoRef, ids: readonly string[]): Promis
     };
   });
 
-  return commitSha ? { deletedIds: result, commitSha } : { deletedIds: [], commitSha: null };
+  return { deletedIds: commitSha ? result : [], commitSha, parentSha };
 }
 
 function withFavorite<T extends { favorite?: boolean }>(item: T, favorite: boolean): T {
@@ -358,10 +390,9 @@ function withFavorite<T extends { favorite?: boolean }>(item: T, favorite: boole
   return copy;
 }
 
-export interface SetFavoriteResult {
+export interface SetFavoriteResult extends CommitInfo {
   /** Index entries of the requested ids that exist, after the change. */
   entries: MediaIndexEntry[];
-  commitSha: string | null;
 }
 
 /** Sets or clears `favorite` on index entries and metadata records, in one commit. */
@@ -369,11 +400,11 @@ export async function setFavorite(
   repo: RepoRef,
   ids: readonly string[],
   favorite: boolean
-): Promise<SetFavoriteResult> {
+): Promise<SetFavoriteResult | null> {
   const requested = new Set(ids.filter(isMediaId));
-  if (requested.size === 0) return { entries: [], commitSha: null };
+  if (requested.size === 0) return null;
 
-  const { result, commitSha } = await runTransaction<MediaIndexEntry[]>(repo, async (snapshot) => {
+  const { result, commitSha, parentSha } = await runTransaction<MediaIndexEntry[]>(repo, async (snapshot) => {
     const index = await readIndex(snapshot);
     const changing = new Set(
       index.filter((entry) => requested.has(entry.id) && !!entry.favorite !== favorite).map((entry) => entry.id)
@@ -405,5 +436,5 @@ export async function setFavorite(
       },
     };
   });
-  return { entries: result, commitSha };
+  return { entries: result, commitSha, parentSha };
 }

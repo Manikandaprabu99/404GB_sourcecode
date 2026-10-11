@@ -1,6 +1,5 @@
 import { DEFAULT_CHUNK_SIZE } from "@/lib/chunking";
-import { objectPathForHash } from "@/lib/github";
-import { ApiError } from "@/lib/session/api";
+import { objectPathForHash, RepoError } from "@/lib/github";
 import { THUMBNAIL_SIZES } from "@/lib/thumbnails";
 import { isMediaId, makeMediaId, thumbnailPath, type ChunkRef, type MediaRecord } from "./types";
 
@@ -41,19 +40,19 @@ function sanitizeFilename(value: unknown): string {
 function normalizeChunks(raw: unknown, size: number, chunkSize: number): ChunkRef[] {
   const expected = Math.ceil(size / chunkSize);
   if (!Array.isArray(raw) || raw.length !== expected) {
-    throw new ApiError(400, `record.chunks must list ${expected} chunk(s) for this size and chunkSize`);
+    throw new RepoError(400, `record.chunks must list ${expected} chunk(s) for this size and chunkSize`);
   }
   const chunks = raw.map((item): ChunkRef => {
     const c = (item ?? {}) as { index?: unknown; hash?: unknown };
     const hash = typeof c.hash === "string" ? c.hash.toLowerCase() : c.hash;
     if (typeof c.index !== "number" || !Number.isInteger(c.index) || !isChunkHash(hash)) {
-      throw new ApiError(400, "Each record chunk needs an integer index and a sha256 hex hash");
+      throw new RepoError(400, "Each record chunk needs an integer index and a sha256 hex hash");
     }
     return { index: c.index, hash, path: objectPathForHash(hash) };
   });
   chunks.sort((a, b) => a.index - b.index);
   if (chunks.some((chunk, i) => chunk.index !== i)) {
-    throw new ApiError(400, "record.chunks indexes must run 0..n-1 without gaps");
+    throw new RepoError(400, "record.chunks indexes must run 0..n-1 without gaps");
   }
   return chunks;
 }
@@ -73,26 +72,26 @@ export function pickThumbnailShas(raw: unknown): Record<string, string> {
   return pickBlobShas(raw, (key) => THUMBNAIL_SIZE_KEYS.has(key));
 }
 
-/** The server's canonical copy of a client record (paths rebuilt, junk dropped); 400 for anything corrupting. */
+/** The canonical copy of an upload record (paths rebuilt, junk dropped); a 400 RepoError for anything corrupting. */
 export function normalizeUploadRecord(
   raw: unknown,
   thumbnailBlobShas: Record<string, string>,
   now = Date.now()
 ): MediaRecord {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new ApiError(400, "record is required");
+    throw new RepoError(400, "record is required");
   }
   const r = raw as Record<string, unknown>;
 
   const hash = typeof r.hash === "string" ? r.hash.toLowerCase() : "";
-  if (!FILE_HASH.test(hash)) throw new ApiError(400, "record.hash must be sha256:<64 hex chars>");
+  if (!FILE_HASH.test(hash)) throw new RepoError(400, "record.hash must be sha256:<64 hex chars>");
 
   const mimeType = typeof r.mimeType === "string" ? r.mimeType.trim().toLowerCase() : "";
-  if (!MIME_TYPE.test(mimeType)) throw new ApiError(400, "record.mimeType must be an image or video type");
+  if (!MIME_TYPE.test(mimeType)) throw new RepoError(400, "record.mimeType must be an image or video type");
 
   const size = r.size;
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) {
-    throw new ApiError(400, "record.size must be a positive integer");
+    throw new RepoError(400, "record.size must be a positive integer");
   }
   const chunkSize = r.chunkSize;
   if (
@@ -101,7 +100,7 @@ export function normalizeUploadRecord(
     chunkSize <= 0 ||
     chunkSize > DEFAULT_CHUNK_SIZE
   ) {
-    throw new ApiError(400, `record.chunkSize must be between 1 and ${DEFAULT_CHUNK_SIZE} bytes`);
+    throw new RepoError(400, `record.chunkSize must be between 1 and ${DEFAULT_CHUNK_SIZE} bytes`);
   }
 
   const id = isMediaId(r.id) ? r.id : makeMediaId();

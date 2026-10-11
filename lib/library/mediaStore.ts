@@ -1,13 +1,29 @@
-// The app-wide media library: the IndexedDB-cached index plus the sinceSha
-// sync, kept in module scope so every screen (Photos, an album, the album
-// picker) shares one copy that survives client-side navigation. Local edits are
-// optimistic: deletes hide items for an undo window before the DELETE is sent,
-// favorites flip immediately and revert if the PATCH fails.
+// The app-wide media library: the IndexedDB-cached index plus the head-sha sync against
+// GitHub, kept in module scope so every screen (Photos, an album, the album picker) shares
+// one copy that survives client-side navigation. Local edits are optimistic: deletes hide
+// items for an undo window before the commit, favorites flip immediately and revert if the
+// commit fails. This page's own commits (and the phone's uploads, reported by the backup
+// plugin) are applied directly instead of re-downloading the index.
 
-import type { MediaIndexEntry } from "@/lib/media";
+import { App } from "@capacitor/app";
+import { Semaphore } from "@/lib/concurrency";
+import {
+  backfillThumbnailIfMissing,
+  canMakeThumbnails,
+  deleteMedia,
+  isMediaId,
+  setFavorite,
+  syncMediaIndex,
+  type CommitInfo,
+  type CommitUploadResult,
+  type MediaIndexEntry,
+} from "@/lib/media";
 import { applyMediaDiff, getCachedMediaIndex, getSyncState, setSyncState } from "@/lib/cache";
+import { Backup } from "@/lib/native/backup";
+import { hasNativePlugin } from "@/lib/native/platform";
+import { onSessionChange } from "@/lib/session";
 import { getUploadQueue } from "@/lib/upload/queueSingleton";
-import { ApiError, apiJson, chunk, retryWhenBusy, toLibraryError, type LibraryError } from "./api";
+import { ApiError, chunk, retryWhenBusy, toLibraryError, withRepo, type LibraryError } from "./api";
 import { onBackupProgress, startBackupWatcher } from "./backupStore";
 import { sortNewestFirst } from "./dates";
 import { clearThumbUrls } from "./thumbUrls";
@@ -18,7 +34,7 @@ export interface LibrarySnapshot {
   items: MediaIndexEntry[];
   /** The IndexedDB cache has been read. */
   hydrated: boolean;
-  /** At least one sync with the server succeeded since the page loaded. */
+  /** At least one sync with GitHub succeeded since the page loaded. */
   synced: boolean;
   syncing: boolean;
   error: LibraryError | null;
@@ -36,21 +52,17 @@ export interface PendingDelete {
 
 export const UNDO_WINDOW_MS = 5000;
 // How long a confirmed local edit may disagree with a freshly synced index
-// before the server copy wins (covers reads that lag just behind a commit).
+// before the repo's copy wins (covers reads that lag just behind a commit).
 const RECONCILE_GRACE_MS = 10_000;
 const FOCUS_SYNC_MIN_INTERVAL_MS = 2000;
-// The bulk endpoints accept at most 5000 ids; smaller batches keep bodies small.
+const CATCH_UP_SYNC_DELAY_MS = 1200;
+// While the phone's backup runs, its uploads arrive through itemsUploaded; a full index
+// read is only a safety net, at most this often.
+const BACKUP_SYNC_INTERVAL_MS = 3 * 60_000;
+// One commit per batch; keeps each tree and index rewrite a reasonable size.
 const BULK_BATCH = 2000;
-// keepalive requests share a 64 KB body budget.
-const KEEPALIVE_BATCH = 400;
-
-interface MediaListResponse {
-  unchanged: boolean;
-  sha: string;
-  index?: MediaIndexEntry[];
-  /** More of the index at the same sha: fetch ?sha=&offset=nextOffset. */
-  nextOffset?: number | null;
-}
+// Deletes that were due (or in flight) when the page went away, finished on the next start.
+const OUTBOX_KEY = "404gb-pending-deletes";
 
 interface FavoriteOverride {
   favorite: boolean;
@@ -79,7 +91,7 @@ const EMPTY_SNAPSHOT: LibrarySnapshot = {
 let repoKey: string | null = null;
 // Bumped on repo switch; async work started for an older generation is dropped.
 let generation = 0;
-/** Server truth as of the last sync, plus confirmed local edits (mirrors IndexedDB). */
+/** The repo's index as of the last sync, plus confirmed local edits (mirrors IndexedDB). */
 let base: MediaIndexEntry[] = [];
 let lastSha: string | null = null;
 let hydrated = false;
@@ -88,6 +100,8 @@ let syncing = false;
 let error: LibraryError | null = null;
 const hidden = new Map<string, Hidden>();
 const overrides = new Map<string, FavoriteOverride>();
+/** Entries added without a sync (phone backup, this page's uploads), by when they were applied. */
+const recentUploads = new Map<string, { entry: MediaIndexEntry; at: number }>();
 const scheduledDeletes = new Set<ScheduledDelete>();
 let overrideToken = 0;
 
@@ -138,7 +152,7 @@ export function getServerLibrarySnapshot(): LibrarySnapshot {
   return EMPTY_SNAPSHOT;
 }
 
-/** Called with ids once their delete is confirmed by the server. */
+/** Called with ids once their delete is committed. */
 export function onMediaDeleted(listener: (ids: string[]) => void): () => void {
   deleteListeners.add(listener);
   return () => {
@@ -153,9 +167,7 @@ function clearTimers() {
   scheduledSyncTimer = 0;
 }
 
-/** Points the store at a repo, loading its cached index (no-op if already there). */
-export function ensureLibrary(key: string): void {
-  if (repoKey === key) return;
+function resetState(key: string | null) {
   generation += 1;
   // A pending delete must never be sent once the session may point at another repo.
   for (const scheduled of scheduledDeletes) {
@@ -175,23 +187,50 @@ export function ensureLibrary(key: string): void {
   error = null;
   hidden.clear();
   overrides.clear();
+  recentUploads.clear();
   inflight = null;
   rerunRequested = false;
+  // The new library's first sync must not be debounced against the previous library's.
+  lastSyncStartedAt = 0;
   itemsDirty = true;
+}
+
+/** Points the store at a repo, loading its cached index (no-op if already there). */
+export function ensureLibrary(key: string): void {
+  if (repoKey === key) return;
+  resetState(key);
   hydration = hydrate(key, generation);
   emit();
+}
+
+/** Forgets the library in memory (signing out); the next ensureLibrary starts fresh. */
+export function resetLibrary(): void {
+  if (repoKey === null) return;
+  resetState(null);
+  hydration = Promise.resolve();
+  emit();
+}
+
+function withRecentUploads(entries: MediaIndexEntry[]): MediaIndexEntry[] {
+  if (recentUploads.size === 0) return entries;
+  const present = new Set(entries.map((entry) => entry.id));
+  const missing = Array.from(recentUploads.values())
+    .filter(({ entry }) => !present.has(entry.id))
+    .map(({ entry }) => entry);
+  return missing.length > 0 ? [...entries, ...missing] : entries;
 }
 
 async function hydrate(key: string, gen: number): Promise<void> {
   const [cached, state] = await Promise.all([getCachedMediaIndex(key), getSyncState(key)]);
   if (gen !== generation) return;
   if (!synced) {
-    base = sortNewestFirst(cached);
+    base = sortNewestFirst(withRecentUploads(cached));
     lastSha = cached.length > 0 ? (state?.lastKnownSha ?? null) : null;
     itemsDirty = true;
   }
   hydrated = true;
   emit();
+  resumeOutbox(key, gen);
 }
 
 function sameEntry(a: MediaIndexEntry, b: MediaIndexEntry): boolean {
@@ -213,7 +252,7 @@ function diffEntries(prev: readonly MediaIndexEntry[], next: readonly MediaIndex
   return { upserts, removedIds };
 }
 
-/** Drops local edits the server now reflects; true if another sync should follow. */
+/** Drops local edits the repo now reflects; true if another sync should follow. */
 function reconcile(current: Map<string, MediaIndexEntry>, startedAt: number): boolean {
   let followUp = false;
   for (const [id, override] of overrides) {
@@ -268,34 +307,31 @@ async function runSync(gen: number): Promise<void> {
   syncing = true;
   emit();
   try {
-    const sinceSha = lastSha && base.length > 0 ? lastSha : "";
-    const data = await apiJson<MediaListResponse>(
-      `/api/media?sinceSha=${encodeURIComponent(sinceSha)}`
-    );
+    const sinceSha = lastSha && base.length > 0 ? lastSha : undefined;
+    const data = await withRepo((repo) => syncMediaIndex(repo, sinceSha), key);
     if (gen !== generation) return;
 
     let followUp: boolean;
+    // Uploads applied before this sync read the head are in (or deliberately gone from) its index.
+    const lateUploads = new Map<string, MediaIndexEntry>();
+    for (const [id, upload] of recentUploads) {
+      if (upload.at > startedAt) lateUploads.set(id, upload.entry);
+      else recentUploads.delete(id);
+    }
     if (data.unchanged) {
       followUp = reconcile(new Map(base.map((entry) => [entry.id, entry])), startedAt);
     } else {
-      let fresh = data.index ?? [];
-      let nextOffset = data.nextOffset ?? null;
-      while (nextOffset !== null && data.sha) {
-        const page = await apiJson<MediaListResponse>(
-          `/api/media?sha=${encodeURIComponent(data.sha)}&offset=${nextOffset}`
-        );
-        if (gen !== generation) return;
-        fresh = fresh.concat(page.index ?? []);
-        nextOffset = page.nextOffset ?? null;
-      }
-      const diff = diffEntries(base, fresh);
-      base = sortNewestFirst(fresh);
+      const fresh = data.index ?? [];
+      const freshIds = new Set(fresh.map((entry) => entry.id));
+      const merged = [...fresh, ...Array.from(lateUploads.values()).filter((entry) => !freshIds.has(entry.id))];
+      const diff = diffEntries(base, merged);
+      base = sortNewestFirst(merged);
       itemsDirty = true;
       followUp = reconcile(new Map(fresh.map((entry) => [entry.id, entry])), startedAt);
       if (diff.upserts.length > 0 || diff.removedIds.length > 0) {
         await applyMediaDiff(key, diff.upserts, diff.removedIds);
       }
-      if (data.sha) await setSyncState(key, data.sha);
+      await setSyncState(key, data.sha);
       if (gen !== generation) return;
     }
     lastSha = data.sha || null;
@@ -316,7 +352,7 @@ async function runSync(gen: number): Promise<void> {
   }
 }
 
-/** Re-runs the sinceSha sync now; concurrent calls share one request (plus one rerun). */
+/** Re-runs the head-sha sync now; concurrent calls share one run (plus one rerun). */
 export function syncLibrary(): Promise<void> {
   if (!repoKey) return Promise.resolve();
   if (inflight) {
@@ -344,18 +380,58 @@ export function requestLibrarySync(options: { delayMs?: number; minIntervalMs?: 
   else void syncLibrary();
 }
 
-// Library mutations hit the server one at a time, in the order the user made them.
+/** This page's own commit: when it was built on the commit the store last synced, the store
+ * already shows its result, so the next sync can trust "unchanged" for it. Built on a newer
+ * head means someone else committed meanwhile, so catch up shortly. */
+function adoptCommit(gen: number, key: string, info: CommitInfo | null | undefined): boolean {
+  if (!info?.commitSha || gen !== generation || repoKey !== key) return false;
+  if (!lastSha || info.parentSha !== lastSha) {
+    requestLibrarySync({ delayMs: CATCH_UP_SYNC_DELAY_MS });
+    return false;
+  }
+  lastSha = info.commitSha;
+  void setSyncState(key, info.commitSha);
+  return true;
+}
+
+// Library mutations hit GitHub one at a time, in the order the user made them.
 function enqueue<T>(task: () => Promise<T>): Promise<T> {
   const next = mutationChain.then(task, task);
   mutationChain = next.catch(() => undefined);
   return next;
 }
 
-function deleteRequest(ids: readonly string[], keepalive = false): Promise<unknown> {
-  if (ids.length === 1) {
-    return apiJson(`/api/media/${encodeURIComponent(ids[0])}`, { method: "DELETE", keepalive });
+function readOutbox(): Record<string, string[]> {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(OUTBOX_KEY) ?? "null");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, string[]>) : {};
+  } catch {
+    return {};
   }
-  return apiJson("/api/media", { method: "DELETE", body: { ids }, keepalive });
+}
+
+function updateOutbox(key: string, change: (ids: Set<string>) => void): void {
+  try {
+    const all = readOutbox();
+    const ids = new Set((all[key] ?? []).filter(isMediaId));
+    change(ids);
+    if (ids.size > 0) all[key] = Array.from(ids);
+    else delete all[key];
+    if (Object.keys(all).length > 0) window.localStorage.setItem(OUTBOX_KEY, JSON.stringify(all));
+    else window.localStorage.removeItem(OUTBOX_KEY);
+  } catch {
+    // Storage disabled: a delete interrupted by closing the app is simply not finished.
+  }
+}
+
+/** Finishes deletes an earlier visit committed to but couldn't complete. */
+function resumeOutbox(key: string, gen: number): void {
+  const ids = (readOutbox()[key] ?? []).filter(isMediaId);
+  if (ids.length === 0 || gen !== generation) return;
+  for (const id of ids) hidden.set(id, { kind: "pending" });
+  itemsDirty = true;
+  emit();
+  void commitDelete({ ids, gen, timer: 0, resolve: () => {} });
 }
 
 function markDeleted(key: string, ids: readonly string[]) {
@@ -378,27 +454,33 @@ function unhidePending(ids: readonly string[]) {
 }
 
 async function commitDelete(scheduled: ScheduledDelete): Promise<void> {
+  const { ids, gen } = scheduled;
+  const key = repoKey;
+  if (gen !== generation || !key) {
+    scheduled.resolve({ status: "undone" });
+    return;
+  }
+  updateOutbox(key, (outbox) => ids.forEach((id) => outbox.add(id)));
   const outcome = await enqueue(async (): Promise<DeleteOutcome> => {
-    const { ids, gen } = scheduled;
-    if (gen !== generation || !repoKey) return { status: "undone" };
-    const key = repoKey;
+    if (gen !== generation || repoKey !== key) return { status: "undone" };
     const deleted = new Set<string>();
     for (const batch of chunk(ids, BULK_BATCH)) {
       try {
-        await retryWhenBusy(() => deleteRequest(batch));
+        const result = await retryWhenBusy(() => withRepo((repo) => deleteMedia(repo, batch), key));
+        adoptCommit(gen, key, result);
       } catch (err) {
-        // A 404 means it's already gone, which is what the user asked for.
-        if (!(err instanceof ApiError && err.kind === "not-found")) {
-          const restoredIds = ids.filter((id) => !deleted.has(id));
-          if (gen === generation) {
-            if (deleted.size > 0) markDeleted(key, [...deleted]);
-            unhidePending(restoredIds);
-          }
-          return { status: "failed", error: toLibraryError(err), restoredIds };
+        const restoredIds = ids.filter((id) => !deleted.has(id));
+        updateOutbox(key, (outbox) => ids.forEach((id) => outbox.delete(id)));
+        if (gen === generation) {
+          if (deleted.size > 0) markDeleted(key, [...deleted]);
+          unhidePending(restoredIds);
         }
+        return { status: "failed", error: toLibraryError(err), restoredIds };
       }
+      // Ids the repo no longer had are gone too, which is what the user asked for.
       for (const id of batch) deleted.add(id);
     }
+    updateOutbox(key, (outbox) => ids.forEach((id) => outbox.delete(id)));
     if (gen === generation) markDeleted(key, ids);
     return { status: "deleted", ids };
   });
@@ -443,32 +525,16 @@ export function deleteWithUndo(
   };
 }
 
-/** Sends deletes still inside their undo window right away (the page is going away). */
-export function flushPendingDeletes(): void {
+/** Commits deletes still inside their undo window right away (the page is going away, or the
+ * user signs out). They are noted first, so a page that dies mid-commit finishes them next time. */
+export function flushPendingDeletes(): Promise<void> {
+  const flushing: Promise<void>[] = [];
   for (const scheduled of scheduledDeletes) {
     window.clearTimeout(scheduled.timer);
-    for (const batch of chunk(scheduled.ids, KEEPALIVE_BATCH)) {
-      void deleteRequest(batch, true).catch(() => {});
-    }
-    if (repoKey && scheduled.gen === generation) markDeleted(repoKey, scheduled.ids);
-    scheduled.resolve({ status: "deleted", ids: scheduled.ids });
+    flushing.push(commitDelete(scheduled));
   }
   scheduledDeletes.clear();
-}
-
-async function favoriteRequest(batch: readonly string[], favorite: boolean): Promise<MediaIndexEntry[]> {
-  if (batch.length === 1) {
-    const data = await apiJson<{ ok?: boolean; entry?: MediaIndexEntry }>(
-      `/api/media/${encodeURIComponent(batch[0])}`,
-      { method: "PATCH", body: { favorite } }
-    );
-    return data.entry ? [data.entry] : [];
-  }
-  const data = await apiJson<{ ok?: boolean; entries?: MediaIndexEntry[] }>("/api/media", {
-    method: "PATCH",
-    body: { ids: batch, favorite },
-  });
-  return data.entries ?? [];
+  return Promise.all([...flushing, mutationChain]).then(() => undefined);
 }
 
 function confirmFavorites(
@@ -497,7 +563,7 @@ function confirmFavorites(
   void applyMediaDiff(key, updated, []);
 }
 
-/** Optimistically sets `favorite`; reverts what the server refused and rethrows. */
+/** Optimistically sets `favorite`; reverts what the commit couldn't change and rethrows. */
 export async function setFavorites(ids: readonly string[], favorite: boolean): Promise<void> {
   const unique = Array.from(new Set(ids));
   if (!repoKey || unique.length === 0) return;
@@ -512,9 +578,10 @@ export async function setFavorites(ids: readonly string[], favorite: boolean): P
   try {
     await enqueue(async () => {
       for (const batch of chunk(unique, BULK_BATCH)) {
-        const returned = await retryWhenBusy(() => favoriteRequest(batch, favorite));
+        const result = await retryWhenBusy(() => withRepo((repo) => setFavorite(repo, batch, favorite), key));
         if (gen !== generation) return;
-        confirmFavorites(key, batch, favorite, returned, token);
+        confirmFavorites(key, batch, favorite, result?.entries ?? [], token);
+        adoptCommit(gen, key, result);
         for (const id of batch) confirmed.add(id);
       }
     });
@@ -530,7 +597,7 @@ export async function setFavorites(ids: readonly string[], favorite: boolean): P
   }
 }
 
-/** Applies a change the server already made (e.g. a backfilled thumbnail) without a full sync. */
+/** Applies a change already in the repo (e.g. a backfilled thumbnail) without a full sync. */
 export function updateEntryLocally(id: string, patch: Partial<Omit<MediaIndexEntry, "id">>): void {
   if (!repoKey) return;
   const index = base.findIndex((entry) => entry.id === id);
@@ -542,10 +609,82 @@ export function updateEntryLocally(id: string, patch: Partial<Omit<MediaIndexEnt
   void applyMediaDiff(repoKey, [updated], []);
 }
 
+function isIndexEntry(value: unknown): value is MediaIndexEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<MediaIndexEntry>;
+  return (
+    isMediaId(entry.id) &&
+    typeof entry.filename === "string" &&
+    typeof entry.hash === "string" &&
+    typeof entry.mimeType === "string" &&
+    typeof entry.createdAt === "string"
+  );
+}
+
+/** Shows entries that were just committed (the phone's backup, this page's uploads) at once. */
+export function applyUploadedEntries(entries: readonly unknown[]): void {
+  if (!repoKey || !Array.isArray(entries)) return;
+  const fresh = new Map<string, MediaIndexEntry>();
+  for (const entry of entries) if (isIndexEntry(entry)) fresh.set(entry.id, entry);
+  if (fresh.size === 0) return;
+  const now = Date.now();
+  for (const entry of fresh.values()) recentUploads.set(entry.id, { entry, at: now });
+  base = sortNewestFirst([...base.filter((entry) => !fresh.has(entry.id)), ...fresh.values()]);
+  itemsDirty = true;
+  emit();
+  void applyMediaDiff(repoKey, Array.from(fresh.values()), []);
+}
+
+/** A web upload that just committed into `result.repoKey` ("owner/repo"). */
+function applyCommittedUpload(result: CommitUploadResult & { repoKey: string }): void {
+  if (!repoKey || result.repoKey !== repoKey || result.duplicate) return;
+  const gen = generation;
+  const key = repoKey;
+  applyUploadedEntries([result.entry]);
+  adoptCommit(gen, key, result);
+}
+
+const backfillSlots = new Semaphore(1);
+let backfillPausedUntil = 0;
+
+/** Makes thumbnails in this browser for an image stored without any (one at a time); the new 320px path, or null. */
+export async function backfillThumbnail(mediaId: string): Promise<string | null> {
+  if (!repoKey) return null;
+  const entry = base.find((item) => item.id === mediaId);
+  if (entry && (!canMakeThumbnails(entry.mimeType) || entry.thumb)) return null;
+  const key = repoKey;
+  const gen = generation;
+  const release = await backfillSlots.acquire();
+  try {
+    if (gen !== generation || Date.now() < backfillPausedUntil) return null;
+    const result = await withRepo((repo) => backfillThumbnailIfMissing(repo, mediaId), key);
+    const thumb = result.thumbnails?.["320"];
+    if (!thumb || gen !== generation) return null;
+    updateEntryLocally(mediaId, { thumb });
+    adoptCommit(gen, key, result.commit);
+    return thumb;
+  } catch (err) {
+    if (err instanceof ApiError && err.kind === "rate-limit") {
+      backfillPausedUntil = Date.now() + (err.retryAfterSec ?? 60) * 1000;
+    }
+    return null;
+  } finally {
+    release();
+  }
+}
+
+// A sign-in (or repo choice) made after a failure must not be judged by that failure: the
+// screens would otherwise treat the stale "signed out" error as being about the new token.
+onSessionChange(() => {
+  if (error?.kind !== "auth") return;
+  error = null;
+  emit();
+});
+
 let watchersInstalled = false;
 
-/** Refresh triggers, installed once for the page's lifetime: focus/visibility,
- * reconnect, finished web uploads and the phone's backup progress. */
+/** Refresh triggers, installed once for the page's lifetime: focus/visibility and app resume,
+ * reconnect, finished web uploads and the phone's backup. */
 export function installLibraryWatchers(): void {
   if (watchersInstalled || typeof window === "undefined") return;
   watchersInstalled = true;
@@ -556,25 +695,20 @@ export function installLibraryWatchers(): void {
     if (document.visibilityState === "visible") onFocus();
   });
   window.addEventListener("online", () => requestLibrarySync());
-  window.addEventListener("pagehide", flushPendingDeletes);
+  window.addEventListener("pagehide", () => void flushPendingDeletes());
 
-  const seenDone = new Set<string>();
-  let primed = false;
-  getUploadQueue().subscribe((tasks) => {
-    let finishedNew = false;
-    for (const task of tasks) {
-      if (task.status !== "done" || seenDone.has(task.clientId)) continue;
-      seenDone.add(task.clientId);
-      if (primed) finishedNew = true;
-    }
-    primed = true;
-    if (finishedNew) requestLibrarySync({ delayMs: 1200 });
-  });
+  getUploadQueue().onCommitted(applyCommittedUpload);
 
   startBackupWatcher();
+  if (hasNativePlugin("Backup")) {
+    App.addListener("resume", onFocus).catch(() => {});
+    Backup.addListener("itemsUploaded", (event) => applyUploadedEntries(event?.entries ?? [])).catch(() => {});
+  }
   onBackupProgress((event) => {
-    // Throttled while a long backup run streams in; immediate once it ends.
-    if (event === "finished") requestLibrarySync();
-    else requestLibrarySync({ delayMs: 6000 });
+    if (event === "finished") {
+      requestLibrarySync();
+      return;
+    }
+    requestLibrarySync({ delayMs: Math.max(1, lastSyncStartedAt + BACKUP_SYNC_INTERVAL_MS - Date.now()) });
   });
 }

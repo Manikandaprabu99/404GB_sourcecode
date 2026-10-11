@@ -1,26 +1,25 @@
 // 404GB service worker.
 //
 // Strategies (first match wins):
-//   /stream/media/<id>      Byte-range video streaming assembled from the stored chunks
-//                           (each verified against its SHA-256 before it is served).
-//   /api/media/chunk/<hash> Cache-first from the same verified chunk cache.
-//   /api/media/thumb/*      Stale-while-revalidate.
-//   any other /api/*        Untouched: straight to the network, never cached.
+//   /stream/media/<id>      Byte-range video streaming assembled from the stored chunks, read
+//                           straight from GitHub with the session the page mirrors into
+//                           IndexedDB (each chunk verified against its SHA-256 before use).
 //   navigations             Network-first (with navigation preload), then cached page, then offline.html.
 //   /_next/static/*         Cache-first (content-hashed by Next.js).
 //   precached shell files   Cache-first.
+// Requests to other origins (api.github.com from the page) are never touched.
 
 // Keep in sync with SW_VERSION in lib/media/stream.ts (the page registers /sw.js?v=<version>).
-const SW_VERSION = 2;
+const SW_VERSION = 3;
 
 const SHELL_CACHE = `404gb-shell-v${SW_VERSION}`;
 const STATIC_ASSET_CACHE = `404gb-static-v${SW_VERSION}`;
-// Content-stable caches keep their names across releases so a deploy doesn't re-download them.
-const THUMB_CACHE = "404gb-thumbs-v1";
-const CHUNK_CACHE = "404gb-chunks-v1";
-const RECORD_CACHE = "404gb-records-v1";
-const KNOWN_CACHES = new Set([SHELL_CACHE, STATIC_ASSET_CACHE, THUMB_CACHE, CHUNK_CACHE, RECORD_CACHE]);
-const USER_DATA_CACHES = [THUMB_CACHE, CHUNK_CACHE, RECORD_CACHE];
+// Content-stable caches keep their names across releases so an update doesn't re-download them.
+// CHUNK_CACHE and CHUNK_KEY_PREFIX are shared with the page (lib/media/stream.ts).
+const CHUNK_CACHE = "404gb-chunks-v2";
+const RECORD_CACHE = "404gb-records-v2";
+const KNOWN_CACHES = new Set([SHELL_CACHE, STATIC_ASSET_CACHE, CHUNK_CACHE, RECORD_CACHE]);
+const USER_DATA_CACHES = [CHUNK_CACHE, RECORD_CACHE];
 
 const OFFLINE_URL = "/offline.html";
 const PRECACHE_URLS = [
@@ -35,14 +34,18 @@ const PRECACHE_URLS = [
 ];
 
 const STREAM_PREFIX = "/stream/media/";
-const CHUNK_API_PREFIX = "/api/media/chunk/";
+const CHUNK_KEY_PREFIX = "/__404gb__/chunk/";
 const RECORD_KEY_PREFIX = "/__404gb__/record/";
-const LOGOUT_PATH = "/api/auth/logout";
+
+const GITHUB_API = "https://api.github.com";
+// Written by the page (lib/session/authMirror.ts): { token, owner, repo, branch }.
+const AUTH_DB = "404gb-auth";
+const AUTH_STORE = "auth";
+const AUTH_KEY = "current";
 
 const MiB = 1024 * 1024;
 const CHUNK_CACHE_MAX_BYTES = 300 * MiB;
 const RECORD_CACHE_MAX_ENTRIES = 500;
-const THUMB_CACHE_MAX_ENTRIES = 5000;
 const STATIC_CACHE_MAX_ENTRIES = 400;
 const SHELL_CACHE_MAX_ENTRIES = 60;
 const MEMORY_CHUNK_SLOTS = 4;
@@ -54,6 +57,7 @@ const READ_AHEAD_CHUNKS = 3;
 const PREFETCH_CONCURRENCY = 3;
 const CHUNK_FETCH_ATTEMPTS = 3;
 const TRIM_INTERVAL_MS = 30_000;
+const AUTH_MEMO_MS = 1000;
 const HEX_SHA256 = /^[0-9a-f]{64}$/;
 
 // ---------------------------------------------------------------------------
@@ -110,7 +114,13 @@ self.addEventListener("message", (event) => {
     if (port) port.postMessage(reply);
     else if (event.source) event.source.postMessage(reply);
   } else if (data.type === "404gb:purge-user-data") {
+    // Signing out must not leave the previous account's photos readable from this device.
     event.waitUntil(purgeUserData());
+  } else if (data.type === "404gb:store-chunk") {
+    // A chunk the page downloaded for an original: cache it for streaming and later views.
+    if (typeof data.hash === "string" && HEX_SHA256.test(data.hash) && data.bytes instanceof Uint8Array) {
+      event.waitUntil(cacheVerifiedBytes(data.hash, data.bytes));
+    }
   }
 });
 
@@ -123,13 +133,6 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  if (url.pathname === LOGOUT_PATH) {
-    // Signing out must not leave the previous account's photos readable from this device.
-    // ?keep=repo is the same person's ended sign-in (they sign straight back in): keep the cache.
-    if (url.searchParams.get("keep") !== "repo") event.waitUntil(purgeUserData());
-    return;
-  }
-
   if (url.pathname.startsWith(STREAM_PREFIX)) {
     if (request.method === "GET" || request.method === "HEAD") {
       event.respondWith(handleStream(event, url));
@@ -140,21 +143,9 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   // With navigation preload on, every navigation must be answered from preloadResponse,
-  // otherwise the browser sends it twice (fatal for one-shot URLs like the OAuth callback).
+  // otherwise the browser sends it twice.
   if (request.mode === "navigate") {
-    event.respondWith(
-      url.pathname.startsWith("/api/") ? passthroughNavigation(event) : networkFirstNavigation(event)
-    );
-    return;
-  }
-
-  if (url.pathname.startsWith("/api/")) {
-    const hash = chunkHashFromPath(url.pathname);
-    if (hash && !request.headers.has("range")) {
-      event.respondWith(serveChunkApi(event, hash));
-    } else if (url.pathname.startsWith("/api/media/thumb/")) {
-      event.respondWith(staleWhileRevalidate(event, THUMB_CACHE, THUMB_CACHE_MAX_ENTRIES));
-    }
+    event.respondWith(networkFirstNavigation(event));
     return;
   }
 
@@ -180,20 +171,9 @@ function isNavigationRequest(request) {
   );
 }
 
-function chunkHashFromPath(pathname) {
-  if (!pathname.startsWith(CHUNK_API_PREFIX)) return null;
-  const hash = pathname.slice(CHUNK_API_PREFIX.length);
-  return HEX_SHA256.test(hash) ? hash : null;
-}
-
 // ---------------------------------------------------------------------------
 // App shell strategies
 // ---------------------------------------------------------------------------
-
-async function passthroughNavigation(event) {
-  const preloaded = await event.preloadResponse;
-  return preloaded || fetch(event.request);
-}
 
 async function networkFirstNavigation(event) {
   const { request } = event;
@@ -239,26 +219,6 @@ async function cacheFirst(event, cacheName, maxEntries) {
   return fresh;
 }
 
-async function staleWhileRevalidate(event, cacheName, maxEntries) {
-  const cache = await caches.open(cacheName);
-  const cached = await cache.match(event.request);
-  const refresh = fetch(event.request)
-    .then(async (res) => {
-      if (res && res.ok) {
-        await cache.put(event.request, res.clone());
-        await maybeTrim(cacheName, maxEntries);
-      }
-      return res;
-    })
-    .catch(() => undefined);
-  if (cached) {
-    event.waitUntil(refresh);
-    return cached;
-  }
-  const fresh = await refresh;
-  return fresh || new Response(null, { status: 504, statusText: "Offline" });
-}
-
 const lastTrimAt = new Map();
 
 /** FIFO entry-count cap, throttled so busy caches aren't re-listed on every write. */
@@ -300,13 +260,26 @@ function errorResponse(err) {
 async function readErrorMessage(res) {
   try {
     const body = await res.clone().json();
-    if (body && typeof body.error === "string") return body.error;
+    if (body && typeof body.message === "string") return `GitHub: ${body.message}`;
   } catch {
     // Not JSON.
   }
-  return `Request failed (${res.status})`;
+  return `GitHub answered ${res.status}`;
 }
 
+/** GitHub refusing a request as an httpError: 401 (sign-in ended) and 404 are final, rate limits and 5xx retryable. */
+async function githubError(res) {
+  const message = await readErrorMessage(res);
+  const limited =
+    res.status === 429 ||
+    (res.status === 403 &&
+      (res.headers.get("retry-after") !== null ||
+        res.headers.get("x-ratelimit-remaining") === "0" ||
+        /rate limit/i.test(message)));
+  if (limited) return httpError(429, "GitHub is limiting requests right now. Try again in a few minutes.");
+  if (res.status === 401) return httpError(401, "Your GitHub sign-in ended. Sign in again.", true);
+  return httpError(res.status, message, res.status < 500);
+}
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -325,11 +298,16 @@ function normalizeChunkHash(hash) {
 }
 
 function chunkKey(hash) {
-  return `${self.location.origin}${CHUNK_API_PREFIX}${hash}`;
+  return `${self.location.origin}${CHUNK_KEY_PREFIX}${hash}`;
 }
 
-function recordKey(id) {
-  return `${self.location.origin}${RECORD_KEY_PREFIX}${encodeURIComponent(id)}`;
+function recordKey(auth, id) {
+  const library = `${encodeURIComponent(auth.owner)}/${encodeURIComponent(auth.repo)}`;
+  return `${self.location.origin}${RECORD_KEY_PREFIX}${library}/${encodeURIComponent(id)}`;
+}
+
+function encodePath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 function touch(map, key, value, limit) {
@@ -347,63 +325,132 @@ async function purgeUserData() {
   memoryRecords.clear();
   pendingChunkWrites.clear();
   chunkIndexPromise = null;
+  authMemo = null;
   await Promise.all(USER_DATA_CACHES.map((name) => caches.delete(name)));
 }
 
 // ---------------------------------------------------------------------------
-// Media records (GET /api/media/:id) — immutable per id, so cached indefinitely
+// The session (IndexedDB, written by the page) and GitHub reads
+// ---------------------------------------------------------------------------
+
+let authMemo = null;
+
+function readAuth() {
+  return new Promise((resolve) => {
+    let request;
+    try {
+      request = indexedDB.open(AUTH_DB, 1);
+    } catch {
+      resolve(null);
+      return;
+    }
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(AUTH_STORE)) request.result.createObjectStore(AUTH_STORE);
+    };
+    request.onerror = () => resolve(null);
+    request.onblocked = () => resolve(null);
+    request.onsuccess = () => {
+      const db = request.result;
+      try {
+        const get = db.transaction(AUTH_STORE, "readonly").objectStore(AUTH_STORE).get(AUTH_KEY);
+        get.onsuccess = () => {
+          db.close();
+          const auth = get.result;
+          const valid =
+            auth &&
+            typeof auth.token === "string" &&
+            auth.token &&
+            typeof auth.owner === "string" &&
+            typeof auth.repo === "string" &&
+            typeof auth.branch === "string";
+          resolve(valid ? auth : null);
+        };
+        get.onerror = () => {
+          db.close();
+          resolve(null);
+        };
+      } catch {
+        db.close();
+        resolve(null);
+      }
+    };
+  });
+}
+
+/** The page's session (re-read at most once a second, so a new sign-in is picked up at once). */
+async function getAuth() {
+  const now = Date.now();
+  if (!authMemo || now - authMemo.at > AUTH_MEMO_MS) authMemo = { at: now, promise: readAuth() };
+  const auth = await authMemo.promise;
+  if (!auth) throw httpError(401, "Sign in to play videos.", true);
+  return auth;
+}
+
+/** Raw bytes of a repo file at the branch head, as a Response (errors become httpErrors). */
+async function fetchRepoFile(auth, path) {
+  const url =
+    `${GITHUB_API}/repos/${encodeURIComponent(auth.owner)}/${encodeURIComponent(auth.repo)}` +
+    `/contents/${encodePath(path)}?ref=${encodeURIComponent(auth.branch)}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      cache: "no-store",
+      credentials: "omit",
+      headers: {
+        Accept: "application/vnd.github.raw",
+        Authorization: `Bearer ${auth.token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+  } catch {
+    throw httpError(503, "Network unavailable");
+  }
+  if (!res.ok) throw await githubError(res);
+  return res;
+}
+
+// ---------------------------------------------------------------------------
+// Media records (metadata/<id>.json) — the parts streaming needs never change, so cached indefinitely
 // ---------------------------------------------------------------------------
 
 const memoryRecords = new Map();
 const recordRequests = new Map();
 
-function getRecord(id) {
-  const remembered = memoryRecords.get(id);
-  if (remembered) return Promise.resolve(remembered);
-  let pending = recordRequests.get(id);
+async function getRecord(id) {
+  const auth = await getAuth();
+  const key = recordKey(auth, id);
+  const remembered = memoryRecords.get(key);
+  if (remembered) return remembered;
+  let pending = recordRequests.get(key);
   if (!pending) {
-    pending = loadRecord(id).finally(() => recordRequests.delete(id));
-    recordRequests.set(id, pending);
+    pending = loadRecord(auth, id, key).finally(() => recordRequests.delete(key));
+    recordRequests.set(key, pending);
   }
   return pending;
 }
 
-async function loadRecord(id) {
+async function loadRecord(auth, id, key) {
   const generation = dataGeneration;
   const cache = await caches.open(RECORD_CACHE);
-  const cached = await cache.match(recordKey(id));
+  const cached = await cache.match(key);
   if (cached) {
     try {
       const record = validateRecord(await cached.json());
-      touch(memoryRecords, id, record, MEMORY_RECORD_SLOTS);
+      touch(memoryRecords, key, record, MEMORY_RECORD_SLOTS);
       return record;
     } catch {
-      await cache.delete(recordKey(id));
+      await cache.delete(key);
     }
   }
 
-  let res;
-  try {
-    res = await fetch(`/api/media/${encodeURIComponent(id)}`, {
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-    });
-  } catch {
-    throw httpError(503, "Network unavailable");
-  }
-  if (!res.ok) throw httpError(res.status, await readErrorMessage(res), true);
-  const body = await res.json().catch(() => null);
-  const media = body && body.media;
+  const res = await fetchRepoFile(auth, `metadata/${id}.json`);
+  const media = await res.json().catch(() => null);
   const record = validateRecord(media);
 
   if (generation === dataGeneration) {
-    touch(memoryRecords, id, record, MEMORY_RECORD_SLOTS);
+    touch(memoryRecords, key, record, MEMORY_RECORD_SLOTS);
     try {
-      await cache.put(
-        recordKey(id),
-        new Response(JSON.stringify(media), { headers: { "Content-Type": "application/json" } })
-      );
+      await cache.put(key, new Response(JSON.stringify(media), { headers: { "Content-Type": "application/json" } }));
       await maybeTrim(RECORD_CACHE, RECORD_CACHE_MAX_ENTRIES);
     } catch {
       // Quota: the record is still remembered in memory.
@@ -491,23 +538,15 @@ async function fetchVerifiedChunk(hash) {
   let lastError;
   for (let attempt = 1; attempt <= CHUNK_FETCH_ATTEMPTS; attempt++) {
     try {
-      let res;
-      try {
-        // no-store: Cache Storage below is the chunk cache; don't duplicate 4 MiB bodies in the HTTP cache.
-        res = await fetch(chunkKey(hash), { cache: "no-store", credentials: "same-origin" });
-      } catch {
-        throw httpError(503, "Network unavailable");
-      }
-      if (!res.ok) {
-        const retryable = res.status >= 500 || res.status === 429;
-        throw httpError(res.status, await readErrorMessage(res), !retryable);
-      }
+      // no-store (in fetchRepoFile): Cache Storage is the chunk cache; don't duplicate 4 MiB bodies in the HTTP cache.
+      const res = await fetchRepoFile(await getAuth(), `objects/${hash.slice(0, 2)}/${hash}`);
       const bytes = new Uint8Array(await res.arrayBuffer());
       if ((await sha256Hex(bytes)) !== hash) throw httpError(502, "Chunk failed its integrity check");
       return bytes;
     } catch (err) {
       lastError = err;
-      if (err && err.fatal) throw err;
+      // Rate limits won't clear within a few retries: give up and let the player fall back.
+      if (err && (err.fatal || err.status === 429)) throw err;
       if (attempt < CHUNK_FETCH_ATTEMPTS) await delay(400 * attempt * attempt);
     }
   }
@@ -601,31 +640,16 @@ async function evictOldestChunks(cache, index, maxBytes) {
   }
 }
 
-async function cacheChunkFromResponse(hash, response) {
+/** Bytes the page already downloaded (and checked); verified again here before they're cached. */
+async function cacheVerifiedBytes(hash, bytes) {
   try {
     const generation = dataGeneration;
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (pendingChunkWrites.has(hash) || memoryChunks.has(hash)) return;
     if ((await sha256Hex(bytes)) !== hash || generation !== dataGeneration) return;
     await storeChunk(hash, bytes);
   } catch {
     // Caching is best-effort.
   }
-}
-
-/** Page-initiated chunk fetches (full-resolution photo loads) share the verified cache. */
-async function serveChunkApi(event, hash) {
-  const pending = pendingChunkWrites.get(hash);
-  if (pending) {
-    return new Response(pending, {
-      headers: { "Content-Type": "application/octet-stream", "Content-Length": String(pending.byteLength) },
-    });
-  }
-  const cache = await caches.open(CHUNK_CACHE);
-  const cached = await cache.match(chunkKey(hash));
-  if (cached) return cached;
-  const fresh = await fetch(new Request(event.request, { cache: "no-store" }));
-  if (fresh.ok) event.waitUntil(cacheChunkFromResponse(hash, fresh.clone()));
-  return fresh;
 }
 
 // ---------------------------------------------------------------------------

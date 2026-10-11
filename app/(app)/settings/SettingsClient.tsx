@@ -21,6 +21,10 @@ import { clearLocalLibraryData } from "@/lib/library/localData";
 import { flushPendingDeletes } from "@/lib/library/mediaStore";
 import { repoKeyFor } from "@/lib/cache";
 import { isNativeApp } from "@/lib/native/platform";
+import { signOut } from "@/lib/session";
+
+// Signing out waits this long at most for deletes still in their undo window to commit.
+const FLUSH_TIMEOUT_MS = 8000;
 
 interface SettingsClientProps {
   githubLogin: string | null;
@@ -32,33 +36,30 @@ export default function SettingsClient({ githubLogin, repoOwner, repoName }: Set
   const confirm = useConfirm();
   const backup = useBackupStatus();
   const [native, setNative] = useState<boolean | null>(null);
-  const [loggingOut, setLoggingOut] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const repo = repoOwner && repoName ? `${repoOwner}/${repoName}` : null;
 
   useEffect(() => {
     setNative(isNativeApp());
   }, []);
 
-  async function logout() {
+  async function handleSignOut() {
     const backupOn = backup.support === "available" && Boolean(backup.status?.enabled);
     const ok = await confirm({
-      title: "Log out of 404GB?",
+      title: "Sign out of 404GB?",
       message: backupOn
         ? "Backup pauses until you sign in again. Everything already backed up stays in your repo."
-        : "Your photos stay in your GitHub repo. This device's cached copy of your library is removed.",
-      confirmLabel: "Log out",
+        : "Your photos stay in your GitHub repo. This device forgets your token and its cached copy of your library.",
+      confirmLabel: "Sign out",
       destructive: true,
     });
     if (!ok) return;
-    setLoggingOut(true);
-    flushPendingDeletes();
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } catch {
-      // Going home still shows the signed-out state once the cookie is gone.
-    }
+    setSigningOut(true);
+    await Promise.race([flushPendingDeletes(), new Promise((resolve) => setTimeout(resolve, FLUSH_TIMEOUT_MS))]);
+    await signOut();
     await clearLocalLibraryData();
-    window.location.assign("/");
+    // A fresh start: every in-memory store of the previous session is gone with the page.
+    window.location.replace("/");
   }
 
   return (
@@ -128,12 +129,12 @@ export default function SettingsClient({ githubLogin, repoOwner, repoName }: Set
               trailing={
                 <button
                   type="button"
-                  onClick={() => void logout()}
-                  disabled={loggingOut}
+                  onClick={() => void handleSignOut()}
+                  disabled={signingOut}
                   className={`${rowButtonClass} text-danger`}
                 >
                   <LogoutIcon size={16} />
-                  {loggingOut ? "Logging out…" : "Log out"}
+                  {signingOut ? "Signing out…" : "Sign out"}
                 </button>
               }
             />

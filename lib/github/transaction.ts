@@ -1,7 +1,7 @@
-import type { Octokit } from "@octokit/rest";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { gitBlobSha, putCachedBlobText } from "./blobCache";
-import { getOctokit, type RepoRef } from "./client";
+import { utf8Length } from "./bytes";
+import { githubJson, headsRef, repoPath, type RepoRef } from "./client";
 import { githubStatus } from "./errors";
 import { RepoReader } from "./reader";
 
@@ -11,7 +11,7 @@ export interface BlobInput {
   text?: string;
   /** Binary content, base64-encoded. */
   base64Content?: string;
-  /** An already-created blob, e.g. a chunk uploaded via /api/media/upload/chunk. */
+  /** An already-created blob, e.g. a chunk uploaded with createBlob. */
   sha?: string;
   /** Removes the path; GitHub rejects this for paths missing from the base tree. */
   delete?: true;
@@ -23,7 +23,15 @@ export interface TransactionStep<R> {
   commit?: { blobs: BlobInput[]; message: string };
 }
 
-/** The branch kept moving under concurrent writes; safe for the client to retry. */
+export interface TransactionResult<R> {
+  result: R;
+  /** The new commit, or null when the step changed nothing. */
+  commitSha: string | null;
+  /** The commit the step was built on (the new commit's parent). */
+  parentSha: string;
+}
+
+/** The branch kept moving under concurrent writes; safe to retry. */
 export class TransactionConflictError extends Error {
   constructor(branch: string) {
     super(`${branch} kept changing under concurrent writes`);
@@ -42,13 +50,13 @@ export class TreeWriteError extends Error {
 /** A consistent view of the branch at one commit; what a transaction step reads from. */
 export class Snapshot extends RepoReader {
   constructor(
-    octokit: Octokit,
+    token: string,
     owner: string,
     repo: string,
     readonly commitSha: string,
     readonly treeSha: string
   ) {
-    super(octokit, owner, repo, commitSha, treeSha);
+    super(token, owner, repo, commitSha, treeSha);
   }
 }
 
@@ -76,16 +84,11 @@ type TreeItem = {
   content?: string;
 };
 
-async function buildTreeItems(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  blobs: BlobInput[]
-): Promise<TreeItem[]> {
+async function buildTreeItems(repo: RepoRef, blobs: BlobInput[]): Promise<TreeItem[]> {
   let inlineBudget = INLINE_TOTAL_MAX_BYTES;
   const inline = blobs.map((blob) => {
     if (blob.text === undefined || blob.sha || blob.delete) return false;
-    const bytes = Buffer.byteLength(blob.text, "utf-8");
+    const bytes = utf8Length(blob.text);
     if (bytes > INLINE_TEXT_MAX_BYTES || bytes > inlineBudget) return false;
     inlineBudget -= bytes;
     return true;
@@ -100,11 +103,9 @@ async function buildTreeItems(
 
     const content = blob.text ?? blob.base64Content;
     if (content === undefined) throw new Error(`Blob for ${blob.path} has no content`);
-    const { data } = await octokit.git.createBlob({
-      owner,
-      repo,
-      content,
-      encoding: blob.text !== undefined ? "utf-8" : "base64",
+    const data = await githubJson<{ sha: string }>(repo.token, repoPath(repo.owner, repo.repo, "/git/blobs"), {
+      method: "POST",
+      body: { content, encoding: blob.text !== undefined ? "utf-8" : "base64" },
     });
     return { ...base, sha: data.sha };
   });
@@ -115,28 +116,26 @@ export async function runTransaction<R>(
   repo: RepoRef,
   build: (snapshot: Snapshot) => Promise<TransactionStep<R>>,
   maxAttempts = DEFAULT_MAX_ATTEMPTS
-): Promise<{ result: R; commitSha: string | null }> {
-  const octokit = getOctokit(repo.accessToken);
-  const { owner, repo: name, branch } = repo;
+): Promise<TransactionResult<R>> {
+  const { token, owner, repo: name, branch } = repo;
+  const path = (rest: string) => repoPath(owner, name, rest);
 
   for (let attempt = 1; ; attempt++) {
-    const { data: ref } = await octokit.git.getRef({ owner, repo: name, ref: `heads/${branch}` });
+    const ref = await githubJson<{ object: { sha: string } }>(token, path(`/git/ref/${headsRef(branch)}`));
     const commitSha = ref.object.sha;
-    const { data: commit } = await octokit.git.getCommit({ owner, repo: name, commit_sha: commitSha });
+    const commit = await githubJson<{ tree: { sha: string } }>(token, path(`/git/commits/${commitSha}`));
 
-    const step = await build(new Snapshot(octokit, owner, name, commitSha, commit.tree.sha));
+    const step = await build(new Snapshot(token, owner, name, commitSha, commit.tree.sha));
     if (!step.commit || step.commit.blobs.length === 0) {
-      return { result: step.result, commitSha: null };
+      return { result: step.result, commitSha: null, parentSha: commitSha };
     }
 
-    const tree = await buildTreeItems(octokit, owner, name, step.commit.blobs);
+    const tree = await buildTreeItems(repo, step.commit.blobs);
     let newTreeSha: string;
     try {
-      const { data } = await octokit.git.createTree({
-        owner,
-        repo: name,
-        base_tree: commit.tree.sha,
-        tree,
+      const data = await githubJson<{ sha: string }>(token, path("/git/trees"), {
+        method: "POST",
+        body: { base_tree: commit.tree.sha, tree },
       });
       newTreeSha = data.sha;
     } catch (err) {
@@ -145,29 +144,30 @@ export async function runTransaction<R>(
       throw err;
     }
 
-    const { data: newCommit } = await octokit.git.createCommit({
-      owner,
-      repo: name,
-      message: step.commit.message,
-      tree: newTreeSha,
-      parents: [commitSha],
+    const newCommit = await githubJson<{ sha: string }>(token, path("/git/commits"), {
+      method: "POST",
+      body: { message: step.commit.message, tree: newTreeSha, parents: [commitSha] },
     });
 
     try {
-      await octokit.git.updateRef({ owner, repo: name, ref: `heads/${branch}`, sha: newCommit.sha });
+      await githubJson(token, path(`/git/refs/${headsRef(branch)}`), {
+        method: "PATCH",
+        body: { sha: newCommit.sha, force: false },
+      });
     } catch (err) {
       const status = githubStatus(err);
-      // 422 "not a fast forward" (sometimes 409): the branch moved since getRef.
+      // 422 "not a fast forward" (sometimes 409): the branch moved since the ref was read.
       if (status !== 422 && status !== 409) throw err;
       if (attempt >= maxAttempts) throw new TransactionConflictError(branch);
-      await sleep(100 * attempt + Math.random() * 250);
+      await sleep(200 * 2 ** (attempt - 1) * (0.75 + Math.random() * 0.5));
       continue;
     }
 
-    // The next request will likely read these files back at the new head.
+    // The next transaction will likely read these files back at the new head.
     for (const blob of step.commit.blobs) {
-      if (blob.text !== undefined) putCachedBlobText(gitBlobSha(blob.text), blob.text);
+      const text = blob.text;
+      if (text !== undefined) void gitBlobSha(text).then((sha) => putCachedBlobText(sha, text), () => {});
     }
-    return { result: step.result, commitSha: newCommit.sha };
+    return { result: step.result, commitSha: newCommit.sha, parentSha: commitSha };
   }
 }

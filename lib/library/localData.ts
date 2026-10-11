@@ -1,9 +1,18 @@
-// Removes the signed-in user's library from this device on log out: the
-// IndexedDB index/thumbnail cache, the cached album lists and the service
-// worker's thumbnail cache. Best-effort; never throws.
+// Removes the signed-in user's library from this device when they sign out: the in-memory
+// stores, the IndexedDB index/thumbnail cache, cached album lists, unfinished-upload notes
+// and the service worker's chunk and record caches. Best-effort; never throws.
 
-import { CACHE_DB_NAME, getDb } from "@/lib/cache/db";
+import { CACHE_DB_NAME, closeDb } from "@/lib/cache/db";
+import { clearBlobTextCache } from "@/lib/github/blobCache";
+import { PURGE_MESSAGE, postToServiceWorker } from "@/lib/media/stream";
+import { getUploadQueue } from "@/lib/upload/queueSingleton";
+import { resetAlbums } from "./albumsStore";
+import { resetLibrary } from "./mediaStore";
 import { clearThumbUrls } from "./thumbUrls";
+
+const LOCAL_KEYS = ["404gb-pending-deletes", "404gb:uploadProgress:v2"];
+const LOCAL_PREFIXES = ["404gb-albums:"];
+const USER_CACHE_PREFIXES = ["404gb-thumbs", "404gb-chunks", "404gb-records"];
 
 function deleteDatabase(name: string, timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
@@ -25,26 +34,39 @@ function deleteDatabase(name: string, timeoutMs: number): Promise<void> {
 
 export async function clearLocalLibraryData(): Promise<void> {
   if (typeof window === "undefined") return;
+  const queue = getUploadQueue();
+  for (const task of queue.getSnapshots()) queue.cancelFile(task.clientId);
+  queue.clearFinished();
+  resetLibrary();
+  resetAlbums();
   clearThumbUrls();
+  clearBlobTextCache();
   try {
     for (let i = window.localStorage.length - 1; i >= 0; i--) {
       const key = window.localStorage.key(i);
-      if (key?.startsWith("404gb-albums:")) window.localStorage.removeItem(key);
+      if (key && (LOCAL_KEYS.includes(key) || LOCAL_PREFIXES.some((prefix) => key.startsWith(prefix)))) {
+        window.localStorage.removeItem(key);
+      }
     }
   } catch {
     // Storage disabled.
   }
   try {
-    const db = await getDb();
-    db?.close();
+    await closeDb();
     if (typeof indexedDB !== "undefined") await deleteDatabase(CACHE_DB_NAME, 1500);
   } catch {
     // Best-effort.
   }
+  // The worker also drops what it holds in memory; deleting here covers pages it doesn't control.
+  postToServiceWorker({ type: PURGE_MESSAGE });
   try {
     if ("caches" in window) {
       const names = await caches.keys();
-      await Promise.all(names.filter((name) => name.startsWith("404gb-thumbs")).map((name) => caches.delete(name)));
+      await Promise.all(
+        names
+          .filter((name) => USER_CACHE_PREFIXES.some((prefix) => name.startsWith(prefix)))
+          .map((name) => caches.delete(name))
+      );
     }
   } catch {
     // Best-effort.

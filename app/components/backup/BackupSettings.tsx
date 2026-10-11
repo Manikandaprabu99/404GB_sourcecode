@@ -18,6 +18,7 @@ import {
 import { formatRelativeTime } from "@/lib/library/dates";
 import { useBackupStatus } from "@/lib/library/hooks";
 import { flushPendingDeletes } from "@/lib/library/mediaStore";
+import { leaveForSignIn } from "@/lib/library/signedOut";
 import { SettingsCard, rowButtonClass } from "@/app/components/library/SettingsBlocks";
 import {
   AlertIcon,
@@ -174,13 +175,10 @@ function statusHeadline(status: BackupStatus, run: BackupRun | null): { icon: Re
   }
 }
 
+/** Swaps this device's token for a new one: due deletes go first, then the sign-in screen opens. */
 async function signInAgain() {
-  flushPendingDeletes();
-  try {
-    await fetch("/api/auth/logout", { method: "POST" });
-  } finally {
-    window.location.assign("/");
-  }
+  await Promise.race([flushPendingDeletes(), new Promise((resolve) => setTimeout(resolve, 8000))]);
+  leaveForSignIn();
 }
 
 /** Backup section of Settings: on/off, options and live status of the phone's backup. */

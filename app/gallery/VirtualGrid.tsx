@@ -133,7 +133,6 @@ interface TileProps {
   height: number;
   selectMode: boolean;
   selected: boolean;
-  onThumbnailBackfilled?: (mediaId: string, thumbPath: string) => void;
 }
 
 const Tile = memo(function Tile({
@@ -145,7 +144,6 @@ const Tile = memo(function Tile({
   height,
   selectMode,
   selected,
-  onThumbnailBackfilled,
 }: TileProps) {
   const isVideo = item.mimeType?.startsWith("video/") ?? false;
   return (
@@ -170,7 +168,6 @@ const Tile = memo(function Tile({
           alt=""
           hasThumbnail={Boolean(item.thumb)}
           isVideo={isVideo}
-          onThumbnailBackfilled={onThumbnailBackfilled}
           className="h-full w-full object-cover"
         />
       </span>
@@ -232,7 +229,6 @@ export interface VirtualGridProps {
   /** Long-press (touch) or the hover check mark (mouse) outside selection mode. */
   onStartSelect: (id: string) => void;
   onToggleGroup?: (groupKey: string) => void;
-  onThumbnailBackfilled?: (mediaId: string, thumbPath: string) => void;
 }
 
 /**
@@ -256,7 +252,6 @@ export default function VirtualGrid({
   onToggleSelect,
   onStartSelect,
   onToggleGroup,
-  onThumbnailBackfilled,
 }: VirtualGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => getGridWidth());
@@ -588,7 +583,6 @@ export default function VirtualGrid({
                   height={metrics.rowHeight}
                   selectMode={selectMode}
                   selected={selectMode && selectedIds.has(item.id)}
-                  onThumbnailBackfilled={onThumbnailBackfilled}
                 />
               );
             }

@@ -1,13 +1,15 @@
 "use client";
 
-// Original-file loading for the viewer. One request per item no matter how many
+// Original-file loading for the viewer. One download per item no matter how many
 // callers (zoom, download, share) ask for it; finished files are kept as object
 // URLs in a small LRU so going back and forth doesn't download them again.
 
-import type { MediaIndexEntry, MediaRecord } from "@/lib/media";
-import { MAX_DIRECT_FETCH_BYTES } from "@/lib/chunking";
-import { MediaIntegrityError, reconstructMediaClient } from "@/lib/media/reconstructClient";
-import { apiJson, ApiError, rateLimitMessage } from "@/lib/library/api";
+import { DEFAULT_CHUNK_SIZE } from "@/lib/chunking";
+import { ApiError, withRepo } from "@/lib/library/api";
+import { readMediaRecord, type MediaIndexEntry, type MediaRecord } from "@/lib/media";
+import { fetchChunk } from "@/lib/media/chunks";
+import { reconstructMediaClient } from "@/lib/media/reconstructClient";
+import { isChunkHash } from "@/lib/media/validate";
 
 export interface OriginalEntry {
   id: string;
@@ -34,8 +36,12 @@ interface Inflight {
 const MAX_ENTRIES = 3;
 const MAX_BYTES = 400 * 1024 * 1024;
 
-export function objectUrl(mediaId: string): string {
-  return `/api/media/object/${encodeURIComponent(mediaId)}`;
+/** The chunk that is the whole file, for files small enough to be stored as one chunk (its
+ * name is then the file's own hash, so the index entry is enough to fetch it). */
+function singleChunkHash(item: MediaIndexEntry): string | null {
+  if (!item.size || item.size > DEFAULT_CHUNK_SIZE || !item.hash?.startsWith("sha256:")) return null;
+  const hash = item.hash.slice("sha256:".length);
+  return isChunkHash(hash) ? hash : null;
 }
 
 export class OriginalStore {
@@ -68,8 +74,9 @@ export class OriginalStore {
     if (cached) return Promise.resolve(cached);
     let request = this.recordRequests.get(id);
     if (!request) {
-      request = apiJson<{ media: MediaRecord }>(`/api/media/${encodeURIComponent(id)}`)
-        .then(({ media }) => {
+      request = withRepo((repo) => readMediaRecord(repo, id))
+        .then((media) => {
+          if (!media) throw new ApiError("not-found", "Not found.", 404);
           this.records.set(id, media);
           return media;
         })
@@ -77,12 +84,6 @@ export class OriginalStore {
       this.recordRequests.set(id, request);
     }
     return request;
-  }
-
-  /** The one-request URL for files small enough to come back in a single response, else null. */
-  async directUrl(item: MediaIndexEntry): Promise<string | null> {
-    const size = item.size ?? (await this.record(item.id)).size;
-    return size <= MAX_DIRECT_FETCH_BYTES ? objectUrl(item.id) : null;
   }
 
   load(item: MediaIndexEntry, onProgress?: ProgressListener): Promise<OriginalEntry> {
@@ -124,15 +125,30 @@ export class OriginalStore {
 
   private async fetchOriginal(item: MediaIndexEntry, report: ProgressListener): Promise<Blob> {
     report(null);
-    let size = item.size;
-    let record = this.records.get(item.id) ?? null;
-    if (size === undefined || size > MAX_DIRECT_FETCH_BYTES) {
-      record = await this.record(item.id);
-      size = record.size;
+    const single = singleChunkHash(item);
+    if (single && item.size) {
+      const size = item.size;
+      let received = 0;
+      try {
+        // One request, verified against the file's own hash; no metadata read needed.
+        return await withRepo(async (repo) => {
+          const bytes = await fetchChunk(repo, single, {
+            onBytes: (delta) => {
+              received += delta;
+              report(Math.min(1, Math.max(0, received / size)));
+            },
+          });
+          return new Blob([bytes], { type: item.mimeType });
+        });
+      } catch (err) {
+        // Stored some other way (it can happen with hand-edited repos): use the record.
+        if (!(err instanceof ApiError && err.kind === "not-found")) throw err;
+      }
     }
-    if (size <= MAX_DIRECT_FETCH_BYTES) return fetchWithProgress(objectUrl(item.id), size, item.mimeType, report);
-    if (!record) record = await this.record(item.id);
-    return reconstructMediaClient(record, (p) => report(p.bytesTotal > 0 ? p.bytesDone / p.bytesTotal : null));
+    const record = await this.record(item.id);
+    return withRepo((repo) =>
+      reconstructMediaClient(repo, record, (p) => report(p.bytesTotal > 0 ? Math.max(0, p.bytesDone / p.bytesTotal) : null))
+    );
   }
 
   private evict(keepId: string): void {
@@ -150,50 +166,6 @@ export class OriginalStore {
   }
 }
 
-async function errorFromResponse(res: Response): Promise<ApiError> {
-  const payload = (await res.json().catch(() => null)) as { error?: unknown } | null;
-  const message = typeof payload?.error === "string" ? payload.error : null;
-  if (res.status === 401) return new ApiError("auth", "You're signed out.", 401);
-  if (res.status === 429) {
-    const header = Number(res.headers.get("Retry-After"));
-    const retryAfter = Number.isFinite(header) && header > 0 ? header : undefined;
-    return new ApiError("rate-limit", rateLimitMessage(retryAfter), 429, retryAfter);
-  }
-  if (res.status === 404) return new ApiError("not-found", message ?? "Not found.", 404);
-  return new ApiError("server", message ?? `Something went wrong (${res.status}).`, res.status);
-}
-
-async function fetchWithProgress(
-  url: string,
-  expectedSize: number,
-  mimeType: string,
-  report: ProgressListener
-): Promise<Blob> {
-  let res: Response;
-  try {
-    res = await fetch(url, { credentials: "same-origin" });
-  } catch {
-    throw new ApiError("offline", "You're offline.", 0);
-  }
-  if (!res.ok) throw await errorFromResponse(res);
-  const total = Number(res.headers.get("Content-Length")) || expectedSize;
-  if (!res.body || !total) {
-    const blob = await res.blob();
-    return blob.type === mimeType ? blob : new Blob([blob], { type: mimeType });
-  }
-  const reader = res.body.getReader();
-  const parts: BlobPart[] = [];
-  let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    parts.push(value);
-    received += value.byteLength;
-    report(Math.min(1, received / total));
-  }
-  return new Blob(parts, { type: mimeType });
-}
-
 export function isAuthError(err: unknown): boolean {
   if (err instanceof ApiError) return err.kind === "auth";
   return err instanceof Error && /signed out|sign-in expired|sign in again/i.test(err.message);
@@ -206,9 +178,9 @@ export function describeLoadError(err: unknown, fallback = "Couldn't load this. 
     if (err.kind === "offline") return "You're offline. Connect to the internet and try again.";
     if (err.kind === "rate-limit") return err.message;
     if (err.kind === "not-found") return "This item couldn't be found. It may have been deleted.";
+    if (err.code === "integrity") return "The download didn't come through intact. Try again.";
     return fallback;
   }
-  if (err instanceof MediaIntegrityError) return "The download didn't come through intact. Try again.";
   if (err instanceof TypeError) return "You seem to be offline. Check your connection and try again.";
   return fallback;
 }
