@@ -43,7 +43,13 @@ export class OriginalStore {
   private inflight = new Map<string, Inflight>();
   private records = new Map<string, MediaRecord>();
   private recordRequests = new Map<string, Promise<MediaRecord>>();
+  private pinned = new Set<string>();
   private disposed = false;
+
+  /** Items eviction must never drop (the one on screen and the one being prefetched). */
+  pin(ids: Iterable<string>): void {
+    this.pinned = new Set(ids);
+  }
 
   peek(id: string): OriginalEntry | null {
     const entry = this.entries.get(id);
@@ -136,7 +142,7 @@ export class OriginalStore {
     });
     for (const [id, entry] of Array.from(this.entries)) {
       if (this.entries.size <= MAX_ENTRIES && bytes <= MAX_BYTES) break;
-      if (id === keepId) continue;
+      if (id === keepId || this.pinned.has(id)) continue;
       URL.revokeObjectURL(entry.url);
       this.entries.delete(id);
       bytes -= entry.blob.size;

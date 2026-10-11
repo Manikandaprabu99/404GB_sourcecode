@@ -39,13 +39,10 @@ export default function GalleryThumb({
   alt,
   hasThumbnail,
   isVideo,
-  size: requestedSize = 320,
+  size = 320,
   className,
   onThumbnailBackfilled,
 }: GalleryThumbProps) {
-  // Older items may only have the 320px thumbnail: fall back to it when 800 is missing.
-  const [missing800, setMissing800] = useState(false);
-  const size = requestedSize === 800 && missing800 ? 320 : requestedSize;
   const key = thumbKey(repoKey, mediaId, size);
   const [loaded, setLoaded] = useState<{ key: string; url: string; fresh: boolean } | null>(() => {
     const url = hasThumbnail ? peekThumbUrl(key) : null;
@@ -96,9 +93,7 @@ export default function GalleryThumb({
         setLoaded({ key, url: adopted, fresh: true });
       })
       .catch(() => {
-        if (cancelled) return;
-        if (size === 800) setMissing800(true);
-        else setFailedKey(key);
+        if (!cancelled) setFailedKey(key);
       });
     return () => {
       cancelled = true;

@@ -56,11 +56,16 @@ interface Transfer {
 }
 
 // Bigger originals (100 MP+ panoramas) load when zooming, so a phone doesn't
-// decode gigabytes of pixels just to show them at screen size.
+// decode gigabytes of pixels just to show them at screen size. Items without
+// thumbnails have nothing else to show, so theirs always load.
 const AUTO_ORIGINAL_MAX_PIXELS = 100_000_000;
+// How long a photo must stay on screen before its original starts downloading,
+// so flicking through many photos doesn't start a download for each one.
+const ORIGINAL_DWELL_MS = 300;
 
 function autoLoadsOriginal(entry: MediaIndexEntry): boolean {
   if (isVideoItem(entry) || !canDisplayOriginal(entry)) return false;
+  if (!entry.thumb) return true;
   return !(entry.width && entry.height && entry.width * entry.height > AUTO_ORIGINAL_MAX_PIXELS);
 }
 
@@ -210,7 +215,7 @@ export default function MediaViewer(props: MediaViewerProps) {
           message: "You're signed out. Sign in again to continue.",
           tone: "error",
           actionLabel: "Sign in",
-          onAction: () => leaveForSignIn(),
+          onAction: () => leaveForSignIn({ force: true }),
         });
         return;
       }
@@ -354,9 +359,23 @@ export default function MediaViewer(props: MediaViewerProps) {
   // show instantly and the original replaces them as soon as it has downloaded.
   useEffect(() => {
     if (!item || !autoLoadsOriginal(item)) return;
-    loadOriginalForDisplay(item, true);
+    const target = item;
+    if (!target.thumb) {
+      loadOriginalForDisplay(target, true);
+      return;
+    }
+    const timer = window.setTimeout(() => loadOriginalForDisplay(target, true), ORIGINAL_DWELL_MS);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id]);
+
+  // Late downloads of photos already swiped past must never evict what's on
+  // screen or the next photo's prefetched original.
+  useEffect(() => {
+    const next = itemsRef.current[indexRef.current + 1];
+    const keep = [currentId, next && autoLoadsOriginal(next) ? next.id : null];
+    getStore().pin(keep.filter((id): id is string => Boolean(id)));
+  }, [currentId, getStore]);
 
   // Then the next photo's original downloads in the background, so swiping
   // forward lands on full quality straight away (not when saving data).

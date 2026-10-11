@@ -31,13 +31,19 @@ function json(status: number, body: Record<string, unknown>, headers?: Record<st
   return NextResponse.json(body, { status, headers });
 }
 
+/** GitHub's answer for a revoked or unknown token (as opposed to other 401s). */
+function isRevokedTokenError(err: unknown): boolean {
+  return isGitHubAuthError(err) && /bad credentials/i.test(githubMessage(err));
+}
+
 /**
  * Any thrown error as the API's JSON error; GitHub rate limits become 429 + Retry-After.
- * When GitHub rejects the token (revoked, or GitHub's 10-tokens-per-user limit pushed it
- * out) the session is destroyed too, so the next page load shows sign-in instead of
- * bouncing between the home page and the gallery.
+ * When GitHub says the token is revoked (log out elsewhere, or GitHub's limit of 10 live
+ * tokens per user pushed it out), `session` loses the token but keeps the account and repo,
+ * so the next page shows sign-in and signing in again goes straight back to the gallery.
+ * Pass no session to leave the cookie alone.
  */
-export function errorResponse(err: unknown, session?: IronSession<SessionData> | null): NextResponse {
+export async function errorResponse(err: unknown, session?: IronSession<SessionData> | null): Promise<NextResponse> {
   if (err instanceof ApiError) {
     return json(err.status, { error: err.message, ...(err.code ? { code: err.code } : {}), ...err.details });
   }
@@ -52,7 +58,10 @@ export function errorResponse(err: unknown, session?: IronSession<SessionData> |
     );
   }
   if (isGitHubAuthError(githubError)) {
-    session?.destroy();
+    if (session?.accessToken && isRevokedTokenError(githubError)) {
+      delete session.accessToken;
+      await session.save();
+    }
     return json(401, { error: "Your GitHub sign-in ended — sign in again", code: "reauth" });
   }
   if (err instanceof TransactionConflictError) {
@@ -88,6 +97,15 @@ export async function readJsonBody(req: NextRequest): Promise<Record<string, unk
 
 type RouteArgs<P> = { params: P };
 
+/**
+ * The Android backup worker (it sends X-Requested-With: 404gb-android). Its slow uploads can
+ * finish after the user signed in again in the WebView, which shares its cookie jar, so its
+ * error replies never change the session cookie.
+ */
+function isNativeBackupRequest(req: NextRequest): boolean {
+  return req.headers.get("x-requested-with") === "404gb-android";
+}
+
 export interface AuthContext {
   session: IronSession<SessionData>;
   accessToken: string;
@@ -113,7 +131,7 @@ export function withAuth<P = Record<string, string>>(
       if (!session.accessToken) return json(401, { error: "not authenticated", code: "signed_out" });
       return await handler(req, { session, accessToken: session.accessToken }, args?.params);
     } catch (err) {
-      return errorResponse(err, session);
+      return errorResponse(err, isNativeBackupRequest(req) ? null : session);
     }
   };
 }
@@ -146,7 +164,7 @@ export function withRepo<P = Record<string, string>>(
       const repo: RepoRef = { accessToken, owner: repoOwner, repo: repoName, branch };
       return await handler(req, { session, accessToken, repo }, args?.params);
     } catch (err) {
-      return errorResponse(err, session);
+      return errorResponse(err, isNativeBackupRequest(req) ? null : session);
     }
   };
 }

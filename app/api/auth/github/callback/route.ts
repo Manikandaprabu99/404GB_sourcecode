@@ -96,6 +96,15 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // A browser signing in again: delete its old token before GitHub creates the new one, so
+  // the new token can't push another device's token out of GitHub's limit of 10 per user.
+  const browserSession = isAppSignIn ? null : await getSession();
+  if (browserSession?.accessToken) {
+    await revokeGitHubToken(browserSession.accessToken);
+    delete browserSession.accessToken;
+    await browserSession.save();
+  }
+
   const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: {
@@ -131,10 +140,10 @@ export async function GET(req: NextRequest) {
     return finish(appHandoffPage(`${APP_AUTH_URL}?ticket=${encodeURIComponent(ticket)}`));
   }
 
-  const session = await getSession();
-  const replaced = establishSession(session, tokenJson.access_token, user.login);
+  const session = browserSession ?? (await getSession());
+  establishSession(session, tokenJson.access_token, user.login);
   await session.save();
-  if (replaced) await revokeGitHubToken(replaced);
 
-  return finish(NextResponse.redirect(`${appUrl}/repos`));
+  // Same account signing back in after its sign-in ended: straight back to the photos.
+  return finish(NextResponse.redirect(`${appUrl}${session.repoOwner && session.repoName ? "/gallery" : "/repos"}`));
 }

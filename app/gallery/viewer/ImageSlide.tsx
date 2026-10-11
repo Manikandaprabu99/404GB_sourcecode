@@ -7,7 +7,6 @@ import { canDisplayOriginal } from "./format";
 import type { Size } from "./geometry";
 import { DownloadIcon, ProgressRing } from "./icons";
 import type { OriginalView } from "./originals";
-import { peekThumbUrl, thumbKey } from "@/lib/library/thumbUrls";
 import { thumbUrl, useCachedThumb } from "./useCachedThumb";
 
 interface ImageSlideProps {
@@ -37,12 +36,13 @@ function ImageSlide({
   downloadLabel,
 }: ImageSlideProps) {
   const hasThumb = Boolean(item.thumb);
-  // The grid's 800px tile thumbnail, when it's already in memory, is a sharper instant placeholder.
-  const [smallSize] = useState<320 | 800>(() => (peekThumbUrl(thumbKey(repoKey, item.id, 800)) ? 800 : 320));
-  const small = useCachedThumb(repoKey, item.id, smallSize, hasThumb);
+  const small = useCachedThumb(repoKey, item.id, 320, hasThumb);
   const [previewSize, setPreviewSize] = useState<1600 | 800 | null>(hasThumb ? 1600 : null);
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [originalShown, setOriginalShown] = useState<string | null>(null);
+  // Once the original has faded in, the preview layers go: transparent PNGs and
+  // animated GIFs must not show the (static, opaque-composited) previews beneath.
+  const [underlayGoneFor, setUnderlayGoneFor] = useState<string | null>(null);
 
   // Keep the reserved box honest when stored dimensions are missing or rotated.
   const measure = (event: SyntheticEvent<HTMLImageElement>) => {
@@ -116,13 +116,15 @@ function ImageSlide({
     );
   }
 
+  const underlay = !(active && originalUrl && underlayGoneFor === originalUrl);
+
   return (
     <div className="absolute left-1/2 top-1/2" style={boxStyle}>
-      {small && (
+      {underlay && small && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={small} alt="" aria-hidden="true" draggable={false} onLoad={measure} className={LAYER} />
       )}
-      {previewSize && (
+      {underlay && previewSize && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           key={previewSize}
@@ -149,6 +151,9 @@ function ImageSlide({
           draggable={false}
           decoding="async"
           onLoad={() => setOriginalShown(originalUrl)}
+          onTransitionEnd={() => {
+            if (originalShown === originalUrl) setUnderlayGoneFor(originalUrl);
+          }}
           className={`${LAYER} transition-opacity duration-250 ease-out ${originalShown === originalUrl ? "opacity-100" : "opacity-0"}`}
         />
       )}

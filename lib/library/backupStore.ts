@@ -298,7 +298,8 @@ export function describeBackup(backup: BackupSnapshot): BackupPill | null {
 
   switch (status.state) {
     case "needs_sign_in":
-      return { label: "Sign in to keep backing up", tone: "warn", icon: "lock", href: "/" };
+      // Settings, not "/": while the page's own session is fine, "/" would just bounce back here.
+      return { label: "Sign in to keep backing up", tone: "warn", icon: "lock", href: "/settings" };
     case "needs_permission":
       return { label: "Allow photo access", tone: "warn", icon: "alert", href: "/settings" };
     case "waiting": {

@@ -125,7 +125,8 @@ self.addEventListener("fetch", (event) => {
 
   if (url.pathname === LOGOUT_PATH) {
     // Signing out must not leave the previous account's photos readable from this device.
-    event.waitUntil(purgeUserData());
+    // ?keep=repo is the same person's ended sign-in (they sign straight back in): keep the cache.
+    if (url.searchParams.get("keep") !== "repo") event.waitUntil(purgeUserData());
     return;
   }
 
