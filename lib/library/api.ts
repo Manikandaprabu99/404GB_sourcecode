@@ -7,13 +7,16 @@ export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   readonly status: number;
   readonly retryAfterSec?: number;
+  /** The API's machine-readable code, e.g. "reauth", "signed_out" or "no_repo" on a 401. */
+  readonly code?: string;
 
-  constructor(kind: ApiErrorKind, message: string, status: number, retryAfterSec?: number) {
+  constructor(kind: ApiErrorKind, message: string, status: number, retryAfterSec?: number, code?: string) {
     super(message);
     this.name = "ApiError";
     this.kind = kind;
     this.status = status;
     this.retryAfterSec = retryAfterSec;
+    this.code = code;
   }
 }
 
@@ -21,11 +24,12 @@ export interface LibraryError {
   kind: ApiErrorKind;
   message: string;
   retryAfterSec?: number;
+  code?: string;
 }
 
 export function toLibraryError(err: unknown): LibraryError {
   if (err instanceof ApiError) {
-    return { kind: err.kind, message: err.message, retryAfterSec: err.retryAfterSec };
+    return { kind: err.kind, message: err.message, retryAfterSec: err.retryAfterSec, code: err.code };
   }
   return { kind: "server", message: err instanceof Error ? err.message : String(err) };
 }
@@ -76,9 +80,10 @@ export async function apiJson<T>(url: string, request: ApiRequest = {}): Promise
     return (await res.json()) as T;
   }
 
-  const payload = (await res.json().catch(() => null)) as { error?: unknown } | null;
+  const payload = (await res.json().catch(() => null)) as { error?: unknown; code?: unknown } | null;
   const serverMessage = typeof payload?.error === "string" ? payload.error : null;
-  if (res.status === 401) throw new ApiError("auth", "You're signed out.", 401);
+  const code = typeof payload?.code === "string" ? payload.code : undefined;
+  if (res.status === 401) throw new ApiError("auth", "You're signed out.", 401, undefined, code);
   if (res.status === 429) {
     const retryAfterSec = parseRetryAfter(res.headers.get("Retry-After"));
     throw new ApiError("rate-limit", rateLimitMessage(retryAfterSec), 429, retryAfterSec);

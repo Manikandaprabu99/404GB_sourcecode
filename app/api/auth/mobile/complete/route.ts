@@ -3,6 +3,7 @@ import { getSession } from "@/lib/session";
 import {
   challengeFor,
   establishSession,
+  revokeGitHubToken,
   readMobileTicket,
   safeEqual,
 } from "@/lib/auth/oauth";
@@ -44,8 +45,9 @@ export async function POST(req: NextRequest) {
   }
 
   const session = await getSession();
-  establishSession(session, data.accessToken, data.githubLogin);
+  const replaced = establishSession(session, data.accessToken, data.githubLogin);
   await session.save();
+  if (replaced) await revokeGitHubToken(replaced);
 
   return NextResponse.json({
     ok: true,

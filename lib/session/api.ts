@@ -31,8 +31,13 @@ function json(status: number, body: Record<string, unknown>, headers?: Record<st
   return NextResponse.json(body, { status, headers });
 }
 
-/** Any thrown error as the API's JSON error; GitHub rate limits become 429 + Retry-After. */
-export function errorResponse(err: unknown): NextResponse {
+/**
+ * Any thrown error as the API's JSON error; GitHub rate limits become 429 + Retry-After.
+ * When GitHub rejects the token (revoked, or GitHub's 10-tokens-per-user limit pushed it
+ * out) the session is destroyed too, so the next page load shows sign-in instead of
+ * bouncing between the home page and the gallery.
+ */
+export function errorResponse(err: unknown, session?: IronSession<SessionData> | null): NextResponse {
   if (err instanceof ApiError) {
     return json(err.status, { error: err.message, ...(err.code ? { code: err.code } : {}), ...err.details });
   }
@@ -47,7 +52,8 @@ export function errorResponse(err: unknown): NextResponse {
     );
   }
   if (isGitHubAuthError(githubError)) {
-    return json(401, { error: "Your GitHub sign-in expired — sign in again", code: "reauth" });
+    session?.destroy();
+    return json(401, { error: "Your GitHub sign-in ended — sign in again", code: "reauth" });
   }
   if (err instanceof TransactionConflictError) {
     return json(503, { error: "Your library is busy — try again", code: "busy" }, { "Retry-After": "2" });
@@ -101,12 +107,13 @@ export function withAuth<P = Record<string, string>>(
   handler: (req: NextRequest, ctx: AuthContext, params: P) => Promise<Response>
 ) {
   return async (req: NextRequest, args: RouteArgs<P>): Promise<Response> => {
+    let session: IronSession<SessionData> | null = null;
     try {
-      const session = await getSession();
-      if (!session.accessToken) return json(401, { error: "not authenticated" });
+      session = await getSession();
+      if (!session.accessToken) return json(401, { error: "not authenticated", code: "signed_out" });
       return await handler(req, { session, accessToken: session.accessToken }, args?.params);
     } catch (err) {
-      return errorResponse(err);
+      return errorResponse(err, session);
     }
   };
 }
@@ -117,11 +124,13 @@ export function withRepo<P = Record<string, string>>(
   options: RouteOptions = {}
 ) {
   return async (req: NextRequest, args: RouteArgs<P>): Promise<Response> => {
+    let session: IronSession<SessionData> | null = null;
     try {
-      const session = await getSession();
+      session = await getSession();
       const { accessToken, repoOwner, repoName } = session;
-      if (!accessToken || !repoOwner || !repoName) {
-        return json(401, { error: "not authenticated or no repo selected" });
+      if (!accessToken) return json(401, { error: "not authenticated", code: "signed_out" });
+      if (!repoOwner || !repoName) {
+        return json(401, { error: "no storage repo selected", code: "no_repo" });
       }
 
       let dirty = false;
@@ -137,7 +146,7 @@ export function withRepo<P = Record<string, string>>(
       const repo: RepoRef = { accessToken, owner: repoOwner, repo: repoName, branch };
       return await handler(req, { session, accessToken, repo }, args?.params);
     } catch (err) {
-      return errorResponse(err);
+      return errorResponse(err, session);
     }
   };
 }

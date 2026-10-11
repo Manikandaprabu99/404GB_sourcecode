@@ -5,6 +5,7 @@ import {
   APP_AUTH_URL,
   createMobileTicket,
   establishSession,
+  revokeGitHubToken,
   OAUTH_STATE_COOKIE,
   oauthStateCookieOptions,
   readOAuthState,
@@ -131,8 +132,9 @@ export async function GET(req: NextRequest) {
   }
 
   const session = await getSession();
-  establishSession(session, tokenJson.access_token, user.login);
+  const replaced = establishSession(session, tokenJson.access_token, user.login);
   await session.save();
+  if (replaced) await revokeGitHubToken(replaced);
 
   return finish(NextResponse.redirect(`${appUrl}/repos`));
 }

@@ -10,6 +10,7 @@ const SIGN_IN_ERRORS: Record<string, string> = {
   oauth_state: "Sign-in expired or was interrupted. Please try again.",
   access_denied: "GitHub sign-in was cancelled.",
   app_signin_failed: "Couldn't finish signing in to the app. Please try again.",
+  session_expired: "Your GitHub sign-in ended. Sign in again to continue — your photos are safe in your repo.",
 };
 
 const FEATURES = [
@@ -36,8 +37,9 @@ export default async function HomePage({
   searchParams: { error?: string | string[] };
 }) {
   const session = await getSession();
-  const isLoggedIn = !!session.accessToken;
   const errorCode = typeof searchParams.error === "string" ? searchParams.error : null;
+  // After the app found the session dead, show sign-in even if a stale cookie survived.
+  const isLoggedIn = !!session.accessToken && errorCode !== "session_expired";
   const errorMessage = errorCode
     ? SIGN_IN_ERRORS[errorCode] ?? "Sign-in failed. Please try again."
     : null;

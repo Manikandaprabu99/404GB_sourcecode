@@ -127,6 +127,7 @@ function formatDuration(seconds: number): string {
 interface TileProps {
   item: MediaIndexEntry;
   repoKey: string;
+  thumbSize: 320 | 800;
   x: number;
   y: number;
   width: number;
@@ -139,6 +140,7 @@ interface TileProps {
 const Tile = memo(function Tile({
   item,
   repoKey,
+  thumbSize,
   x,
   y,
   width,
@@ -170,6 +172,7 @@ const Tile = memo(function Tile({
           alt=""
           hasThumbnail={Boolean(item.thumb)}
           isVideo={isVideo}
+          size={thumbSize}
           onThumbnailBackfilled={onThumbnailBackfilled}
           className="h-full w-full object-cover"
         />
@@ -274,6 +277,11 @@ export default function VirtualGrid({
 
   const metrics = useMemo(() => computeMetrics(width > 0 ? width : 360, zoom), [width, zoom]);
   const { layouts, total } = useMemo(() => layoutGroups(groups, metrics), [groups, metrics]);
+  // Big day-view tiles on sharp screens would upscale the 320px thumbnail; use the 800px one.
+  const thumbSize = useMemo<320 | 800>(() => {
+    const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+    return zoom === "day" && metrics.rowHeight * dpr > 380 ? 800 : 320;
+  }, [zoom, metrics.rowHeight]);
   const marks = useMemo<TimelineMark[]>(
     () => layouts.map((layout) => ({ top: layout.top, time: layout.group.time })),
     [layouts]
@@ -582,6 +590,7 @@ export default function VirtualGrid({
                   key={item.id}
                   item={item}
                   repoKey={repoKey}
+                  thumbSize={thumbSize}
                   x={metrics.lefts[column]}
                   y={y}
                   width={metrics.widths[column]}

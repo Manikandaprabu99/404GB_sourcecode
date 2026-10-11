@@ -10,6 +10,7 @@ import { albumCoverId, createAlbum, loadAlbums } from "@/lib/library/albumsStore
 import { afterOverlayClosed } from "@/lib/library/history";
 import { useAlbums, useLibrary } from "@/lib/library/hooks";
 import { rememberAlbumListOrigin } from "@/lib/library/viewState";
+import { leaveForSignIn, signedOutAction } from "@/lib/library/signedOut";
 import GalleryThumb from "@/app/gallery/GalleryThumb";
 import AlbumNameSheet from "@/app/components/library/AlbumNameSheet";
 import EmptyState, { primaryButtonClass } from "@/app/components/library/EmptyState";
@@ -66,7 +67,9 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    if (albumsState.error?.kind === "auth" || library.error?.kind === "auth") router.replace("/");
+    const action = signedOutAction(albumsState.error, library.error);
+    if (action === "choose-repo") router.replace("/repos");
+    else if (action === "sign-in") leaveForSignIn();
   }, [albumsState.error, library.error, router]);
 
   const albums = useMemo(

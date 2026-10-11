@@ -104,11 +104,16 @@ export async function readMobileTicket(sealed: string): Promise<MobileTicket | n
   }
 }
 
+/**
+ * Signs this device in with a new token. Returns the token it replaces (for
+ * revokeGitHubToken) when the device was already signed in with another one.
+ */
 export function establishSession(
   session: IronSession<SessionData>,
   accessToken: string,
   githubLogin: string
-) {
+): string | null {
+  const previous = session.accessToken && session.accessToken !== accessToken ? session.accessToken : null;
   // A different GitHub account can't use the previous account's storage repo.
   if (session.githubLogin !== githubLogin) {
     delete session.repoOwner;
@@ -117,4 +122,33 @@ export function establishSession(
   }
   session.accessToken = accessToken;
   session.githubLogin = githubLogin;
+  return previous;
+}
+
+/**
+ * Deletes one OAuth token at GitHub (best effort, never throws). GitHub keeps
+ * at most 10 live tokens per user and app and silently revokes the oldest when
+ * an 11th is created, which signs out some other device; deleting the tokens
+ * this app no longer uses (log out, signing in again on the same device) keeps
+ * every signed-in device under that limit.
+ */
+export async function revokeGitHubToken(accessToken: string): Promise<void> {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+  if (!clientId || !clientSecret || !accessToken) return;
+  try {
+    await fetch(`https://api.github.com/applications/${encodeURIComponent(clientId)}/token`, {
+      method: "DELETE",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({ access_token: accessToken }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    // Signed out locally either way; an orphaned token only counts toward the limit.
+  }
 }

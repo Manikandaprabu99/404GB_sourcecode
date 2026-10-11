@@ -8,6 +8,7 @@ import { useConfirm } from "@/app/components/ui/ConfirmDialog";
 import { useToast } from "@/app/components/ui/Toast";
 import { trapTab, useEscapeLayer, useFocusReturn } from "@/app/components/ui/focus";
 import { canEdit } from "@/lib/editor/canEdit";
+import { leaveForSignIn } from "@/lib/library/signedOut";
 import ImageSlide from "./viewer/ImageSlide";
 import InfoSheet from "./viewer/InfoSheet";
 import VideoSlide from "./viewer/VideoSlide";
@@ -54,6 +55,22 @@ interface Transfer {
   progress: number | null;
 }
 
+// Bigger originals (100 MP+ panoramas) load when zooming, so a phone doesn't
+// decode gigabytes of pixels just to show them at screen size.
+const AUTO_ORIGINAL_MAX_PIXELS = 100_000_000;
+
+function autoLoadsOriginal(entry: MediaIndexEntry): boolean {
+  if (isVideoItem(entry) || !canDisplayOriginal(entry)) return false;
+  return !(entry.width && entry.height && entry.width * entry.height > AUTO_ORIGINAL_MAX_PIXELS);
+}
+
+/** Data Saver on, or a 2G/3G-class connection. */
+function savingData(): boolean {
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } })
+    .connection;
+  return Boolean(connection?.saveData) || /(^|-)(2g|3g)$/.test(connection?.effectiveType ?? "");
+}
+
 const CLOSE_MS = 200;
 const LEAVE_MS = 220;
 const AUTO_HIDE_MS = 3000;
@@ -64,8 +81,9 @@ const SHARE_GESTURE_MS = 4000;
  * Full-screen viewer. Swipe sideways to move between items, down to close and up
  * for details; pinch, double-tap or scroll to zoom; tap to hide the toolbars.
  * The 320px thumbnail shows instantly, the 1600px preview fades in over it, and
- * the original loads when zooming or tapping "Original". The parent owns data
- * changes; this only calls back and moves to a neighbour after a removal.
+ * the original downloads right away and replaces both (formats a browser can't
+ * draw, like HEIC, stay on the preview). The parent owns data changes; this only
+ * calls back and moves to a neighbour after a removal.
  */
 export default function MediaViewer(props: MediaViewerProps) {
   const { items, index, repoKey, onAddToAlbum, onRemoveFromAlbum } = props;
@@ -192,7 +210,7 @@ export default function MediaViewer(props: MediaViewerProps) {
           message: "You're signed out. Sign in again to continue.",
           tone: "error",
           actionLabel: "Sign in",
-          onAction: () => window.location.assign("/"),
+          onAction: () => leaveForSignIn(),
         });
         return;
       }
@@ -332,12 +350,27 @@ export default function MediaViewer(props: MediaViewerProps) {
     setOriginal(cached && currentId ? { id: currentId, status: "ready", url: cached.url, progress: 1 } : null);
   }, [currentId, gestures]);
 
-  // Items stored without thumbnails have nothing smaller to show: fetch the original right away.
+  // Photos always end up at original quality: the thumbnail and 1600px preview
+  // show instantly and the original replaces them as soon as it has downloaded.
   useEffect(() => {
-    if (!item || item.thumb || isVideoItem(item) || !canDisplayOriginal(item)) return;
+    if (!item || !autoLoadsOriginal(item)) return;
     loadOriginalForDisplay(item, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id]);
+
+  // Then the next photo's original downloads in the background, so swiping
+  // forward lands on full quality straight away (not when saving data).
+  const currentOriginalReady = currentOriginal?.status === "ready";
+  useEffect(() => {
+    if (!currentOriginalReady || savingData()) return;
+    const next = itemsRef.current[indexRef.current + 1];
+    if (!next || !autoLoadsOriginal(next)) return;
+    getStore()
+      .load(next)
+      .catch(() => {
+        // Loads again (with progress) if the user swipes to it.
+      });
+  }, [currentOriginalReady, currentId, getStore]);
 
   useEffect(() => {
     if (!enteringId) return;

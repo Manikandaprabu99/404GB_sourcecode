@@ -9,6 +9,7 @@ import { mediaTime } from "@/lib/library/dates";
 import { afterOverlayClosed, closeOverlaysThen } from "@/lib/library/history";
 import { useAlbums, useLibrary } from "@/lib/library/hooks";
 import { cameFromAlbumList } from "@/lib/library/viewState";
+import { leaveForSignIn, signedOutAction } from "@/lib/library/signedOut";
 import { useConfirm } from "@/app/components/ui/ConfirmDialog";
 import { useToast } from "@/app/components/ui/Toast";
 import AlbumNameSheet from "@/app/components/library/AlbumNameSheet";
@@ -49,7 +50,9 @@ export default function AlbumClient({ repoOwner, repoName, albumId }: AlbumClien
   const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
-    if (library.error?.kind === "auth" || albumsState.error?.kind === "auth") router.replace("/");
+    const action = signedOutAction(library.error, albumsState.error);
+    if (action === "choose-repo") router.replace("/repos");
+    else if (action === "sign-in") leaveForSignIn();
   }, [library.error, albumsState.error, router]);
 
   const items = useMemo(() => {

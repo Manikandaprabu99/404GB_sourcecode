@@ -8,6 +8,7 @@ import { repoKeyFor } from "@/lib/cache";
 import { useBackupStatus, useLibrary, useOnline } from "@/lib/library/hooks";
 import { syncBackupLibrary } from "@/lib/library/backupStore";
 import { syncLibrary } from "@/lib/library/mediaStore";
+import { leaveForSignIn, signedOutAction } from "@/lib/library/signedOut";
 import { galleryView, type LibraryFilter } from "@/lib/library/viewState";
 import EmptyState, { primaryButtonClass, secondaryButtonClass } from "@/app/components/library/EmptyState";
 import MediaLibraryView from "@/app/components/library/MediaLibraryView";
@@ -52,7 +53,9 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   };
 
   useEffect(() => {
-    if (library.error?.kind === "auth") router.replace("/");
+    const action = signedOutAction(library.error);
+    if (action === "choose-repo") router.replace("/repos");
+    else if (action === "sign-in") leaveForSignIn();
   }, [library.error, router]);
 
   useEffect(() => {
@@ -70,7 +73,17 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   const retry = () => void syncLibrary();
 
   const notice =
-    hasLibrary && library.error && library.error.kind !== "auth" && library.error.kind !== "offline" ? (
+    hasLibrary && library.error?.kind === "auth" && library.error.code !== "no_repo" ? (
+      <Notice
+        action={
+          <a href="/?error=session_expired" className={noticeActionClass}>
+            Sign in
+          </a>
+        }
+      >
+        You&apos;re signed out. Sign in again to see new photos and keep backing up.
+      </Notice>
+    ) : hasLibrary && library.error && library.error.kind !== "auth" && library.error.kind !== "offline" ? (
       <Notice
         action={
           <button type="button" onClick={retry} className={noticeActionClass}>
