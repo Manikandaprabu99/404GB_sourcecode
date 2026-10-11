@@ -29,6 +29,13 @@ export interface MediaRecord {
   /** Original media id when this is an edited copy. */
   editedFrom?: string;
   source?: MediaSource;
+  /** Device folder it was backed up from, relative and without a trailing slash, e.g.
+   * "DCIM/Camera", "Pictures/Screenshots", "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images".
+   * Only phone backups know it; web uploads leave it out. */
+  folder?: string;
+  /** When it was moved to Trash (ISO 8601). Trashed items stay in the index, so the same
+   * file is still recognised as a duplicate, and are removed for good after 30 days. */
+  trashedAt?: string;
   deletedAt: string | null;
 }
 
@@ -46,6 +53,10 @@ export interface MediaIndexEntry {
   size?: number;
   favorite?: boolean;
   editedFrom?: string;
+  /** See MediaRecord.folder. */
+  folder?: string;
+  /** See MediaRecord.trashedAt. */
+  trashedAt?: string;
 }
 
 export const MEDIA_INDEX_PATH = "manifest/media-index.json";
@@ -93,5 +104,7 @@ export function toIndexEntry(record: MediaRecord): MediaIndexEntry {
   if (record.size) entry.size = record.size;
   if (record.favorite) entry.favorite = true;
   if (record.editedFrom) entry.editedFrom = record.editedFrom;
+  if (record.folder) entry.folder = record.folder;
+  if (record.trashedAt) entry.trashedAt = record.trashedAt;
   return entry;
 }
