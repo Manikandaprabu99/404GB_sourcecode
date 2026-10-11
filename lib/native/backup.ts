@@ -4,6 +4,7 @@
 // hasNativePlugin("Backup") is true; everywhere else they reject.
 
 import { registerPlugin, type PluginListenerHandle } from "@capacitor/core";
+import type { MediaIndexEntry } from "@/lib/media/types";
 
 export type BackupFolders = "all" | "camera";
 
@@ -13,7 +14,7 @@ export type BackupState =
   | "scanning"
   | "uploading"
   | "waiting" // enabled, but something is in the way: see BackupStatus.waitingFor
-  | "needs_sign_in" // the server rejected the app's session (401)
+  | "needs_sign_in" // no GitHub token stored, or GitHub answered 401
   | "needs_permission"; // photo/video access missing or only partially granted
 
 /** Why queued backups aren't running (older app builds don't report it). */
@@ -58,6 +59,20 @@ export interface BackupOptions {
   folders: BackupFolders;
 }
 
+/** The GitHub session the app and the background worker share (docs/STANDALONE.md). */
+export interface BackupAuth {
+  token: string;
+  login: string;
+  owner: string;
+  repo: string;
+  branch: string;
+}
+
+export interface ItemsUploadedEvent {
+  /** Index entries the worker just committed, newest last. */
+  entries: MediaIndexEntry[];
+}
+
 export interface SaveProgress {
   mediaId: string;
   bytesDone: number;
@@ -75,9 +90,13 @@ export interface BackupPlugin {
   ): Promise<BackupStatus>;
   backupNow(): Promise<void>;
   retryFailed(): Promise<void>;
-  /** The "owner/repo" this app is signed in to. If the phone was backing up into a
-   * different repo, everything is queued again for the new one. (Newer app builds.) */
-  setLibrary(options: { repo: string }): Promise<BackupStatus>;
+  /** Stores the GitHub session for the worker. A different owner/repo than the one the phone
+   * was backing up into queues everything again for the new repo. Kicks backup when enabled. */
+  setAuth(options: BackupAuth): Promise<BackupStatus>;
+  /** The stored session, or null when signed out. */
+  getAuth(): Promise<{ auth: BackupAuth | null }>;
+  /** Forgets the token on this phone (backup pauses as "needs_sign_in"; the ledger is kept). */
+  clearAuth(): Promise<BackupStatus>;
   /** Downloads the original into the phone's gallery (Pictures/404GB or Movies/404GB). */
   saveToDevice(options: { mediaId: string }): Promise<{ uri: string }>;
   /** Downloads the original and opens Android's share sheet. */
@@ -90,6 +109,10 @@ export interface BackupPlugin {
   addListener(
     eventName: "saveProgress",
     listener: (progress: SaveProgress) => void
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: "itemsUploaded",
+    listener: (event: ItemsUploadedEvent) => void
   ): Promise<PluginListenerHandle>;
 }
 
