@@ -7,6 +7,7 @@ import { canDisplayOriginal } from "./format";
 import type { Size } from "./geometry";
 import { DownloadIcon, ProgressRing } from "./icons";
 import type { OriginalView } from "./originals";
+import { peekThumbUrl, thumbKey } from "@/lib/library/thumbUrls";
 import { thumbUrl, useCachedThumb } from "./useCachedThumb";
 
 interface ImageSlideProps {
@@ -36,7 +37,9 @@ function ImageSlide({
   downloadLabel,
 }: ImageSlideProps) {
   const hasThumb = Boolean(item.thumb);
-  const small = useCachedThumb(repoKey, item.id, 320, hasThumb);
+  // The grid's 800px tile thumbnail, when it's already in memory, is a sharper instant placeholder.
+  const [smallSize] = useState<320 | 800>(() => (peekThumbUrl(thumbKey(repoKey, item.id, 800)) ? 800 : 320));
+  const small = useCachedThumb(repoKey, item.id, smallSize, hasThumb);
   const [previewSize, setPreviewSize] = useState<1600 | 800 | null>(hasThumb ? 1600 : null);
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [originalShown, setOriginalShown] = useState<string | null>(null);
