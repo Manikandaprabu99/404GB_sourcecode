@@ -220,13 +220,21 @@ export async function deleteAlbum(id: string): Promise<void> {
   }
 }
 
-/** The cover shown for an album: its chosen cover, else its first item. */
-export function albumCoverId(album: Album): string | undefined {
-  if (album.coverId && album.mediaIds.includes(album.coverId)) return album.coverId;
-  return album.mediaIds[0];
+/** The cover shown for an album: its chosen cover, else its first item (items in Trash skipped). */
+export function albumCoverId(album: Album, trashedIds?: ReadonlySet<string>): string | undefined {
+  const shown = (id: string) => !trashedIds?.has(id);
+  if (album.coverId && album.mediaIds.includes(album.coverId) && shown(album.coverId)) return album.coverId;
+  return album.mediaIds.find(shown);
 }
 
-// Deleting media drops it from albums in the same commit; mirror that locally.
+/** How many of an album's items show (items in Trash keep their place but don't count). */
+export function albumItemCount(album: Album, trashedIds?: ReadonlySet<string>): number {
+  if (!trashedIds || trashedIds.size === 0) return album.mediaIds.length;
+  return album.mediaIds.reduce((count, id) => (trashedIds.has(id) ? count : count + 1), 0);
+}
+
+// Deleting media for good drops it from albums in the same commit; mirror that locally.
+// (Moving to Trash keeps album membership, so a restore puts items back.)
 onMediaDeleted((ids) => {
   const gone = new Set(ids);
   let changed = false;

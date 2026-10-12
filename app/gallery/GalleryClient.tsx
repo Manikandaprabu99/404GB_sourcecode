@@ -1,33 +1,49 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MediaIndexEntry } from "@/lib/media";
 import { repoKeyFor } from "@/lib/cache";
-import { useBackupStatus, useLibrary, useOnline } from "@/lib/library/hooks";
+import { usePeople } from "@/lib/faces/people";
+import { albumCoverId } from "@/lib/library/albumsStore";
+import { buildCategories, categoryCover } from "@/lib/library/categories";
+import { useAlbums, useBackupStatus, useLibrary, useOnline } from "@/lib/library/hooks";
 import { syncLibrary } from "@/lib/library/mediaStore";
+import { onThisDay } from "@/lib/library/memories";
+import {
+  compileQuery,
+  libraryFacts,
+  parseQuery,
+  suggest as suggestFor,
+  type ParsedQuery,
+  type SearchContext,
+} from "@/lib/library/search";
 import { leaveForSignIn, signedOutAction } from "@/lib/library/signedOut";
+import { localDayKey } from "@/lib/library/trash";
 import { galleryView, type LibraryFilter } from "@/lib/library/viewState";
+import { useZoom } from "@/lib/library/zoom";
 import EmptyState, { primaryButtonClass, secondaryButtonClass } from "@/app/components/library/EmptyState";
 import MediaLibraryView from "@/app/components/library/MediaLibraryView";
 import Notice, { noticeActionClass } from "@/app/components/library/Notice";
 import { RefreshIcon, UploadIcon } from "@/app/components/library/icons";
 import GalleryHeader from "./GalleryHeader";
+import MemoriesStrip from "./MemoriesStrip";
 
 interface GalleryClientProps {
   repoOwner: string;
   repoName: string;
 }
 
-function applyFilter(items: MediaIndexEntry[], filter: LibraryFilter, query: string): MediaIndexEntry[] {
-  const q = query.trim().toLowerCase();
-  if (filter === "all" && !q) return items;
+/** The filter chip and the search query together (lib/library/search explains the query). */
+function applyFilter(items: MediaIndexEntry[], filter: LibraryFilter, parsed: ParsedQuery): MediaIndexEntry[] {
+  const matches = compileQuery(parsed);
+  if (filter === "all" && !matches) return items;
   return items.filter((item) => {
     if (filter === "photos" && !item.mimeType.startsWith("image/")) return false;
     if (filter === "videos" && !item.mimeType.startsWith("video/")) return false;
     if (filter === "favorites" && !item.favorite) return false;
-    return !q || item.filename.toLowerCase().includes(q);
+    return !matches || matches(item);
   });
 }
 
@@ -41,6 +57,20 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   const [query, setQueryState] = useState(galleryView.query);
   const [searchOpen, setSearchOpen] = useState(false);
   const deferredQuery = useDeferredValue(query);
+  const zoom = useZoom();
+  const { people } = usePeople(repoKey);
+  // Album names matter only for search: the cached list until search is first used.
+  const [searchUsed, setSearchUsed] = useState(() => galleryView.query.trim() !== "");
+  const albumsState = useAlbums(repoKey, { load: searchUsed });
+  // "Today", "last week" and On this day move on when the app comes back on another day.
+  const [day, setDay] = useState(() => localDayKey(new Date()));
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setDay(localDayKey(new Date()));
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   const setFilter = (next: LibraryFilter) => {
     galleryView.filter = next;
@@ -57,10 +87,44 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
     else if (action === "sign-in") leaveForSignIn();
   }, [library.error, router]);
 
-  const visible = useMemo(
-    () => applyFilter(library.items, filter, deferredQuery),
-    [library.items, filter, deferredQuery]
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- a new "now" only when the day changes
+  const now = useMemo(() => new Date(), [day]);
+  const trashedIds = useMemo(() => new Set(library.trashed.map((item) => item.id)), [library.trashed]);
+  const categories = useMemo(() => buildCategories(library.items), [library.items]);
+  const searchContext = useMemo<SearchContext>(
+    () => ({
+      people: people.flatMap((person) =>
+        person.name ? [{ id: person.id, name: person.name, mediaIds: person.mediaIds, cover: person.cover }] : []
+      ),
+      albums: albumsState.albums.map((album) => ({
+        id: album.id,
+        name: album.name,
+        mediaIds: album.mediaIds.filter((id) => !trashedIds.has(id)),
+        coverId: albumCoverId(album, trashedIds),
+      })),
+      categories: categories.map((category) => ({
+        id: category.id,
+        name: category.name,
+        count: category.items.length,
+        coverId: categoryCover(category.items)?.id,
+      })),
+      now,
+    }),
+    [people, albumsState.albums, trashedIds, categories, now]
   );
+  const facts = useMemo(() => libraryFacts(library.items), [library.items]);
+  const suggest = useCallback((text: string) => suggestFor(text, searchContext, facts), [searchContext, facts]);
+  const parsed = useMemo(() => parseQuery(deferredQuery, searchContext), [deferredQuery, searchContext]);
+  const entriesById = useMemo(() => new Map(library.items.map((item) => [item.id, item])), [library.items]);
+
+  const visible = useMemo(() => applyFilter(library.items, filter, parsed), [library.items, filter, parsed]);
+
+  const memories = useMemo(() => onThisDay(library.items, now), [library.items, now]);
+  const memorySets = useMemo(
+    () => Object.fromEntries(memories.map((memory) => [`memory:${memory.key}`, memory.items])),
+    [memories]
+  );
+  const showMemories = filter === "all" && !deferredQuery.trim();
 
   const hasLibrary = library.items.length > 0;
   const offline = !online || library.error?.kind === "offline";
@@ -148,7 +212,7 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
       <EmptyState
         illustration="search"
         title="No matches"
-        message={`Nothing in ${filter === "all" ? "your library" : `your ${filter}`} is named like “${deferredQuery.trim()}”.`}
+        message={`Nothing in ${filter === "all" ? "your library" : `your ${filter}`} matches “${deferredQuery.trim()}”. Try a name, an app like WhatsApp, a date like “October 2024”, or part of a file name.`}
       >
         <button type="button" onClick={() => setQuery("")} className={secondaryButtonClass}>
           Clear search
@@ -178,6 +242,18 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
       notice={notice}
       empty={empty}
       resetKey={`${filter}|${deferredQuery}`}
+      viewerSets={memorySets}
+      aboveGrid={({ selectMode, openSet }) =>
+        showMemories ? (
+          <MemoriesStrip
+            memories={memories}
+            repoKey={repoKey}
+            zoom={zoom}
+            disabled={selectMode}
+            onOpen={(memory) => openSet(`memory:${memory.key}`, memory.items[0].id)}
+          />
+        ) : null
+      }
       header={({ selectMode, startSelect }) => (
         <GalleryHeader
           filter={filter}
@@ -190,6 +266,11 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
           canSelect={visible.length > 0}
           selectMode={selectMode}
           onSelect={startSelect}
+          repoKey={repoKey}
+          entriesById={entriesById}
+          suggest={suggest}
+          terms={deferredQuery.trim() ? parsed.terms.filter((term) => term.kind !== "text") : []}
+          onSearchFocus={() => setSearchUsed(true)}
         />
       )}
     />

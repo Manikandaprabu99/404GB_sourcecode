@@ -1,11 +1,26 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import type { MediaIndexEntry } from "@/lib/media";
+import { removeTerm, type SearchTerm, type Suggestions } from "@/lib/library/search";
 import type { LibraryFilter } from "@/lib/library/viewState";
 import { useHistoryOverlay } from "@/lib/ui/useHistoryOverlay";
 import { setZoom, useZoom, ZOOM_LABELS, ZOOM_LEVELS } from "@/lib/library/zoom";
 import BackupStatusPill, { StatusPill } from "@/app/components/backup/BackupStatusPill";
-import { BackIcon, CloseIcon, HeartIcon, SearchIcon, ViewGridIcon } from "@/app/components/library/icons";
+import SmartSearchField from "@/app/components/search/SmartSearchField";
+import {
+  AlbumsIcon,
+  BackIcon,
+  CalendarIcon,
+  CloseIcon,
+  FolderIcon,
+  HeartIcon,
+  PencilIcon,
+  PersonIcon,
+  PhotosIcon,
+  SearchIcon,
+  ViewGridIcon,
+} from "@/app/components/library/icons";
 
 const FILTERS: { value: LibraryFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -26,6 +41,34 @@ interface GalleryHeaderProps {
   canSelect: boolean;
   selectMode: boolean;
   onSelect: () => void;
+  repoKey: string;
+  entriesById: ReadonlyMap<string, MediaIndexEntry>;
+  suggest: (query: string) => Suggestions;
+  /** What the query was understood as, shown as removable chips. */
+  terms: SearchTerm[];
+  onSearchFocus?: () => void;
+}
+
+function termIcon(term: SearchTerm): ReactNode {
+  switch (term.kind) {
+    case "person":
+      return <PersonIcon size={13} />;
+    case "album":
+      return <AlbumsIcon size={13} />;
+    case "category":
+      return <FolderIcon size={13} />;
+    case "range":
+    case "month":
+      return <CalendarIcon size={13} />;
+    case "favorite":
+      return <HeartIcon size={13} />;
+    case "edited":
+      return <PencilIcon size={13} />;
+    case "type":
+      return <PhotosIcon size={13} />;
+    default:
+      return <SearchIcon size={13} />;
+  }
 }
 
 export default function GalleryHeader({
@@ -39,6 +82,11 @@ export default function GalleryHeader({
   canSelect,
   selectMode,
   onSelect,
+  repoKey,
+  entriesById,
+  suggest,
+  terms,
+  onSearchFocus,
 }: GalleryHeaderProps) {
   const desktopSearchRef = useRef<HTMLInputElement>(null);
 
@@ -92,7 +140,7 @@ export default function GalleryHeader({
     ) : null;
 
   return (
-    <div className="bg-bg pt-safe sm:pt-0">
+    <div className="relative bg-bg pt-safe sm:pt-0">
       {searchOpen && (
         <div className="flex h-12 animate-fade-in items-center gap-1 px-1.5 sm:hidden">
           <button
@@ -103,26 +151,16 @@ export default function GalleryHeader({
           >
             <BackIcon size={20} />
           </button>
-          <input
+          <SmartSearchField
+            variant="phone"
             autoFocus
-            type="search"
-            enterKeyHint="search"
-            value={query}
-            onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="Search by file name"
-            aria-label="Search by file name"
-            className="h-10 min-w-0 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-faint [&::-webkit-search-cancel-button]:hidden"
+            query={query}
+            onQueryChange={onQueryChange}
+            suggest={suggest}
+            repoKey={repoKey}
+            entriesById={entriesById}
+            onFocus={onSearchFocus}
           />
-          {query && (
-            <button
-              type="button"
-              onClick={() => onQueryChange("")}
-              aria-label="Clear search"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink"
-            >
-              <CloseIcon size={16} />
-            </button>
-          )}
           {selectButton}
         </div>
       )}
@@ -135,31 +173,16 @@ export default function GalleryHeader({
           {offline ? <StatusPill label="Offline" tone="muted" icon="off" /> : <BackupStatusPill />}
         </div>
 
-        <div className="relative hidden w-56 sm:block lg:w-72">
-          <SearchIcon
-            size={16}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint"
-          />
-          <input
-            ref={desktopSearchRef}
-            type="search"
-            value={query}
-            onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="Search by file name"
-            aria-label="Search by file name"
-            className="h-9 w-full rounded-full border border-border bg-surface pl-9 pr-9 text-small text-ink outline-none transition-colors duration-180 placeholder:text-ink-faint focus:border-accent [&::-webkit-search-cancel-button]:hidden"
-          />
-          {query && (
-            <button
-              type="button"
-              onClick={() => onQueryChange("")}
-              aria-label="Clear search"
-              className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-ink-faint transition-colors duration-180 hover:bg-surface-2 hover:text-ink"
-            >
-              <CloseIcon size={14} />
-            </button>
-          )}
-        </div>
+        <SmartSearchField
+          ref={desktopSearchRef}
+          variant="desktop"
+          query={query}
+          onQueryChange={onQueryChange}
+          suggest={suggest}
+          repoKey={repoKey}
+          entriesById={entriesById}
+          onFocus={onSearchFocus}
+        />
 
         <button
           type="button"
@@ -196,6 +219,29 @@ export default function GalleryHeader({
             </button>
           );
         })}
+        {terms.length > 0 && (
+          <>
+            <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
+            <ul aria-label="Searching for" className="flex items-center gap-1.5">
+              {terms.map((term) => (
+                <li key={`${term.kind}:${term.start}`} className="animate-scale-in">
+                  <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 pl-2.5 pr-1 text-small font-medium text-ink">
+                    <span className="text-accent">{termIcon(term)}</span>
+                    <span className="max-w-[12rem] truncate">{term.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => onQueryChange(removeTerm(query, term))}
+                      aria-label={`Remove ${term.label}`}
+                      className="flex h-6 w-6 items-center justify-center rounded-full text-ink-muted transition-colors duration-180 hover:bg-accent/15 hover:text-ink"
+                    >
+                      <CloseIcon size={12} />
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </div>
     </div>
   );

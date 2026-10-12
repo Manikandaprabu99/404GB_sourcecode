@@ -133,6 +133,8 @@ interface TileProps {
   height: number;
   selectMode: boolean;
   selected: boolean;
+  /** A short label in the corner, e.g. days left in Trash. */
+  badge: string | null;
 }
 
 const Tile = memo(function Tile({
@@ -144,6 +146,7 @@ const Tile = memo(function Tile({
   height,
   selectMode,
   selected,
+  badge,
 }: TileProps) {
   const isVideo = item.mimeType?.startsWith("video/") ?? false;
   return (
@@ -176,6 +179,11 @@ const Tile = memo(function Tile({
         <span className="pointer-events-none absolute bottom-1 right-1 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white backdrop-blur-sm">
           <PlayIcon size={8} />
           {typeof item.duration === "number" && item.duration > 0 ? formatDuration(item.duration) : null}
+        </span>
+      )}
+      {badge && (
+        <span data-badge="" className="pointer-events-none absolute right-1 top-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white backdrop-blur-sm">
+          {badge}
         </span>
       )}
       {item.favorite && (
@@ -229,6 +237,8 @@ export interface VirtualGridProps {
   /** Long-press (touch) or the hover check mark (mouse) outside selection mode. */
   onStartSelect: (id: string) => void;
   onToggleGroup?: (groupKey: string) => void;
+  /** A corner label per tile (null for none). */
+  badgeFor?: (item: MediaIndexEntry) => string | null;
 }
 
 /**
@@ -252,6 +262,7 @@ export default function VirtualGrid({
   onToggleSelect,
   onStartSelect,
   onToggleGroup,
+  badgeFor,
 }: VirtualGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => getGridWidth());
@@ -583,6 +594,7 @@ export default function VirtualGrid({
                   height={metrics.rowHeight}
                   selectMode={selectMode}
                   selected={selectMode && selectedIds.has(item.id)}
+                  badge={badgeFor ? badgeFor(item) : null}
                 />
               );
             }

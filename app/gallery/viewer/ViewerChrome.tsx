@@ -92,7 +92,8 @@ export function TopBar({
   favoritePulse: number;
   originalChip: OriginalChipState | null;
   onBack: () => void;
-  onFavorite: () => void;
+  /** Left out where favorites don't apply (Trash). */
+  onFavorite?: () => void;
   onInfo: () => void;
   onOriginal: () => void;
   onRemoveFromAlbum?: () => void;
@@ -123,18 +124,20 @@ export function TopBar({
           )}
         </div>
         {originalChip && <OriginalChip state={originalChip} onClick={onOriginal} />}
-        <button
-          type="button"
-          onClick={onFavorite}
-          aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
-          aria-pressed={favorite}
-          title={favorite ? "Remove from favorites" : "Favorite"}
-          className={ICON_BUTTON}
-        >
-          <span key={favoritePulse} className={favoritePulse > 0 && favorite ? "animate-pop" : undefined}>
-            <HeartIcon filled={favorite} className={favorite ? "text-favorite" : undefined} />
-          </span>
-        </button>
+        {onFavorite && (
+          <button
+            type="button"
+            onClick={onFavorite}
+            aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+            aria-pressed={favorite}
+            title={favorite ? "Remove from favorites" : "Favorite"}
+            className={ICON_BUTTON}
+          >
+            <span key={favoritePulse} className={favoritePulse > 0 && favorite ? "animate-pop" : undefined}>
+              <HeartIcon filled={favorite} className={favorite ? "text-favorite" : undefined} />
+            </span>
+          </button>
+        )}
         <button type="button" onClick={onInfo} aria-label="Details" title="Details" className={ICON_BUTTON}>
           <InfoIcon />
         </button>

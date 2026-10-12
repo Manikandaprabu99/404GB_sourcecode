@@ -12,9 +12,12 @@ import { ApiError, withRepo } from "@/lib/library/api";
 import {
   checkUpload,
   commitMediaUpload,
+  restoreMedia,
   setTakenAtIfMissing,
   uploadBlob,
+  type CommitInfo,
   type CommitUploadResult,
+  type MediaIndexEntry,
   type UploadCheck,
 } from "@/lib/media";
 import { makeMediaId, type MediaRecord } from "@/lib/media/types";
@@ -40,6 +43,7 @@ const MESSAGES = {
   finishing: "Finishing…",
   done: "Done",
   duplicate: "Already in your library",
+  restored: "Restored from Trash",
   failed: "Couldn't upload",
   canceled: "Canceled",
 } as const;
@@ -101,6 +105,12 @@ function fillMissingCaptureDate(mediaId: string, takenAt: string): void {
 
 /** A finished commit, with the library ("owner/repo") it went into. */
 export type CommittedUpload = CommitUploadResult & { repoKey: string };
+
+/** A file added again while its copy was in Trash: that copy was restored instead. */
+export interface RestoredUpload extends CommitInfo {
+  repoKey: string;
+  entries: MediaIndexEntry[];
+}
 
 interface CommitBody {
   record: MediaRecord;
@@ -183,6 +193,7 @@ export class UploadQueue {
   private tasks: FileTask[] = [];
   private readonly listeners = new Set<QueueListener>();
   private readonly committedListeners = new Set<(upload: CommittedUpload) => void>();
+  private readonly restoredListeners = new Set<(restored: RestoredUpload) => void>();
   private readonly waiters = new Set<() => void>();
   private readonly concurrency: number;
   private running = false;
@@ -236,6 +247,14 @@ export class UploadQueue {
     this.committedListeners.add(listener);
     return () => {
       this.committedListeners.delete(listener);
+    };
+  }
+
+  /** Called when a file added again brought its copy back from Trash. */
+  onRestored(listener: (restored: RestoredUpload) => void): () => void {
+    this.restoredListeners.add(listener);
+    return () => {
+      this.restoredListeners.delete(listener);
     };
   }
 
@@ -486,7 +505,8 @@ export class UploadQueue {
         withRepo((repo) => checkUpload(repo, chunks.map((c) => c.hash), fileHash))
       );
       if (init.duplicateOf) {
-        this.finishDuplicate(task, init.duplicateOf, fileHash);
+        if (init.duplicateTrashed) await this.restoreFromTrash(task, init.duplicateOf);
+        this.finishDuplicate(task, init.duplicateOf, fileHash, init.duplicateTrashed);
         if (init.duplicateNeedsDate && takenAt) fillMissingCaptureDate(init.duplicateOf, takenAt);
         return;
       }
@@ -534,7 +554,9 @@ export class UploadQueue {
       const result = await this.commit(task, { record, chunkBlobShas, thumbnailBlobShas }, { fileHash, chunks, reused });
       forgetFileProgress(fileHash);
       if (result.duplicate) {
-        this.finishDuplicate(task, result.id, fileHash);
+        const trashed = Boolean(result.entry.trashedAt);
+        if (trashed) await this.restoreFromTrash(task, result.id);
+        this.finishDuplicate(task, result.id, fileHash, trashed);
       } else {
         this.finish(task, { status: "done", message: MESSAGES.done, mediaId: result.id, bytesUploaded: file.size });
         for (const listener of this.committedListeners) listener(result);
@@ -548,14 +570,25 @@ export class UploadQueue {
     }
   }
 
-  private finishDuplicate(task: FileTask, existingId: string, fileHash: string): void {
+  private finishDuplicate(task: FileTask, existingId: string, fileHash: string, restored = false): void {
     forgetFileProgress(fileHash);
     this.finish(task, {
       status: "duplicate",
-      message: MESSAGES.duplicate,
+      message: restored ? MESSAGES.restored : MESSAGES.duplicate,
       duplicateOf: existingId,
       bytesUploaded: task.snapshot.size,
     });
+  }
+
+  /** Adding a file again means the user wants it: its copy in Trash comes back. */
+  private async restoreFromTrash(task: FileTask, mediaId: string): Promise<void> {
+    const restored = await this.request(task, () =>
+      withRepo(async (repo) => {
+        const result = await restoreMedia(repo, [mediaId]);
+        return result ? { ...result, repoKey: `${repo.owner}/${repo.repo}` } : null;
+      })
+    );
+    if (restored) for (const listener of this.restoredListeners) listener(restored);
   }
 
   private reportPreparing(task: FileTask, done: number, total: number): void {

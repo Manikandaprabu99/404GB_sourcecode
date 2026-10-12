@@ -1,6 +1,6 @@
 // Library operations on the storage repo, run in the browser: the index sync, records,
-// uploads (dedup check, blobs, one commit), favorites, capture dates, thumbnail backfill
-// and deletes. Writes go through lib/github's race-safe transaction.
+// uploads (dedup check, blobs, one commit), favorites, capture dates, thumbnail backfill,
+// Trash (move, restore, purge) and deletes. Writes go through lib/github's race-safe transaction.
 
 import { ALBUMS_PATH, normalizeAlbums, removeMediaFromAlbums } from "@/lib/albums";
 import { DEFAULT_CHUNK_SIZE } from "@/lib/chunking";
@@ -9,13 +9,17 @@ import {
   bytesToBase64,
   CorruptJsonError,
   createBlob,
+  encodePath,
   getContentBinary,
   getHead,
+  githubErrorFrom,
+  githubFetch,
   githubRetryAfterSeconds,
   isAbortError,
   isGitHubAuthError,
   objectPathForHash,
   parseJsonArray,
+  repoPath,
   RepoError,
   runTransaction,
   serializeJsonArray,
@@ -107,7 +111,32 @@ export async function syncMediaIndex(repo: RepoRef, sinceSha?: string): Promise<
     sha = fresh.sha;
   }
   if (sinceSha && sinceSha === sha) return { unchanged: true, sha };
-  return { unchanged: false, sha, index: await readMediaIndex(repo, sha) };
+  return { unchanged: false, sha, index: await readMediaIndexRevalidated(repo, key, sha) };
+}
+
+// Last manifest read per repo + branch. The branch also moves for People saves,
+// album edits and other devices' commits that leave the manifest alone; then its
+// ETag still matches and GitHub answers 304 (free) instead of resending the file.
+const indexReads = new Map<string, { etag: string; entries: MediaIndexEntry[] }>();
+
+async function readMediaIndexRevalidated(repo: RepoRef, key: string, sha: string): Promise<MediaIndexEntry[]> {
+  const memo = indexReads.get(key);
+  const res = await githubFetch(
+    repo.token,
+    repoPath(repo.owner, repo.repo, `/contents/${encodePath(MEDIA_INDEX_PATH)}?ref=${encodeURIComponent(sha)}`),
+    { raw: true, etag: memo?.etag }
+  );
+  if (res.status === 304 && memo) return memo.entries.slice();
+  if (res.status === 404) {
+    indexReads.delete(key);
+    return [];
+  }
+  if (!res.ok) throw await githubErrorFrom(res);
+  const entries = parseJsonArray<MediaIndexEntry>(MEDIA_INDEX_PATH, utf8Text(new Uint8Array(await res.arrayBuffer())));
+  const etag = res.headers.get("etag");
+  if (etag) indexReads.set(key, { etag, entries: entries.slice() });
+  else indexReads.delete(key);
+  return entries;
 }
 
 /** One metadata/<id>.json record (null when it doesn't exist). */
@@ -129,6 +158,8 @@ export interface UploadCheck {
   duplicateOf: string | null;
   /** The duplicate has no capture date: give it this file's with setTakenAtIfMissing. */
   duplicateNeedsDate?: boolean;
+  /** The duplicate is in Trash: adding the file again should restore it (restoreMedia). */
+  duplicateTrashed?: boolean;
 }
 
 /** Duplicate check plus which chunks are missing; a duplicate needs no upload, so `missing` is []. */
@@ -149,7 +180,11 @@ export async function checkUpload(
   if (fileHash) {
     const hash = `sha256:${fileHash}`;
     const existing = (await readIndex(reader)).find((entry) => entry.hash === hash);
-    if (existing) return { missing: [], duplicateOf: existing.id, duplicateNeedsDate: !existing.takenAt };
+    if (existing) {
+      const check: UploadCheck = { missing: [], duplicateOf: existing.id, duplicateNeedsDate: !existing.takenAt };
+      if (existing.trashedAt) check.duplicateTrashed = true;
+      return check;
+    }
   }
   const unique = Array.from(new Set(chunkHashes));
   const stored = await reader.existingObjects(unique);
@@ -344,14 +379,16 @@ export interface DeleteMediaResult extends CommitInfo {
   deletedIds: string[];
 }
 
-/** One commit removing index entries, metadata files and album membership; objects/ stay (chunks may be shared). */
-export async function deleteMedia(repo: RepoRef, ids: readonly string[]): Promise<DeleteMediaResult | null> {
-  const requested = new Set(ids.filter(isMediaId));
-  if (requested.size === 0) return null;
-
+/** One commit removing the index entries `pick` chooses (read at the commit it builds on), their
+ * metadata files and album membership; objects/ stay (chunks may be shared). */
+async function deleteEntries(
+  repo: RepoRef,
+  pick: (entry: MediaIndexEntry) => boolean,
+  message: (ids: string[]) => string
+): Promise<DeleteMediaResult> {
   const { result, commitSha, parentSha } = await runTransaction<string[]>(repo, async (snapshot) => {
     const index = await readIndex(snapshot);
-    const deletedIds = index.filter((entry) => requested.has(entry.id)).map((entry) => entry.id);
+    const deletedIds = index.filter(pick).map((entry) => entry.id);
     if (deletedIds.length === 0) return { result: [] };
     const deleted = new Set(deletedIds);
 
@@ -370,17 +407,127 @@ export async function deleteMedia(repo: RepoRef, ids: readonly string[]): Promis
       if (!(err instanceof CorruptJsonError)) throw err;
     }
 
-    return {
-      result: deletedIds,
-      commit: {
-        blobs,
-        message:
-          deletedIds.length === 1 ? `404gb: delete ${deletedIds[0]}` : `404gb: delete ${deletedIds.length} items`,
-      },
-    };
+    return { result: deletedIds, commit: { blobs, message: message(deletedIds) } };
   });
 
   return { deletedIds: commitSha ? result : [], commitSha, parentSha };
+}
+
+/** Deletes for good: one commit removing index entries, metadata files and album membership. */
+export async function deleteMedia(repo: RepoRef, ids: readonly string[]): Promise<DeleteMediaResult | null> {
+  const requested = new Set(ids.filter(isMediaId));
+  if (requested.size === 0) return null;
+  return deleteEntries(
+    repo,
+    (entry) => requested.has(entry.id),
+    (deletedIds) => (deletedIds.length === 1 ? `404gb: delete ${deletedIds[0]}` : `404gb: delete ${deletedIds.length} items`)
+  );
+}
+
+/** Deletes for good those of `ids` that are still in Trash and were moved there at or before
+ * `cutoff` (ISO 8601) — checked at the commit it builds on, so an item restored meanwhile stays. */
+export async function purgeTrash(
+  repo: RepoRef,
+  ids: readonly string[],
+  cutoff: string
+): Promise<DeleteMediaResult | null> {
+  const requested = new Set(ids.filter(isMediaId));
+  const cutoffTime = Date.parse(cutoff);
+  if (requested.size === 0 || Number.isNaN(cutoffTime)) return null;
+  return deleteEntries(
+    repo,
+    (entry) => {
+      if (!requested.has(entry.id) || !entry.trashedAt) return false;
+      const trashed = Date.parse(entry.trashedAt);
+      return !Number.isNaN(trashed) && trashed <= cutoffTime;
+    },
+    (deletedIds) =>
+      deletedIds.length === 1
+        ? `404gb: purge ${deletedIds[0]} from trash`
+        : `404gb: purge ${deletedIds.length} items from trash`
+  );
+}
+
+export interface EntryChangeResult extends CommitInfo {
+  /** Index entries of the requested ids that exist, after the change. */
+  entries: MediaIndexEntry[];
+}
+
+interface EntryChange {
+  /** The changed entry, or null when this one needs no change. */
+  entry(entry: MediaIndexEntry): MediaIndexEntry | null;
+  record(record: MediaRecord): MediaRecord;
+  message(ids: string[]): string;
+}
+
+/** Changes index entries and their metadata records together, in one commit. */
+async function changeEntries(repo: RepoRef, ids: readonly string[], change: EntryChange): Promise<EntryChangeResult | null> {
+  const requested = new Set(ids.filter(isMediaId));
+  if (requested.size === 0) return null;
+
+  const { result, commitSha, parentSha } = await runTransaction<MediaIndexEntry[]>(repo, async (snapshot) => {
+    const index = await readIndex(snapshot);
+    const changed = new Set<string>();
+    const updatedIndex = index.map((entry) => {
+      if (!requested.has(entry.id)) return entry;
+      const next = change.entry(entry);
+      if (!next) return entry;
+      changed.add(entry.id);
+      return next;
+    });
+    const entries = updatedIndex.filter((entry) => requested.has(entry.id));
+    if (changed.size === 0) return { result: entries };
+
+    const blobs: BlobInput[] = [];
+    const records = await snapshot.readTexts(Array.from(changed, metadataPath));
+    for (const [path, text] of records) {
+      if (text === null) continue;
+      let record: MediaRecord;
+      try {
+        record = JSON.parse(text) as MediaRecord;
+      } catch {
+        continue;
+      }
+      blobs.push({ path, text: JSON.stringify(change.record(record), null, 2) });
+    }
+    blobs.push({ path: MEDIA_INDEX_PATH, text: serializeJsonArray(updatedIndex) });
+    return { result: entries, commit: { blobs, message: change.message(Array.from(changed)) } };
+  });
+  return { entries: result, commitSha, parentSha };
+}
+
+function withTrashedAt<T extends { trashedAt?: string }>(item: T, trashedAt: string | null): T {
+  const copy = { ...item };
+  if (trashedAt) copy.trashedAt = trashedAt;
+  else delete copy.trashedAt;
+  return copy;
+}
+
+/**
+ * Moves items to Trash: sets `trashedAt` on their index entries and records, in one commit.
+ * They keep their index entry (so the same file is still a duplicate) and their album
+ * membership (so restoring is lossless). Items already in Trash keep their original date.
+ */
+export function trashMedia(
+  repo: RepoRef,
+  ids: readonly string[],
+  trashedAt: string = new Date().toISOString()
+): Promise<EntryChangeResult | null> {
+  return changeEntries(repo, ids, {
+    entry: (entry) => (entry.trashedAt ? null : withTrashedAt(entry, trashedAt)),
+    record: (record) => withTrashedAt(record, record.trashedAt ?? trashedAt),
+    message: (changed) => (changed.length === 1 ? `404gb: trash ${changed[0]}` : `404gb: trash ${changed.length} items`),
+  });
+}
+
+/** Takes items out of Trash (clears `trashedAt` on index entries and records), in one commit. */
+export function restoreMedia(repo: RepoRef, ids: readonly string[]): Promise<EntryChangeResult | null> {
+  return changeEntries(repo, ids, {
+    entry: (entry) => (entry.trashedAt ? withTrashedAt(entry, null) : null),
+    record: (record) => withTrashedAt(record, null),
+    message: (changed) =>
+      changed.length === 1 ? `404gb: restore ${changed[0]}` : `404gb: restore ${changed.length} items`,
+  });
 }
 
 function withFavorite<T extends { favorite?: boolean }>(item: T, favorite: boolean): T {

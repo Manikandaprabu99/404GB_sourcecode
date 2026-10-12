@@ -6,7 +6,7 @@ import Sheet from "@/app/components/ui/Sheet";
 import { useToast } from "@/app/components/ui/Toast";
 import GalleryThumb from "@/app/gallery/GalleryThumb";
 import type { Album } from "@/lib/albums/types";
-import { addToAlbum, albumCoverId, albumHref, createAlbum, loadAlbums } from "@/lib/library/albumsStore";
+import { addToAlbum, albumCoverId, albumHref, albumItemCount, createAlbum, loadAlbums } from "@/lib/library/albumsStore";
 import { useAlbums, useLibrary } from "@/lib/library/hooks";
 import { AlbumsIcon, CheckIcon, PlusIcon } from "./icons";
 
@@ -51,6 +51,7 @@ export default function AddToAlbumSheet({
   }, [open]);
 
   const entriesById = useMemo(() => new Map(library.items.map((item) => [item.id, item])), [library.items]);
+  const trashedIds = useMemo(() => new Set(library.trashed.map((item) => item.id)), [library.trashed]);
   const albums = useMemo(
     () =>
       albumsState.albums
@@ -163,7 +164,7 @@ export default function AddToAlbumSheet({
           )}
 
           {albums.map((album) => {
-            const coverId = albumCoverId(album);
+            const coverId = albumCoverId(album, trashedIds);
             const cover = coverId ? entriesById.get(coverId) : undefined;
             const containsAll = mediaIds !== null && mediaIds.every((id) => album.mediaIds.includes(id));
             return (
@@ -189,7 +190,7 @@ export default function AddToAlbumSheet({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-body font-medium text-ink">{album.name}</span>
-                  <span className="block text-small text-ink-muted">{countLabel(album.mediaIds.length)}</span>
+                  <span className="block text-small text-ink-muted">{countLabel(albumItemCount(album, trashedIds))}</span>
                 </span>
                 {containsAll && <CheckIcon size={16} className="shrink-0 text-accent" />}
               </button>

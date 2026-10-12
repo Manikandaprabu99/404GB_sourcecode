@@ -120,6 +120,25 @@ export function TrashIcon(props: IconProps) {
   );
 }
 
+/** Out of Trash: an arrow curling back. */
+export function RestoreIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 12a8 8 0 1 0 2.6-5.9L4 8.5" />
+      <path d="M4 4v4.5h4.5M12 8v4l2.5 2" />
+    </Svg>
+  );
+}
+
+export function DeleteForeverIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-9 0 1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
+      <path d="m10 12 4 4m0-4-4 4" />
+    </Svg>
+  );
+}
+
 export function PlayIcon(props: IconProps) {
   return (
     <Svg {...props} fill="currentColor" strokeWidth={1.2}>

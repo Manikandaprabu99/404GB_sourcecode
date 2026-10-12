@@ -9,3 +9,6 @@ npm-debug.log*
 .DS_Store
 *.tsbuildinfo
 next-env.d.ts
+
+# On-device face models + WASM, copied from node_modules by scripts/copy-face-assets.mjs
+/public/faces/

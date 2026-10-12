@@ -48,17 +48,20 @@ export function useLibrary(repoKey: string): LibrarySnapshot {
   return { ...getServerLibrarySnapshot(), repoKey };
 }
 
-export function useAlbums(repoKey: string): AlbumsSnapshot {
+/** The albums list. With `load: false` only this device's cached copy is read (no GitHub
+ * request) until `load` turns true, e.g. a screen that needs album names only for search. */
+export function useAlbums(repoKey: string, { load = true }: { load?: boolean } = {}): AlbumsSnapshot {
   const snapshot = useSyncExternalStore(subscribeAlbums, getAlbumsSnapshot, getServerAlbumsSnapshot);
   useEffect(() => {
     ensureAlbums(repoKey);
+    if (!load) return;
     void loadAlbums();
     const onVisible = () => {
       if (document.visibilityState === "visible") void loadAlbums();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [repoKey]);
+  }, [repoKey, load]);
   if (snapshot.repoKey === repoKey) return snapshot;
   return { ...getServerAlbumsSnapshot(), repoKey };
 }

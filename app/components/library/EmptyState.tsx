@@ -7,9 +7,10 @@ import {
   PhotosIcon,
   PlayIcon,
   SearchIcon,
+  TrashIcon,
 } from "./icons";
 
-export type EmptyIllustration = "photos" | "albums" | "search" | "favorites" | "videos" | "offline" | "error";
+export type EmptyIllustration = "photos" | "albums" | "search" | "favorites" | "videos" | "trash" | "offline" | "error";
 
 export const primaryButtonClass =
   "inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-2.5 text-small font-semibold text-bg shadow-soft transition-all duration-180 ease-out-expo hover:-translate-y-0.5 hover:shadow-elevated active:translate-y-0 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50";
@@ -29,6 +30,8 @@ function iconFor(kind: EmptyIllustration): ReactNode {
       return <HeartIcon size={34} />;
     case "videos":
       return <PlayIcon size={30} />;
+    case "trash":
+      return <TrashIcon size={34} />;
     case "offline":
       return <CloudOffIcon size={34} />;
     case "error":

@@ -375,3 +375,60 @@ export function DuplicateIcon(props: IconProps) {
     </Svg>
   );
 }
+
+/** Out of Trash: an arrow curling back. */
+export function RestoreIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 12a8 8 0 1 0 2.6-5.9L4 8.5" />
+      <path d="M4 4v4.5h4.5M12 8v4l2.5 2" />
+    </Svg>
+  );
+}
+
+export function DeleteForeverIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-9 0 1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
+      <path d="m10 12 4 4m0-4-4 4" />
+    </Svg>
+  );
+}
+
+/** "On this day": a calendar page with a heart. */
+export function MemoriesIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3.5" y="5" width="17" height="15.5" rx="3" />
+      <path d="M8 3v4M16 3v4M3.5 10h17" />
+      <path d="M12 18s-3-1.8-3-3.6c0-.9.7-1.6 1.5-1.6.6 0 1.1.3 1.5.9.4-.6.9-.9 1.5-.9.8 0 1.5.7 1.5 1.6 0 1.8-3 3.6-3 3.6Z" fill="currentColor" strokeWidth={1} />
+    </Svg>
+  );
+}
+
+/** A folder, for categories without a picture yet. */
+export function FolderIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" />
+    </Svg>
+  );
+}
+
+export function PersonIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="8.5" r="3.5" />
+      <path d="M5 20a7 7 0 0 1 14 0" />
+    </Svg>
+  );
+}
+
+export function CalendarIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3.5" y="5" width="17" height="15.5" rx="3" />
+      <path d="M8 3v4M16 3v4M3.5 10h17" />
+    </Svg>
+  );
+}

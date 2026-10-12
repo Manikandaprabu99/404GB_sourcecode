@@ -23,7 +23,13 @@ interface Tab {
 
 const TABS: Tab[] = [
   { href: "/gallery", label: "Photos", Icon: PhotosIcon, matches: (p) => p === "/gallery" || p.startsWith("/gallery/") },
-  { href: "/albums", label: "Albums", Icon: AlbumsIcon, matches: (p) => p === "/albums" || p.startsWith("/albums/") },
+  {
+    href: "/albums",
+    label: "Albums",
+    Icon: AlbumsIcon,
+    // People live on the Albums screen.
+    matches: (p) => p === "/albums" || p.startsWith("/albums/") || p === "/people" || p.startsWith("/people/"),
+  },
   { href: "/upload", label: "Upload", Icon: UploadIcon, matches: (p) => p === "/upload" },
   {
     href: "/settings",

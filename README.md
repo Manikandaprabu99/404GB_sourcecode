@@ -37,4 +37,6 @@ create a storage repo.
   browser) and its IndexedDB mirror for the service worker.
 - `lib/auth` — Device Flow (via CapacitorHttp) and token checks.
 - `lib/library`, `lib/upload`, `lib/cache` — the UI's stores, upload queue and local caches.
+- `lib/faces` — People: on-device face detection and grouping, `manifest/faces.json`
+  ([`docs/FACES.md`](docs/FACES.md)).
 - `public/sw.js` — offline shell and byte-range video streaming straight from GitHub.

@@ -27,7 +27,18 @@ const FEATURES = [
 
 // Screens a signed-in session can land on directly. The app's local server answers every
 // path with this page, so a full load of /albums/view?id=… shows the home screen first.
-const APP_ROUTES = new Set(["/gallery", "/albums", "/albums/view", "/upload", "/settings", "/repos"]);
+const APP_ROUTES = new Set([
+  "/gallery",
+  "/albums",
+  "/albums/view",
+  "/albums/category",
+  "/albums/trash",
+  "/people",
+  "/people/view",
+  "/upload",
+  "/settings",
+  "/repos",
+]);
 
 function destination(hasRepo: boolean): string {
   if (!hasRepo) return "/repos";

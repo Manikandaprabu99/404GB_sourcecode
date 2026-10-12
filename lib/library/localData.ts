@@ -3,6 +3,8 @@
 // and the service worker's chunk and record caches. Best-effort; never throws.
 
 import { CACHE_DB_NAME, closeDb } from "@/lib/cache/db";
+import { closeFacesDb, FACES_DB_NAME } from "@/lib/faces/idb";
+import { resetFaces } from "@/lib/faces/store";
 import { clearBlobTextCache } from "@/lib/github/blobCache";
 import { PURGE_MESSAGE, postToServiceWorker } from "@/lib/media/stream";
 import { getUploadQueue } from "@/lib/upload/queueSingleton";
@@ -11,7 +13,7 @@ import { resetLibrary } from "./mediaStore";
 import { clearThumbUrls } from "./thumbUrls";
 
 const LOCAL_KEYS = ["404gb-pending-deletes", "404gb:uploadProgress:v2"];
-const LOCAL_PREFIXES = ["404gb-albums:"];
+const LOCAL_PREFIXES = ["404gb-albums:", "404gb-faces:"];
 const USER_CACHE_PREFIXES = ["404gb-thumbs", "404gb-chunks", "404gb-records"];
 
 function deleteDatabase(name: string, timeoutMs: number): Promise<void> {
@@ -39,6 +41,7 @@ export async function clearLocalLibraryData(): Promise<void> {
   queue.clearFinished();
   resetLibrary();
   resetAlbums();
+  resetFaces();
   clearThumbUrls();
   clearBlobTextCache();
   try {
@@ -53,7 +56,11 @@ export async function clearLocalLibraryData(): Promise<void> {
   }
   try {
     await closeDb();
-    if (typeof indexedDB !== "undefined") await deleteDatabase(CACHE_DB_NAME, 1500);
+    await closeFacesDb();
+    if (typeof indexedDB !== "undefined") {
+      await deleteDatabase(CACHE_DB_NAME, 1500);
+      await deleteDatabase(FACES_DB_NAME, 1500);
+    }
   } catch {
     // Best-effort.
   }

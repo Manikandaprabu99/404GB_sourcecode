@@ -63,14 +63,15 @@ export default function AlbumClient({ repoOwner, repoName, albumId }: AlbumClien
 
   const subtitle = useMemo(() => {
     if (!album) return "";
-    const count = items.length > 0 ? items.length : album.mediaIds.length;
+    // Before the library has loaded, the album's own list is the best count (items in Trash included).
+    const count = items.length > 0 || library.synced ? items.length : album.mediaIds.length;
     const parts = [count === 1 ? "1 item" : `${count} items`];
     if (items.length > 0) {
       const range = dateRange(mediaTime(items[0]), mediaTime(items[items.length - 1]));
       if (range) parts.push(range);
     }
     return parts.join(" · ");
-  }, [album, items]);
+  }, [album, items, library.synced]);
 
   const goBack = () =>
     closeOverlaysThen(() => {

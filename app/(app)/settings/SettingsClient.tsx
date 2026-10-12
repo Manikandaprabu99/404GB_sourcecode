@@ -7,6 +7,7 @@ import ThemeToggle from "@/app/components/ThemeToggle";
 import BackupSettings from "@/app/components/backup/BackupSettings";
 import { useConfirm } from "@/app/components/ui/ConfirmDialog";
 import DuplicateCleanup from "@/app/components/library/DuplicateCleanup";
+import PeopleSettings from "@/app/components/people/PeopleSettings";
 import PageHeader from "@/app/components/library/PageHeader";
 import ScrollArea from "@/app/components/library/ScrollArea";
 import {
@@ -19,6 +20,7 @@ import { DownloadAppIcon, ExternalIcon, GithubIcon, LogoutIcon } from "@/app/com
 import { useBackupStatus } from "@/lib/library/hooks";
 import { clearLocalLibraryData } from "@/lib/library/localData";
 import { flushPendingDeletes } from "@/lib/library/mediaStore";
+import { flushFaces } from "@/lib/faces/store";
 import { repoKeyFor } from "@/lib/cache";
 import { isNativeApp } from "@/lib/native/platform";
 import { signOut } from "@/lib/session";
@@ -55,7 +57,11 @@ export default function SettingsClient({ githubLogin, repoOwner, repoName }: Set
     });
     if (!ok) return;
     setSigningOut(true);
-    await Promise.race([flushPendingDeletes(), new Promise((resolve) => setTimeout(resolve, FLUSH_TIMEOUT_MS))]);
+    // Names and corrections not committed yet go first too.
+    await Promise.race([
+      Promise.all([flushPendingDeletes(), flushFaces()]),
+      new Promise((resolve) => setTimeout(resolve, FLUSH_TIMEOUT_MS)),
+    ]);
     await signOut();
     await clearLocalLibraryData();
     // A fresh start: every in-memory store of the previous session is gone with the page.
@@ -69,6 +75,12 @@ export default function SettingsClient({ githubLogin, repoOwner, repoName }: Set
         <SettingsSection title="Backup">
           <BackupSettings />
         </SettingsSection>
+
+        {repoOwner && repoName && (
+          <SettingsSection title="People">
+            <PeopleSettings repoKey={repoKeyFor(repoOwner, repoName)} />
+          </SettingsSection>
+        )}
 
         <SettingsSection title="Appearance">
           <SettingsCard>

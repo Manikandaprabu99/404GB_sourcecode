@@ -10,8 +10,9 @@ import { SettingsRow, rowButtonClass } from "./SettingsBlocks";
 import { useMediaActions } from "./useMediaActions";
 
 /**
- * Extra copies of byte-identical files (same SHA-256). New uploads can't
- * create these any more; they come from uploads made before duplicate checks.
+ * Extra copies of byte-identical files (same SHA-256), among the items shown
+ * (copies in Trash don't count). New uploads can't create these any more; they
+ * come from uploads made before duplicate checks.
  * Keeps the copy that's in the most albums, then a favorite, then one with a
  * capture date and preview, then the oldest.
  */
@@ -65,7 +66,7 @@ export default function DuplicateCleanup({ repoKey }: { repoKey: string }) {
     const ok = await confirm({
       title: count === 1 ? "Remove 1 duplicate copy?" : `Remove ${count.toLocaleString()} duplicate copies?`,
       message:
-        "One copy of each photo or video stays in your library: the one in your albums or marked favorite. You can undo right after.",
+        "One copy of each photo or video stays in your library: the one in your albums or marked favorite. The extra copies go to Trash for 30 days.",
       confirmLabel: "Remove duplicates",
       destructive: true,
     });

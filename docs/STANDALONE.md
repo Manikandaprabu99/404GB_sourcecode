@@ -34,6 +34,17 @@ Both sides read and write the **same repo format as before**, so existing librar
   not added (the existing id is the "duplicate of"). The check is repeated inside every commit
   attempt, so two clients uploading the same file at once still produce one entry.
 
+## Trash
+
+Deleting from the app moves items to Trash: `trashedAt` (ISO 8601) is set on the index entry and
+on `metadata/<id>.json` in one commit (`404gb: trash <id>` / `404gb: trash N items`); album
+membership is kept. Trashed entries **stay in `manifest/media-index.json`**, so the duplicate
+check above still finds them and a backup must not upload the same file again. Restoring clears
+`trashedAt` the same way (`404gb: restore …`). Deleting for good is the old delete (index entry,
+metadata file and album membership removed; `404gb: delete …`). The app deletes items trashed
+more than 30 days ago for good after its first sync of the day (`404gb: purge N items from
+trash`). Galleries, albums, search, memories and duplicate counts leave trashed items out.
+
 ## Writing: the race-safe transaction (port of `lib/github/transaction.ts`)
 
 1. `GET /repos/{o}/{r}/git/ref/heads/{branch}` → commit sha `C`.

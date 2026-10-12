@@ -9,13 +9,23 @@ import { useToast } from "@/app/components/ui/Toast";
 import { trapTab, useEscapeLayer, useFocusReturn } from "@/app/components/ui/focus";
 import { canEdit } from "@/lib/editor/canEdit";
 import { leaveForSignIn } from "@/lib/library/signedOut";
+import { daysLeftInTrash, daysLeftLabel } from "@/lib/library/trash";
 import ImageSlide from "./viewer/ImageSlide";
 import InfoSheet from "./viewer/InfoSheet";
 import VideoSlide from "./viewer/VideoSlide";
 import { BottomBar, SideArrows, StatusPill, TopBar, type OriginalChipState, type ViewerAction } from "./viewer/ViewerChrome";
 import { canDisplayOriginal, isHeic, isVideoItem, viewerTitle } from "./viewer/format";
 import { fitBox, type Size } from "./viewer/geometry";
-import { AlbumAddIcon, DownloadIcon, EditIcon, ShareIcon, Spinner, TrashIcon } from "./viewer/icons";
+import {
+  AlbumAddIcon,
+  DeleteForeverIcon,
+  DownloadIcon,
+  EditIcon,
+  RestoreIcon,
+  ShareIcon,
+  Spinner,
+  TrashIcon,
+} from "./viewer/icons";
 import {
   OriginalStore,
   describeLoadError,
@@ -48,6 +58,8 @@ export interface MediaViewerProps {
   onAddToAlbum(ids: string[]): void;
   onEdited?(newMediaId: string | null): void;
   onRemoveFromAlbum?(id: string): void;
+  /** Viewing Trash: Restore and Delete forever replace the library's actions. */
+  trash?: { onRestore(id: string): void; onDeleteForever(id: string): void };
 }
 
 interface Transfer {
@@ -91,7 +103,7 @@ const SHARE_GESTURE_MS = 4000;
  * calls back and moves to a neighbour after a removal.
  */
 export default function MediaViewer(props: MediaViewerProps) {
-  const { items, index, repoKey, onAddToAlbum, onRemoveFromAlbum } = props;
+  const { items, index, repoKey, onAddToAlbum, onRemoveFromAlbum, trash } = props;
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -616,15 +628,39 @@ export default function MediaViewer(props: MediaViewerProps) {
     if (!target || blockedRef.current) return;
     setConfirming(true);
     const confirmed = await confirm({
-      title: isVideoItem(target) ? "Delete this video?" : "Delete this photo?",
-      message: "It will be removed from your library.",
-      confirmLabel: "Delete",
+      title: isVideoItem(target) ? "Move this video to Trash?" : "Move this photo to Trash?",
+      message: "You can restore it from Trash for 30 days. After that it's deleted for good.",
+      confirmLabel: "Move to Trash",
       destructive: true,
     });
     if (!aliveRef.current) return;
     setConfirming(false);
     if (!confirmed || closingRef.current) return;
     removeCurrent(target, () => latest.current.onDelete([target.id]));
+  }, [confirm, removeCurrent]);
+
+  const restoreCurrent = useCallback(() => {
+    const target = itemsRef.current[indexRef.current];
+    const handler = latest.current.trash?.onRestore;
+    if (!target || !handler || blockedRef.current) return;
+    removeCurrent(target, () => handler(target.id));
+  }, [removeCurrent]);
+
+  const requestDeleteForever = useCallback(async () => {
+    const target = itemsRef.current[indexRef.current];
+    if (!target || !latest.current.trash || blockedRef.current) return;
+    setConfirming(true);
+    const confirmed = await confirm({
+      title: isVideoItem(target) ? "Delete this video forever?" : "Delete this photo forever?",
+      message: "It's removed from your GitHub repo right away. This can't be undone.",
+      confirmLabel: "Delete forever",
+      destructive: true,
+    });
+    if (!aliveRef.current) return;
+    setConfirming(false);
+    const handler = latest.current.trash?.onDeleteForever;
+    if (!confirmed || !handler || closingRef.current) return;
+    removeCurrent(target, () => handler(target.id));
   }, [confirm, removeCurrent]);
 
   const removeFromAlbum = useCallback(() => {
@@ -686,7 +722,12 @@ export default function MediaViewer(props: MediaViewerProps) {
     const entry = items[safeIndex + offset];
     return entry ? [{ offset, entry }] : [];
   });
-  const title = viewerTitle(item.takenAt ?? item.createdAt);
+  const baseTitle = viewerTitle(item.takenAt ?? item.createdAt);
+  const daysLeft = trash ? daysLeftInTrash(item) : 0;
+  const title =
+    trash && baseTitle
+      ? { ...baseTitle, time: `${baseTitle.time} · ${daysLeft > 0 ? `${daysLeftLabel(daysLeft)} left` : "Deleted today"}` }
+      : baseTitle;
   const downloadLabel = native ? "Save" : "Download";
   const chromeShown = chromeVisible && !closing;
   const previewOnly = !isVideo && hasThumb && !canDisplayOriginal(item);
@@ -706,21 +747,31 @@ export default function MediaViewer(props: MediaViewerProps) {
     });
 
   const actions: ViewerAction[] = [];
-  if (shareable) {
+  if (trash) {
+    actions.push({ key: "restore", label: "Restore", icon: <RestoreIcon />, onClick: restoreCurrent });
+    actions.push({
+      key: "delete-forever",
+      label: "Delete forever",
+      icon: <DeleteForeverIcon />,
+      onClick: () => void requestDeleteForever(),
+    });
+  } else if (shareable) {
     actions.push({ key: "share", label: "Share", icon: <ShareIcon />, onClick: () => share(item), disabled: transfer !== null });
   }
-  if (canEdit(item)) {
-    actions.push({ key: "edit", label: "Edit", icon: <EditIcon />, onClick: () => setEditing(true) });
+  if (!trash) {
+    if (canEdit(item)) {
+      actions.push({ key: "edit", label: "Edit", icon: <EditIcon />, onClick: () => setEditing(true) });
+    }
+    actions.push({ key: "album", label: "Add to album", icon: <AlbumAddIcon />, onClick: () => onAddToAlbum([item.id]) });
+    actions.push({
+      key: "download",
+      label: downloadLabel,
+      icon: <DownloadIcon />,
+      onClick: () => download(item),
+      disabled: transfer !== null,
+    });
+    actions.push({ key: "delete", label: "Delete", icon: <TrashIcon />, onClick: () => void requestDelete() });
   }
-  actions.push({ key: "album", label: "Add to album", icon: <AlbumAddIcon />, onClick: () => onAddToAlbum([item.id]) });
-  actions.push({
-    key: "download",
-    label: downloadLabel,
-    icon: <DownloadIcon />,
-    onClick: () => download(item),
-    disabled: transfer !== null,
-  });
-  actions.push({ key: "delete", label: "Delete", icon: <TrashIcon />, onClick: () => void requestDelete() });
 
   const status: { label: string; progress?: number | null } | null = transfer
     ? { label: transfer.label, progress: transfer.progress }
@@ -830,10 +881,10 @@ export default function MediaViewer(props: MediaViewerProps) {
           favoritePulse={favoritePulse}
           originalChip={originalChip}
           onBack={requestClose}
-          onFavorite={toggleFavorite}
+          onFavorite={trash ? undefined : toggleFavorite}
           onInfo={() => setInfoOpen(true)}
           onOriginal={previewOnly ? explainPreview : () => loadOriginalForDisplay(item, false)}
-          onRemoveFromAlbum={onRemoveFromAlbum ? removeFromAlbum : undefined}
+          onRemoveFromAlbum={onRemoveFromAlbum && !trash ? removeFromAlbum : undefined}
         />
         <SideArrows
           visible={chromeShown}

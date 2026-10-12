@@ -63,11 +63,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const nextId = useRef(1);
   const timers = useRef(new Map<number, Timer>());
   const paused = useRef(false);
+  // Toasts being hovered or focused ("hover:<id>", "focus:<id>"); any of them pauses every timer.
+  // Kept per toast because one removed from under the pointer never sends pointerleave.
+  const holds = useRef(new Set<string>());
+  const releaseRef = useRef<(id: number) => void>(() => {});
 
   const dismiss = useCallback((id: number) => {
     const timer = timers.current.get(id);
     if (timer?.handle != null) window.clearTimeout(timer.handle);
     timers.current.delete(id);
+    releaseRef.current(id);
     setToasts((current) => current.map((t) => (t.id === id ? { ...t, leaving: true } : t)));
     window.setTimeout(() => {
       setToasts((current) => current.filter((t) => t.id !== id));
@@ -136,20 +141,37 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     });
   }, [dismiss]);
 
+  const hold = useCallback(
+    (key: string, on: boolean) => {
+      if (on) holds.current.add(key);
+      else holds.current.delete(key);
+      if (holds.current.size > 0) pause();
+      else resume();
+    },
+    [pause, resume]
+  );
+  releaseRef.current = (id: number) => {
+    if (!holds.current.has(`hover:${id}`) && !holds.current.has(`focus:${id}`)) return;
+    holds.current.delete(`hover:${id}`);
+    holds.current.delete(`focus:${id}`);
+    if (holds.current.size === 0) resume();
+  };
+
   return (
     <ToastContext.Provider value={show}>
       {children}
       <div
         aria-live="polite"
         aria-relevant="additions text"
-        onPointerEnter={(e) => e.pointerType === "mouse" && pause()}
-        onPointerLeave={(e) => e.pointerType === "mouse" && resume()}
-        onFocus={pause}
-        onBlur={resume}
         className="pointer-events-none fixed inset-x-0 bottom-0 z-toast flex flex-col items-center gap-2 px-4 pb-safe-[5.5rem] sm:pb-safe-6"
       >
         {toasts.map((toast) => (
-          <ToastView key={toast.id} toast={toast} onDismiss={() => dismiss(toast.id)} />
+          <ToastView
+            key={toast.id}
+            toast={toast}
+            onDismiss={() => dismiss(toast.id)}
+            onHold={(kind, on) => hold(`${kind}:${toast.id}`, on)}
+          />
         ))}
       </div>
     </ToastContext.Provider>
@@ -176,7 +198,16 @@ function ToneIcon({ tone }: { tone: ToastTone }) {
   return null;
 }
 
-function ToastView({ toast, onDismiss }: { toast: ToastItem; onDismiss: () => void }) {
+function ToastView({
+  toast,
+  onDismiss,
+  onHold,
+}: {
+  toast: ToastItem;
+  onDismiss: () => void;
+  /** Hovered (mouse) or focused, or no longer: pauses or resumes the timers. */
+  onHold: (kind: "hover" | "focus", on: boolean) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; dx: number; captured: boolean } | null>(null);
   const tone = toast.tone ?? "default";
@@ -225,6 +256,11 @@ function ToastView({ toast, onDismiss }: { toast: ToastItem; onDismiss: () => vo
       onPointerMove={onPointerMove}
       onPointerUp={onPointerEnd}
       onPointerCancel={onPointerEnd}
+      // A toast on its way out can't hold the others (it would never send the matching leave).
+      onPointerEnter={(e) => e.pointerType === "mouse" && !toast.leaving && onHold("hover", true)}
+      onPointerLeave={(e) => e.pointerType === "mouse" && onHold("hover", false)}
+      onFocus={() => !toast.leaving && onHold("focus", true)}
+      onBlur={() => onHold("focus", false)}
       className={`pointer-events-auto flex w-full max-w-md touch-pan-y select-none items-center gap-3 rounded-xl bg-ink py-3 pl-4 text-small text-bg shadow-elevated ${
         hasAction ? "pr-2" : "pr-4"
       } ${toast.leaving ? "animate-toast-out" : "animate-toast-in"}`}
