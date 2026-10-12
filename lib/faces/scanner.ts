@@ -1,14 +1,14 @@
 // Finds faces in the library a little at a time while the app is open and visible
 // (docs/FACES.md): newest photos first, from thumbnails already on this device when it has
 // them, otherwise from GitHub within a small hourly budget. Pauses while the app is hidden,
-// while uploads/backup/sync are busy, right after the user touches the screen, and when the
-// user pauses it. One tab scans at a time. Loaded lazily (app/components/people/PeopleScanner).
+// while this page's uploads/sync are busy, right after the user touches the screen, and when
+// the user pauses it. One tab scans at a time. Loaded lazily (app/components/people/PeopleScanner).
 
 import { getDb } from "@/lib/cache/db";
 import { getCachedThumbnail } from "@/lib/cache/thumbnailCache";
 import { getContentBinary } from "@/lib/github";
 import { ApiError, withRepo } from "@/lib/library/api";
-import { getBackupSnapshot, startBackupWatcher, subscribeBackup } from "@/lib/library/backupStore";
+import { startBackupWatcher, subscribeBackup } from "@/lib/library/backupStore";
 import { getLibrarySnapshot, subscribeLibrary } from "@/lib/library/mediaStore";
 import { getWebUploadProgress, subscribeWebUploads } from "@/lib/library/uploadProgress";
 import { thumbnailPath, type MediaIndexEntry } from "@/lib/media/types";
@@ -226,10 +226,10 @@ function blocker(run: Run): { state: ScanState; reason: ScanReason | null; messa
   const librarySettled = library.synced || library.error !== null;
   const facesSettled = faces.synced || faces.error !== null;
   if (!offline && (!librarySettled || !facesSettled)) return { state: "loading", reason: "starting" };
+  // The phone's own backup runs natively off this page and doesn't compete with the scan (a
+  // big first backup would otherwise starve it for days); this page's uploads and syncs do.
   const uploads = getWebUploadProgress();
-  const backup = getBackupSnapshot().status;
-  const backupBusy = Boolean(backup?.enabled && (backup.state === "uploading" || backup.state === "scanning"));
-  if ((uploads.active && !uploads.paused) || backupBusy || library.syncing) return { state: "waiting", reason: "busy" };
+  if ((uploads.active && !uploads.paused) || library.syncing) return { state: "waiting", reason: "busy" };
   if (engineError) return { state: "unavailable", reason: null, message: engineError };
   return null;
 }

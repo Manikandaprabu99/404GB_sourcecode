@@ -73,6 +73,20 @@ export interface ItemsUploadedEvent {
   entries: MediaIndexEntry[];
 }
 
+/** Background People matching while the phone charges (docs/FACES.md "Background"). */
+export interface FaceScanStatus {
+  /** The user's choice (default on). */
+  enabled: boolean;
+  /** A background run is going right now (the app itself is closed). */
+  running: boolean;
+  /** Epoch ms when the last background run ended, or null. */
+  lastRunAt: number | null;
+  /** Photos the last background run checked. */
+  lastChecked: number;
+  /** Why the last run stopped early, or null. */
+  lastError: string | null;
+}
+
 export interface SaveProgress {
   mediaId: string;
   bytesDone: number;
@@ -97,6 +111,9 @@ export interface BackupPlugin {
   getAuth(): Promise<{ auth: BackupAuth | null }>;
   /** Forgets the token on this phone (backup pauses as "needs_sign_in"; the ledger is kept). */
   clearAuth(): Promise<BackupStatus>;
+  /** Turns background People matching (while charging, app closed) on or off. */
+  setFaceScan(options: { enabled: boolean }): Promise<FaceScanStatus>;
+  getFaceScanStatus(): Promise<FaceScanStatus>;
   /** Downloads the original into the phone's gallery (Pictures/404GB or Movies/404GB). */
   saveToDevice(options: { mediaId: string }): Promise<{ uri: string }>;
   /** Downloads the original and opens Android's share sheet. */
