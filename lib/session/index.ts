@@ -6,11 +6,15 @@
 // A 401 from GitHub ends the sign-in: the token is dropped but the account and repo are
 // kept, so signing in again returns to the same library. The dead token's fingerprint is
 // remembered, so a copy that survives somewhere can't bring the ended sign-in back.
+//
+// A page can instead be handed its session by its host (adoptHostSession: the Android app's
+// background People runner, docs/FACES.md "Background"). That session is read-only: it lives
+// in the page's memory and nothing about it is ever stored.
 
 import { applyBackupStatus } from "@/lib/library/backupStore";
 import { sha256HexOf, utf8Bytes } from "@/lib/github/bytes";
 import { setUnauthorizedListener } from "@/lib/github/client";
-import { Backup, type BackupStatus } from "@/lib/native/backup";
+import { Backup, type BackupAuth, type BackupStatus } from "@/lib/native/backup";
 import { hasNativePlugin } from "@/lib/native/platform";
 import { mirrorAuth } from "./authMirror";
 
@@ -53,6 +57,8 @@ const LOADING: Session = {
 let snapshot: Session = LOADING;
 /** True when the native Backup plugin is the source of truth. */
 let native = false;
+/** True when the page's host handed the session over (adoptHostSession): nothing is persisted. */
+let hosted = false;
 let loading: Promise<void> | null = null;
 let persistChain: Promise<void> = Promise.resolve();
 const listeners = new Set<() => void>();
@@ -172,6 +178,8 @@ function completeAuth(session: Session) {
 
 /** Writes the current session where it belongs; serialized so writes land in order. */
 function persist(): Promise<void> {
+  // A host's session is the host's to keep: not in localStorage, the plugin or the mirror.
+  if (hosted) return Promise.resolve();
   const session = snapshot;
   const run = async () => {
     const complete = completeAuth(session);
@@ -208,6 +216,7 @@ function persist(): Promise<void> {
 }
 
 async function load(): Promise<void> {
+  if (hosted) return;
   const stored = readStored();
   let next: Session = {
     status: "ready",
@@ -245,6 +254,8 @@ async function load(): Promise<void> {
   if (next.token && (await isEndedToken(next.token))) {
     next = { ...next, token: null, ended: true };
   }
+  // The host handed a session over while this read was going: that one stands.
+  if (hosted) return;
   emit(next);
   // Native storage disagrees with what the page holds (a dead copy, or a session saved before
   // the plugin could store it): bring it in line.
@@ -262,7 +273,7 @@ export function loadSession(): Promise<void> {
     });
     window.addEventListener("storage", (event) => {
       // Another tab signed in, out or switched repos.
-      if (native || event.key !== STORAGE_KEY) return;
+      if (native || hosted || event.key !== STORAGE_KEY) return;
       const stored = readStored();
       emit({
         status: "ready",
@@ -278,12 +289,40 @@ export function loadSession(): Promise<void> {
   return loading;
 }
 
+/**
+ * Uses the session the page's host hands over instead of a stored one: the Android app's
+ * background People runner (lib/faces/runner.ts). It stays in this page's memory only —
+ * never written to localStorage, the native plugin or the service worker's mirror — and this
+ * page can't change it (a 401 only ends it here; the host learns why from the run's result).
+ */
+export function adoptHostSession(auth: BackupAuth): void {
+  if (typeof window === "undefined") return;
+  hosted = true;
+  native = false;
+  loading = Promise.resolve();
+  emit({
+    status: "ready",
+    token: auth.token,
+    login: nonEmpty(auth.login),
+    owner: auth.owner,
+    repo: auth.repo,
+    // "" = the repo's default branch, looked up on first use (withRepo).
+    branch: nonEmpty(auth.branch),
+    ended: false,
+  });
+}
+
+function assertOwnSession(): void {
+  if (hosted) throw new Error("This page's GitHub session belongs to the app");
+}
+
 // ---------------------------------------------------------------------------
 // Changes
 // ---------------------------------------------------------------------------
 
 /** Signs in with a validated token. The same account gets its library back; another starts without one. */
 export async function signIn(token: string, login: string): Promise<void> {
+  assertOwnSession();
   await loadSession();
   const sameAccount = snapshot.login === login;
   try {
@@ -305,6 +344,7 @@ export async function signIn(token: string, login: string): Promise<void> {
 
 /** Makes `owner/repo` the library (in the app, the phone backs up into it from now on). */
 export async function selectRepo(owner: string, repo: string, branch: string): Promise<void> {
+  assertOwnSession();
   if (!snapshot.token) throw new Error("Sign in first");
   emit({ ...snapshot, owner, repo, branch });
   await persist();
@@ -320,7 +360,7 @@ export function setBranch(branch: string): void {
 /** GitHub rejected `token` (401): drops it, keeping the account and repo. Ignores tokens no longer in use. */
 export function endSession(token: string): void {
   if (!snapshot.token || snapshot.token !== token) return;
-  rememberEndedToken(token);
+  if (!hosted) rememberEndedToken(token);
   emit({ ...snapshot, token: null, ended: true });
   void persist();
 }
@@ -332,6 +372,7 @@ export function dropToken(): void {
 
 /** Signs this device out completely: token, account and repo choice. */
 export async function signOut(): Promise<void> {
+  assertOwnSession();
   emit({ ...LOADING, status: "ready" });
   try {
     window.localStorage.removeItem(DEAD_TOKEN_KEY);

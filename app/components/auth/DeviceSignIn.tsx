@@ -11,6 +11,7 @@ import {
 import { checkToken, TokenError } from "@/lib/auth/token";
 import { signIn } from "@/lib/session";
 import { CheckIcon, ExternalIcon } from "@/app/components/library/icons";
+import { TileGlyph } from "@/app/components/ui/StatusBadge";
 import { AuthSpinner, primaryAuthButtonClass, secondaryAuthButtonClass, textAuthButtonClass } from "./shared";
 
 type Phase =
@@ -93,7 +94,7 @@ export default function DeviceSignIn({ onCancel, onUseToken }: { onCancel: () =>
   if (phase.kind === "error") {
     return (
       <div className="flex flex-col items-center gap-4 text-center animate-fade-in">
-        <p role="alert" className="text-small text-danger">
+        <p role="alert" className="w-full rounded-control bg-danger/10 px-4 py-3 text-small text-ink dark:text-danger">
           {phase.message}
         </p>
         {!phase.disabled && (
@@ -127,17 +128,32 @@ export default function DeviceSignIn({ onCancel, onUseToken }: { onCancel: () =>
 
   return (
     <div className="flex flex-col items-center gap-4 text-center animate-fade-in-up">
-      <p className="text-small text-ink-muted">Enter this code on GitHub to sign in</p>
+      <p className="telemetry text-ink-muted">Enter this code on GitHub</p>
+      {/* docs/DESIGN.md › Sign-in: each character in its own tile, filling in one by one. */}
       <button
         type="button"
         onClick={() => void copyText(code.userCode).then(setCopied)}
         aria-label={`Sign-in code ${code.userCode.split("").join(" ")}. Tap to copy.`}
-        className="rounded-2xl border border-border-strong bg-surface-2 px-6 py-3.5 font-mono text-[1.75rem] font-semibold leading-none tracking-[0.2em] text-ink shadow-inset-hairline transition-transform duration-180 ease-out-expo active:scale-[0.97]"
+        className="flex items-center gap-1 rounded-control p-1 transition-transform duration-180 ease-out-expo active:scale-[0.97]"
       >
-        {code.userCode}
+        {code.userCode.split("").map((char, i) =>
+          char === "-" ? (
+            <span key={i} aria-hidden="true" className="w-2.5 text-center font-mono text-[1.75rem] leading-none text-ink-muted">
+              -
+            </span>
+          ) : (
+            <span
+              key={i}
+              className="flex h-12 w-8 animate-fade-in-up items-center justify-center rounded-tile bg-surface-2 font-mono text-[1.75rem] font-semibold leading-none text-ink shadow-inset-hairline dark:bg-surface-3"
+              style={{ animationDelay: `${i * 35}ms` }}
+            >
+              {char}
+            </span>
+          )
+        )}
       </button>
-      <p className={`flex items-center gap-1.5 text-micro ${copied ? "text-success" : "text-ink-faint"}`}>
-        {copied && <CheckIcon size={13} />}
+      <p className={`flex items-center gap-1.5 text-small ${copied ? "text-success" : "text-ink-muted"}`}>
+        {copied && <CheckIcon size={14} />}
         {copied ? "Copied to the clipboard" : "Tap the code to copy it"}
       </p>
       <button type="button" onClick={openGitHub} className={primaryAuthButtonClass}>
@@ -145,7 +161,7 @@ export default function DeviceSignIn({ onCancel, onUseToken }: { onCancel: () =>
         <ExternalIcon size={16} />
       </button>
       <p role="status" className="flex items-center gap-2 text-small text-ink-muted">
-        <AuthSpinner size={14} />
+        <TileGlyph state="busy" className="text-accent" />
         Waiting for you to approve on GitHub…
       </p>
       <button type="button" onClick={onCancel} className={textAuthButtonClass}>

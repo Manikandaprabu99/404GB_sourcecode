@@ -60,11 +60,13 @@ export function UploadIcon(props: IconProps) {
   );
 }
 
+/** Two sliders with square knobs, like the tile switch. */
 export function SettingsIcon(props: IconProps) {
   return (
     <Svg {...props}>
-      <path d="M10.3 3.6a1.7 1.7 0 0 1 3.4 0 1.7 1.7 0 0 0 2.6 1.1 1.7 1.7 0 0 1 2.4 2.4 1.7 1.7 0 0 0 1.1 2.6 1.7 1.7 0 0 1 0 3.4 1.7 1.7 0 0 0-1.1 2.6 1.7 1.7 0 0 1-2.4 2.4 1.7 1.7 0 0 0-2.6 1.1 1.7 1.7 0 0 1-3.4 0 1.7 1.7 0 0 0-2.6-1.1 1.7 1.7 0 0 1-2.4-2.4 1.7 1.7 0 0 0-1.1-2.6 1.7 1.7 0 0 1 0-3.4 1.7 1.7 0 0 0 1.1-2.6 1.7 1.7 0 0 1 2.4-2.4 1.7 1.7 0 0 0 2.6-1.1Z" />
-      <circle cx="12" cy="12" r="3" />
+      <path d="M3.5 7.5h8.5M18 7.5h2.5M3.5 16.5h2.5M12 16.5h8.5" />
+      <rect x="12" y="4.5" width="6" height="6" rx="1.6" />
+      <rect x="6" y="13.5" width="6" height="6" rx="1.6" />
     </Svg>
   );
 }
@@ -200,10 +202,11 @@ export function PlayIcon(props: IconProps) {
   );
 }
 
+/** A square check, the shape of the selection check on tiles. */
 export function SelectIcon(props: IconProps) {
   return (
     <Svg {...props}>
-      <circle cx="12" cy="12" r="9" />
+      <rect x="3.5" y="3.5" width="17" height="17" rx="5" />
       <path d="m8.5 12.2 2.4 2.4 4.6-4.8" />
     </Svg>
   );
@@ -429,6 +432,88 @@ export function CalendarIcon(props: IconProps) {
     <Svg {...props}>
       <rect x="3.5" y="5" width="17" height="15.5" rx="3" />
       <path d="M8 3v4M16 3v4M3.5 10h17" />
+    </Svg>
+  );
+}
+
+export function ChevronLeftIcon(props: IconProps) {
+  return (
+    <Svg strokeWidth={2} {...props}>
+      <path d="m15 6-6 6 6 6" />
+    </Svg>
+  );
+}
+
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <Svg strokeWidth={2} {...props}>
+      <path d="m6 9 6 6 6-6" />
+    </Svg>
+  );
+}
+
+export function PauseIcon(props: IconProps) {
+  return (
+    <Svg {...props} fill="currentColor" strokeWidth={0}>
+      <rect x="6" y="5" width="4.2" height="14" rx="1.4" />
+      <rect x="13.8" y="5" width="4.2" height="14" rx="1.4" />
+    </Svg>
+  );
+}
+
+export function SunIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="4.2" />
+      <path d="M12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5 7 7M17 17l1.5 1.5M5.5 18.5 7 17M17 7l1.5-1.5" />
+    </Svg>
+  );
+}
+
+export function MoonIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5Z" />
+    </Svg>
+  );
+}
+
+/** "Same as the system": a screen. */
+export function MonitorIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="4" width="18" height="12.5" rx="2.5" />
+      <path d="M8.5 20.5h7M12 16.5v4" />
+    </Svg>
+  );
+}
+
+/** Privacy notes. */
+export function ShieldIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 3.2 5 5.8v5.4c0 4.4 2.9 8.1 7 9.6 4.1-1.5 7-5.2 7-9.6V5.8Z" />
+      <path d="m9.2 12.1 2 2 3.8-4" />
+    </Svg>
+  );
+}
+
+export function InfoIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.2" />
+      <circle cx="12" cy="7.8" r="1" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+/** A git commit on its line. */
+export function CommitIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="3.6" />
+      <path d="M2.5 12h5.9M15.6 12h5.9" />
     </Svg>
   );
 }

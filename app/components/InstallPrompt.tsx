@@ -7,6 +7,7 @@
 // Renders nothing where installing isn't possible (Safari/iOS, the Android app)
 // or once the app is installed.
 import { useEffect, useState } from "react";
+import { buttonClass } from "./ui/Button";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -87,8 +88,8 @@ export default function InstallPrompt({ full }: { full?: boolean } = {}) {
       title="Install 404GB as an app"
       className={
         full
-          ? "flex min-h-[44px] w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-small text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink animate-fade-in"
-          : "inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-small text-ink-muted transition-all duration-180 ease-out-expo hover:border-border-strong hover:text-ink active:scale-95 animate-fade-in"
+          ? "flex min-h-[44px] w-full items-center gap-2 rounded-tile px-2 py-2 text-left text-small text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink animate-fade-in"
+          : `${buttonClass({ variant: "secondary", size: "sm" })} animate-fade-in`
       }
     >
       <InstallIcon />

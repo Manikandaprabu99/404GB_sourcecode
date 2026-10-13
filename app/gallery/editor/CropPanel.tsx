@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { ASPECT_IDS, type AspectId } from "@/lib/editor/types";
+import { chipClass } from "@/app/components/ui/Chip";
 import { FlipIcon, ResetIcon, RotateLeftIcon, RotateRightIcon } from "./icons";
 
 interface CropPanelProps {
@@ -68,7 +69,7 @@ function ToolButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="flex h-14 flex-1 flex-col items-center justify-center gap-1 rounded-xl text-micro font-medium text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
+      className="flex h-14 flex-1 flex-col items-center justify-center gap-1 rounded-tile text-micro font-medium text-ink-muted transition-[background-color,color,transform] duration-180 ease-out-expo hover:bg-surface-2 hover:text-ink active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
     >
       {children}
       {label}
@@ -90,7 +91,7 @@ export default function CropPanel({
       <div
         role="radiogroup"
         aria-label="Aspect ratio"
-        className="flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex items-center gap-2 overflow-x-auto px-4 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {ASPECT_IDS.map((id) => {
           const selected = id === aspect;
@@ -102,9 +103,7 @@ export default function CropPanel({
               aria-checked={selected}
               disabled={disabled}
               onClick={() => onAspectChange(id)}
-              className={`flex h-10 shrink-0 items-center gap-2 rounded-full px-3.5 text-small font-medium transition-colors duration-180 ease-out-expo disabled:opacity-50 ${
-                selected ? "bg-ink text-bg" : "bg-surface-2 text-ink-muted hover:text-ink"
-              }`}
+              className={`${chipClass(selected)} !gap-2`}
             >
               <AspectGlyph aspect={id} />
               {ASPECT_LABELS[id]}

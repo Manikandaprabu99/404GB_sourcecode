@@ -16,8 +16,8 @@ import type { MediaIndexEntry } from "@/lib/media";
 import { useIsomorphicLayoutEffect } from "@/lib/library/hooks";
 import { getGridWidth, setGridWidth } from "@/lib/library/viewState";
 import type { ZoomLevel } from "@/lib/library/zoom";
-import { CheckIcon, HeartIcon, PlayIcon } from "@/app/components/library/icons";
-import type { DateGroup } from "./dateGroups";
+import SelectCheck from "@/app/components/ui/SelectCheck";
+import { itemCount, type DateGroup } from "./dateGroups";
 import GalleryThumb from "./GalleryThumb";
 import { offsetWithin } from "./layoutMath";
 import TimelineScrubber, { type TimelineMark } from "./TimelineScrubber";
@@ -29,32 +29,45 @@ export function columnsForWidth(width: number): number {
   return 3;
 }
 
+/** docs/DESIGN.md › Shape: 2px on phones, 3px on tablets, 4px on desktop widths. */
 export function gapForWidth(width: number): number {
-  return width >= 640 ? 4 : 2;
+  return width >= 960 ? 4 : width >= 600 ? 3 : 2;
 }
 
 /** Denser grids for the month and year views, like zooming out in Google Photos. */
 const DENSITY: Record<ZoomLevel, { columns: (width: number) => number; gap: (width: number) => number; header: number }> = {
-  day: { columns: columnsForWidth, gap: gapForWidth, header: 44 },
+  day: { columns: columnsForWidth, gap: gapForWidth, header: 48 },
   month: {
     columns: (w) => (w >= 1200 ? 10 : w >= 900 ? 8 : w >= 640 ? 7 : 5),
     gap: (w) => (w >= 640 ? 3 : 2),
-    header: 56,
+    header: 58,
   },
   year: {
     columns: (w) => (w >= 1200 ? 15 : w >= 900 ? 12 : w >= 640 ? 10 : 7),
     gap: (w) => (w >= 640 ? 2 : 1),
-    header: 60,
+    header: 72,
   },
 };
 
-const HEADER_TEXT: Record<ZoomLevel, string> = {
-  day: "text-small font-semibold",
-  month: "text-h3 font-semibold",
-  year: "text-h2 font-bold tabular-nums",
+// docs/DESIGN.md › Screens › Photos: Day is an h3 title, Month the month in display 22px, Year
+// the year in the display role; each with a telemetry line on the right.
+const HEADER_ROW: Record<ZoomLevel, string> = {
+  day: "items-center",
+  month: "items-baseline pb-2",
+  year: "items-baseline pb-2.5",
+};
+const HEADER_TITLE: Record<ZoomLevel, string> = {
+  day: "text-h3",
+  month: "font-display text-[22px] font-semibold leading-tight tracking-[-0.01em]",
+  year: "font-display text-display tabular-nums",
 };
 
 export const GROUP_HEADER_HEIGHT = DENSITY.day.header;
+
+/** Height of a pinned date header in a view (the scrubber's track starts under it). */
+export function groupHeaderHeight(zoom: ZoomLevel): number {
+  return DENSITY[zoom].header;
+}
 const GROUP_GAP = 10;
 /** Pinch distance ratio that switches the view (once per gesture). */
 const PINCH_OUT_RATIO = 1.3;
@@ -66,6 +79,12 @@ const OVERSCAN_PX = 900;
 const WINDOW_STEP_PX = 240;
 const LONG_PRESS_MS = 420;
 const LONG_PRESS_SLOP_PX = 10;
+/** First paint: rows fade in this far apart (at most INTRO_ROWS of them). */
+const INTRO_STAGGER_MS = 32;
+const INTRO_ROWS = 10;
+
+// Once per page load (see the intro effect in VirtualGrid).
+let gridIntroPlayed = false;
 
 interface GroupLayout {
   group: DateGroup;
@@ -131,10 +150,38 @@ interface TileProps {
   y: number;
   width: number;
   height: number;
+  /** The year view's small tiles keep only the essentials of the badges. */
+  dense: boolean;
   selectMode: boolean;
   selected: boolean;
   /** A short label in the corner, e.g. days left in Trash. */
   badge: string | null;
+}
+
+// Tile badges: telemetry text on a dark scrim. No blur or shadow on anything in a tile, which
+// would be painted again for every tile on every frame of a scroll.
+const TILE_BADGE =
+  "telemetry pointer-events-none absolute flex h-[18px] items-center gap-1 rounded-[4px] bg-black/55 px-[5px] text-[10px] leading-none text-white";
+
+/** The favourite mark: a white heart with a thin dark edge, readable on light photos. */
+function TileHeart({ size }: { size: number }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      aria-hidden="true"
+      className="pointer-events-none absolute bottom-1.5 left-1.5"
+    >
+      <path
+        d="M12 20.3s-7.6-4.6-9.3-9.5C1.5 7.2 3.9 3.7 7.5 3.7c2 0 3.5 1.1 4.5 2.6 1-1.5 2.5-2.6 4.5-2.6 3.6 0 6 3.5 4.8 7.1-1.7 4.9-9.3 9.5-9.3 9.5Z"
+        fill="#fff"
+        stroke="rgb(0 0 0 / 0.35)"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 const Tile = memo(function Tile({
@@ -144,25 +191,28 @@ const Tile = memo(function Tile({
   y,
   width,
   height,
+  dense,
   selectMode,
   selected,
   badge,
 }: TileProps) {
   const isVideo = item.mimeType?.startsWith("video/") ?? false;
+  const duration = typeof item.duration === "number" && item.duration > 0 ? formatDuration(item.duration) : null;
   return (
     <button
       type="button"
       data-media-id={item.id}
       aria-label={`${isVideo ? "Video" : "Photo"} ${item.filename}`}
       aria-pressed={selectMode ? selected : undefined}
-      className={`group absolute left-0 top-0 overflow-hidden outline-none transition-[transform,background-color] duration-320 ease-out-expo [-webkit-touch-callout:none] focus-visible:z-[5] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
-        selected ? "bg-accent/15" : "bg-surface-2"
+      className={`group absolute left-0 top-0 overflow-hidden rounded-thumb outline-none transition-[transform,background-color] duration-320 ease-out-expo [-webkit-touch-callout:none] focus-visible:z-[5] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
+        selected ? "bg-signal/25" : "bg-surface-2"
       }`}
       style={{ width, height, transform: `translate3d(${x}px, ${y}px, 0)` }}
     >
+      {/* Picked: the picture shrinks to 0.88 with rounder corners over the signal tint. */}
       <span
         className={`block h-full w-full overflow-hidden transition-[transform,border-radius] duration-180 ease-out-expo ${
-          selected ? "scale-[0.84] rounded-lg" : ""
+          selected ? "scale-[0.88] rounded-[12px]" : "rounded-thumb"
         }`}
       >
         <GalleryThumb
@@ -176,38 +226,30 @@ const Tile = memo(function Tile({
       </span>
 
       {isVideo && (
-        <span className="pointer-events-none absolute bottom-1 right-1 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white backdrop-blur-sm">
-          <PlayIcon size={8} />
-          {typeof item.duration === "number" && item.duration > 0 ? formatDuration(item.duration) : null}
+        <span className={`${TILE_BADGE} bottom-1 right-1 ${dense ? "!px-1" : ""}`}>
+          <svg viewBox="0 0 10 10" width="7" height="7" aria-hidden="true" fill="currentColor">
+            <path d="M2 1.2v7.6a.6.6 0 0 0 .9.5l6-3.8a.6.6 0 0 0 0-1L2.9.7a.6.6 0 0 0-.9.5Z" />
+          </svg>
+          {!dense && duration}
         </span>
       )}
       {badge && (
-        <span data-badge="" className="pointer-events-none absolute right-1 top-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white backdrop-blur-sm">
+        <span data-badge="" className={`${TILE_BADGE} right-1 top-1`}>
           {badge}
         </span>
       )}
-      {item.favorite && (
-        <HeartIcon
-          filled
-          size={15}
-          strokeWidth={1.5}
-          className="pointer-events-none absolute bottom-1.5 left-1.5 text-white drop-shadow-[0_1px_2px_rgb(0_0_0/0.55)]"
-        />
-      )}
+      {item.favorite && <TileHeart size={dense ? 11 : 15} />}
 
       <span
         data-select-handle=""
-        className={`absolute left-1.5 top-1.5 flex h-[22px] w-[22px] items-center justify-center rounded-full border-2 transition-all duration-180 ease-out-expo ${
-          selected
-            ? "scale-100 border-accent bg-accent text-accent-ink"
-            : "border-white/90 bg-black/20 text-transparent"
-        } ${
+        className={`absolute left-1.5 top-1.5 flex transition-opacity duration-180 ease-out-expo ${
           selectMode
             ? "pointer-events-none opacity-100"
             : "pointer-events-none opacity-0 group-hover:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:pointer-events-auto"
         }`}
       >
-        <CheckIcon size={12} />
+        {/* A hairline outline instead of the check's soft shadow (see TILE_BADGE). */}
+        <SelectCheck selected={selected} className="!shadow-none outline outline-1 outline-black/20 [&>span]:!shadow-none" />
       </span>
       <span className="pointer-events-none absolute inset-0 bg-black/0 transition-colors duration-120 group-active:bg-black/10" />
     </button>
@@ -397,6 +439,32 @@ export default function VirtualGrid({
       animation.onfinish = () => updateWindow();
     }
   }, [zoom, layouts, metrics, scrollRef, stickyTop, updateWindow]);
+
+  // The first time a grid paints in this page load, what's in view fades in row by row from the
+  // top (docs/DESIGN.md › Motion: first viewport only). Later mounts (tab switches, windowing,
+  // another zoom level) appear at once. Opacity only: tiles are positioned with transforms.
+  useIsomorphicLayoutEffect(() => {
+    if (gridIntroPlayed || width <= 0 || layouts.length === 0) return;
+    gridIntroPlayed = true;
+    const scroller = scrollRef.current;
+    const grid = gridRef.current;
+    if (!scroller || !grid || typeof grid.animate !== "function") return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const top = scroller.getBoundingClientRect().top;
+    const bottom = top + scroller.clientHeight;
+    const step = Math.max(48, metrics.rowHeight);
+    for (const el of grid.querySelectorAll<HTMLElement>("[data-media-id], [data-group-header]")) {
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom <= top || rect.top >= bottom) continue;
+      const row = Math.min(INTRO_ROWS - 1, Math.max(0, Math.floor((rect.top - top) / step)));
+      el.animate([{ opacity: 0 }, { opacity: 1 }], {
+        duration: 280,
+        delay: row * INTRO_STAGGER_MS,
+        easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+        fill: "backwards",
+      });
+    }
+  }, [width, layouts, metrics.rowHeight, scrollRef]);
 
   // Pinch (two fingers) and Ctrl+wheel / trackpad pinch switch between views.
   useEffect(() => {
@@ -592,6 +660,7 @@ export default function VirtualGrid({
                   y={y}
                   width={metrics.widths[column]}
                   height={metrics.rowHeight}
+                  dense={zoom === "year"}
                   selectMode={selectMode}
                   selected={selectMode && selectedIds.has(item.id)}
                   badge={badgeFor ? badgeFor(item) : null}
@@ -607,25 +676,25 @@ export default function VirtualGrid({
               style={{ top: layout.top, height: layout.height }}
             >
               <div
-                className={`sticky z-10 flex items-center gap-2.5 bg-bg px-3 sm:px-1 ${zoom === "day" ? "" : "pt-2"}`}
+                data-group-header=""
+                className={`sticky z-10 flex bg-bg px-4 sm:px-0 ${zoom === "day" ? "items-center" : "items-end"}`}
                 style={{ top: stickyTop, height: metrics.header }}
               >
-                {selectMode && onToggleGroup && (
-                  <button
-                    type="button"
-                    data-group-key={group.key}
-                    aria-label={allSelected ? `Deselect ${group.label}` : `Select ${group.label}`}
-                    aria-pressed={allSelected}
-                    className={`flex h-[22px] w-[22px] shrink-0 animate-scale-in items-center justify-center rounded-full border-2 transition-colors duration-180 ${
-                      allSelected
-                        ? "border-accent bg-accent text-accent-ink"
-                        : "border-ink-faint text-transparent hover:border-ink-muted"
-                    }`}
-                  >
-                    <CheckIcon size={12} />
-                  </button>
-                )}
-                <h2 className={`truncate text-ink ${HEADER_TEXT[zoom]}`}>{group.label}</h2>
+                <div className={`flex min-w-0 flex-1 gap-3 ${HEADER_ROW[zoom]}`}>
+                  {selectMode && onToggleGroup && (
+                    <button
+                      type="button"
+                      data-group-key={group.key}
+                      aria-label={allSelected ? `Deselect ${group.label}` : `Select ${group.label}`}
+                      aria-pressed={allSelected}
+                      className="relative flex shrink-0 animate-scale-in self-center rounded-[7px] after:absolute after:-inset-[11px] after:content-['']"
+                    >
+                      <SelectCheck selected={allSelected} variant="surface" />
+                    </button>
+                  )}
+                  <h2 className={`min-w-0 flex-1 truncate text-ink ${HEADER_TITLE[zoom]}`}>{group.title ?? group.label}</h2>
+                  <span className="telemetry shrink-0 text-ink-muted">{group.meta ?? itemCount(group.items.length)}</span>
+                </div>
               </div>
               {tiles}
             </section>

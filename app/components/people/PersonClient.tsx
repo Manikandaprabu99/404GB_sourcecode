@@ -26,7 +26,10 @@ import OverflowMenu from "@/app/components/library/OverflowMenu";
 import PageHeader from "@/app/components/library/PageHeader";
 import ScrollArea from "@/app/components/library/ScrollArea";
 import SkeletonGrid from "@/app/components/library/SkeletonGrid";
+import { SelectButton, SubScreenBar, SubScreenTitle } from "@/app/components/library/SubScreenHeader";
 import { BackIcon, CoverIcon, PencilIcon } from "@/app/components/library/icons";
+import IconButton from "@/app/components/ui/IconButton";
+import { Telemetry } from "@/app/components/ui/SectionLabel";
 import FaceAvatar from "./FaceAvatar";
 import MergePeopleSheet from "./MergePeopleSheet";
 import PersonNameSheet from "./PersonNameSheet";
@@ -37,9 +40,6 @@ interface PersonClientProps {
   repoName: string;
   personId: string;
 }
-
-const iconButtonClass =
-  "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink";
 
 function photos(count: number): string {
   return count === 1 ? "1 photo" : `${count.toLocaleString()} photos`;
@@ -82,9 +82,9 @@ export default function PersonClient({ repoOwner, repoName, personId }: PersonCl
     });
 
   const backButton = (
-    <button type="button" onClick={goBack} aria-label="Back" className={iconButtonClass}>
+    <IconButton variant="ghost" label="Back" onClick={goBack}>
       <BackIcon size={20} />
-    </button>
+    </IconButton>
   );
 
   if (!person) {
@@ -208,62 +208,75 @@ export default function PersonClient({ repoOwner, repoName, personId }: PersonCl
             },
           },
         ]}
-        header={({ selectMode, startSelect }) => (
-          <div className="bg-bg pt-safe sm:pt-0">
-            <div className="flex h-16 items-center gap-1 px-2 sm:px-6">
-              {backButton}
-              <FaceAvatar repoKey={repoKey} face={current.cover} muted={current.hidden} className="ml-1 h-10 w-10" />
-              <div className="min-w-0 flex-1 pl-2">
-                {current.name ? (
-                  <h1 className="truncate text-h3 font-semibold tracking-tight text-ink">{current.name}</h1>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setNaming(true)}
-                    className="-ml-1 truncate rounded-full px-1 text-left text-h3 font-semibold tracking-tight text-accent transition-colors duration-180 hover:bg-accent/10"
-                  >
-                    Add a name
-                  </button>
-                )}
-                <p className="truncate text-micro text-ink-muted">
-                  {photos(items.length || current.mediaIds.length)}
-                  {current.hidden ? " · Hidden" : ""}
-                </p>
-              </div>
-              {items.length > 0 && !selectMode && (
+        contained
+        header={({ selectMode, startSelect, collapsed }) => (
+          <SubScreenBar
+            backLabel="Back"
+            onBack={goBack}
+            title={current.name ?? "Add a name"}
+            collapsed={collapsed}
+            actions={
+              <>
+                {items.length > 0 && !selectMode && <SelectButton onClick={startSelect} />}
+                <OverflowMenu
+                  label="Person options"
+                  items={[
+                    {
+                      key: "name",
+                      label: current.name ? "Rename" : "Add a name",
+                      icon: <PencilIcon size={18} />,
+                      onSelect: () => setNaming(true),
+                    },
+                    {
+                      key: "merge",
+                      label: "Same person as…",
+                      icon: <MergeIcon size={18} />,
+                      onSelect: () => setMerging(true),
+                    },
+                    {
+                      key: "hide",
+                      label: current.hidden ? "Show in People" : "Hide person",
+                      icon: current.hidden ? <EyeIcon size={18} /> : <EyeOffIcon size={18} />,
+                      onSelect: () => void toggleHidden(),
+                    },
+                  ]}
+                />
+              </>
+            }
+          />
+        )}
+        intro={() => (
+          // docs/DESIGN.md › People / person: the 96px face, the name in display 24, a count.
+          <SubScreenTitle
+            leading={
+              <FaceAvatar
+                repoKey={repoKey}
+                face={current.cover}
+                muted={current.hidden}
+                className="h-24 w-24 ring-1 ring-border/60"
+              />
+            }
+            title={
+              current.name ? (
+                <h1 className="line-clamp-2 break-words font-display text-[1.5rem] font-bold leading-[1.15] tracking-[-0.02em] text-ink">
+                  {current.name}
+                </h1>
+              ) : (
                 <button
                   type="button"
-                  onClick={startSelect}
-                  className="h-9 shrink-0 rounded-full px-3 text-small font-medium text-ink transition-colors duration-180 hover:bg-surface-2"
+                  onClick={() => setNaming(true)}
+                  className="-mx-1.5 self-start rounded-tile px-1.5 text-left font-display text-[1.5rem] font-bold leading-[1.15] tracking-[-0.02em] text-accent transition-colors duration-180 hover:bg-accent/10"
                 >
-                  Select
+                  Add a name
                 </button>
-              )}
-              <OverflowMenu
-                label="Person options"
-                items={[
-                  {
-                    key: "name",
-                    label: current.name ? "Rename" : "Add a name",
-                    icon: <PencilIcon size={18} />,
-                    onSelect: () => setNaming(true),
-                  },
-                  {
-                    key: "merge",
-                    label: "Same person as…",
-                    icon: <MergeIcon size={18} />,
-                    onSelect: () => setMerging(true),
-                  },
-                  {
-                    key: "hide",
-                    label: current.hidden ? "Show in People" : "Hide person",
-                    icon: current.hidden ? <EyeIcon size={18} /> : <EyeOffIcon size={18} />,
-                    onSelect: () => void toggleHidden(),
-                  },
-                ]}
+              )
+            }
+            telemetry={
+              <Telemetry
+                items={[photos(items.length || current.mediaIds.length), current.hidden ? "Hidden" : null]}
               />
-            </div>
-          </div>
+            }
+          />
         )}
       />
 

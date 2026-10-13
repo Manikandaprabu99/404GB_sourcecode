@@ -10,7 +10,7 @@
 // Requests to other origins (api.github.com from the page) are never touched.
 
 // Keep in sync with SW_VERSION in lib/media/stream.ts (the page registers /sw.js?v=<version>).
-const SW_VERSION = 3;
+const SW_VERSION = 4;
 
 const SHELL_CACHE = `404gb-shell-v${SW_VERSION}`;
 const STATIC_ASSET_CACHE = `404gb-static-v${SW_VERSION}`;

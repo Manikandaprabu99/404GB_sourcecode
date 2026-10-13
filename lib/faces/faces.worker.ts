@@ -15,6 +15,8 @@ interface InitMessage {
   modelUrl: string;
   wasmUrl: string;
   backends: string[];
+  /** False when the page's files are on the device anyway (the background runner). */
+  cacheModels?: boolean;
 }
 
 interface DetectMessage {
@@ -62,11 +64,12 @@ const scope = self as unknown as {
 
 let backends: string[] = [];
 let ready: Promise<string> | null = null;
+let cacheModels = true;
 
 /** Model files are local; on a real web host keep a copy so a visit doesn't re-download 6 MB. */
 async function modelFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const host = scope.location.hostname;
-  const cacheable = scope.location.protocol === "https:" && host !== "localhost" && scope.caches;
+  const cacheable = cacheModels && scope.location.protocol === "https:" && host !== "localhost" && scope.caches;
   if (!cacheable) return scope.fetch(input, init);
   const cache = await scope.caches!.open(MODEL_CACHE);
   const hit = await cache.match(input);
@@ -113,6 +116,7 @@ async function useBackend(from: number): Promise<string> {
 async function init(msg: InitMessage): Promise<string> {
   useWorkerEnv();
   backends = msg.backends;
+  cacheModels = msg.cacheModels !== false;
   tf.setWasmPaths?.(msg.wasmUrl);
   // Threads need cross-origin isolation, which neither the app nor a static host has.
   tf.env().set("WASM_HAS_MULTITHREAD_SUPPORT", false);

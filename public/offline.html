@@ -3,30 +3,30 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#060609" media="(prefers-color-scheme: dark)" />
-<meta name="theme-color" content="#fafafb" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#f3f2ed" media="(prefers-color-scheme: light)" />
 <title>404GB · Offline</title>
 <link rel="icon" href="/icons/brand.svg" type="image/svg+xml" />
 <style>
+  /* The app's "Missing Tile" tokens (app/globals.css), with system fonts: this page must
+   * render without the app's bundled assets. */
   :root {
     color-scheme: dark light;
-    --bg: #060609;
-    --surface: #0f0f13;
-    --border: #27272e;
-    --ink: #fafafb;
-    --muted: #a3a3ac;
-    --accent: #818cf8;
+    --bg: #0a0a0b;
+    --ink: #f2f2ee;
+    --muted: #a1a1a8;
+    --accent: #c8f542;
+    --signal: #c8f542;
+    --signal-ink: #0e1400;
     --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
     --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
   }
   @media (prefers-color-scheme: light) {
     :root {
-      --bg: #fafafb;
-      --surface: #ffffff;
-      --border: #e2e2e7;
-      --ink: #18181b;
-      --muted: #52525e;
-      --accent: #6366f1;
+      --bg: #f3f2ed;
+      --ink: #111113;
+      --muted: #55555c;
+      --accent: #4a7000;
     }
   }
   * { box-sizing: border-box; }
@@ -55,55 +55,54 @@
   .glow {
     position: absolute;
     z-index: -1;
-    top: 18%;
+    top: 14%;
     left: 50%;
-    width: 18rem;
-    height: 18rem;
-    border-radius: 9999px;
-    background: rgb(129 140 248 / 0.25);
-    filter: blur(72px);
+    width: 20rem;
+    height: 20rem;
+    background: radial-gradient(closest-side, rgb(200 245 66 / 0.1), transparent);
     transform: translateX(-50%);
   }
   .mark {
     width: 4rem;
     height: 4rem;
-    filter: drop-shadow(0 10px 28px rgb(99 102 241 / 0.4));
     animation: rise 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
-  .copy { display: flex; flex-direction: column; gap: 0.5rem; max-width: 24rem; animation: rise 320ms 60ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .missing { animation: breathe 2.4s ease-in-out infinite; }
+  .copy { display: flex; flex-direction: column; gap: 0.75rem; max-width: 24rem; animation: rise 320ms 60ms cubic-bezier(0.16, 1, 0.3, 1) both; }
   .eyebrow {
     margin: 0;
-    font: 600 0.8125rem/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace;
-    letter-spacing: 0.2em;
+    font: 500 0.6875rem/1.2 ui-monospace, "SFMono-Regular", Menlo, monospace;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--accent);
   }
-  h1 { margin: 0; font-size: 1.5rem; line-height: 1.25; letter-spacing: -0.015em; font-weight: 700; }
-  p { margin: 0; color: var(--muted); font-size: 0.9375rem; line-height: 1.55; }
+  h1 { margin: 0; font-size: 1.875rem; line-height: 1.1; letter-spacing: -0.02em; font-weight: 800; }
+  p { margin: 0; color: var(--muted); font-size: 0.9375rem; line-height: 1.5; }
   button {
-    min-height: 2.75rem;
+    min-height: 3rem;
     padding: 0 1.25rem;
     border: 0;
-    border-radius: 9999px;
-    background: var(--ink);
-    color: var(--bg);
+    border-radius: 14px;
+    background: var(--signal);
+    color: var(--signal-ink);
     font-family: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.9375rem;
     font-weight: 600;
     cursor: pointer;
-    transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms;
+    transition: transform 120ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms;
     animation: rise 320ms 120ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
-  button:active { transform: scale(0.96); }
+  button:active { transform: scale(0.97); }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
   <main>
     <div class="glow" aria-hidden="true"></div>
-    <svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a5b4fc"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs><rect width="1024" height="1024" rx="224" fill="#060609"/><rect x="232" y="232" width="256" height="256" rx="64" fill="url(#g)"/><rect x="546" y="242" width="236" height="236" rx="56" fill="none" stroke="#818cf8" stroke-width="20" stroke-dasharray="40 28"/><rect x="232" y="536" width="256" height="256" rx="64" fill="url(#g)"/><rect x="536" y="536" width="256" height="256" rx="64" fill="url(#g)"/></svg>
+    <svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" aria-hidden="true"><rect width="1024" height="1024" rx="224" fill="#0A0A0B"/><rect x="232" y="232" width="256" height="256" rx="64" fill="#C8F542"/><rect class="missing" x="546" y="242" width="236" height="236" rx="56" fill="none" stroke="#C8F542" stroke-width="20" stroke-dasharray="40 28"/><rect x="232" y="536" width="256" height="256" rx="64" fill="#C8F542"/><rect x="536" y="536" width="256" height="256" rx="64" fill="#C8F542"/></svg>
     <div class="copy">
       <p class="eyebrow">Offline</p>
       <h1>You&rsquo;re offline</h1>

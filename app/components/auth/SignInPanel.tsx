@@ -9,8 +9,9 @@ import { primaryAuthButtonClass, secondaryAuthButtonClass, textAuthButtonClass }
 
 type Mode = "choose" | "device" | "token";
 
+// A card on the page (docs/DESIGN.md › Cards); no glass: blur is for fixed chrome only.
 const cardClass =
-  "w-full rounded-2xl border border-border bg-surface/80 p-5 shadow-soft backdrop-blur sm:p-6 animate-fade-in-up";
+  "w-full rounded-card bg-surface p-5 shadow-soft animate-fade-in-up dark:border dark:border-border/60 dark:shadow-none sm:p-6";
 
 /**
  * The ways to sign in: "Sign in with GitHub" (Device Flow, only inside the app and only
@@ -22,8 +23,11 @@ export default function SignInPanel({ lastLogin }: { lastLogin: string | null })
   const [mode, setMode] = useState<Mode>(deviceFlow ? "choose" : "token");
 
   const hint = lastLogin ? (
-    <p className="mb-4 text-center text-small text-ink-muted">
-      Last signed in as <span className="font-mono text-ink">@{lastLogin}</span>
+    <p className="mb-4 flex items-center justify-center gap-2 text-small text-ink-muted">
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-[2px] bg-signal" />
+      <span>
+        Last signed in as <span className="font-mono text-ink">@{lastLogin}</span>
+      </span>
     </p>
   ) : null;
 

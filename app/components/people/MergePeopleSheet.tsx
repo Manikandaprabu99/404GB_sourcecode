@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { personDistance, type PersonDetails } from "@/lib/faces/people";
 import Sheet from "@/app/components/ui/Sheet";
 import { primaryButtonClass, secondaryButtonClass } from "@/app/components/library/EmptyState";
-import { CheckIcon } from "@/app/components/library/icons";
+import SelectCheck from "@/app/components/ui/SelectCheck";
 import FaceAvatar from "./FaceAvatar";
 
 const PAGE = 40;
@@ -71,24 +71,25 @@ export default function MergePeopleSheet({ open, repoKey, person, people, onMerg
                     type="button"
                     aria-pressed={on}
                     onClick={() => toggle(other.id)}
-                    className="group flex w-full flex-col items-center rounded-xl p-1 outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    className="group flex w-full flex-col items-center rounded-tile p-1 focus-visible:outline-none"
                   >
                     <span className="relative">
+                      {/* Picked: the People colour around the face and the square check. */}
                       <FaceAvatar
                         repoKey={repoKey}
                         face={other.cover}
                         muted={other.hidden}
-                        className={`h-16 w-16 transition-transform duration-180 ease-out-expo group-active:scale-95 ${
-                          on ? "ring-[3px] ring-accent ring-offset-2 ring-offset-surface" : ""
+                        className={`h-16 w-16 ring-offset-2 ring-offset-surface transition-[transform,box-shadow] duration-180 ease-out-expo group-focus-visible:ring-2 group-focus-visible:ring-accent group-active:scale-95 ${
+                          on ? "!ring-[3px] !ring-accent-2" : ""
                         }`}
                       />
                       {on && (
-                        <span className="absolute -right-0.5 -top-0.5 flex h-6 w-6 animate-scale-in items-center justify-center rounded-full bg-accent text-accent-ink shadow-soft">
-                          <CheckIcon size={14} />
+                        <span className="absolute -right-1 -top-1">
+                          <SelectCheck selected variant="surface" />
                         </span>
                       )}
                     </span>
-                    <span className={`mt-1 w-full truncate text-center text-micro ${other.name ? "text-ink" : "text-ink-muted"}`}>
+                    <span className={`mt-1.5 w-full truncate text-center text-small ${other.name ? "text-ink" : "text-ink-muted"}`}>
                       {other.name ?? photos(other.mediaIds.length)}
                     </span>
                   </button>
@@ -102,7 +103,7 @@ export default function MergePeopleSheet({ open, repoKey, person, people, onMerg
             Show more
           </button>
         )}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" onClick={onClose} className={secondaryButtonClass}>
             Cancel
           </button>

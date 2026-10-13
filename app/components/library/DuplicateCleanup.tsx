@@ -6,7 +6,7 @@ import type { Album } from "@/lib/albums/types";
 import { useAlbums, useLibrary } from "@/lib/library/hooks";
 import { useConfirm } from "@/app/components/ui/ConfirmDialog";
 import { DuplicateIcon } from "./icons";
-import { SettingsRow, rowButtonClass } from "./SettingsBlocks";
+import { IconTile, cardClass, rowButtonClass } from "./SettingsBlocks";
 import { useMediaActions } from "./useMediaActions";
 
 /**
@@ -49,7 +49,7 @@ export function findDuplicateCopies(
   return { extraIds, files };
 }
 
-/** Settings row that finds and removes duplicate copies in the library. */
+/** Settings › Library tile that finds and removes duplicate copies in the library. */
 export default function DuplicateCleanup({ repoKey }: { repoKey: string }) {
   const library = useLibrary(repoKey);
   const albums = useAlbums(repoKey);
@@ -74,25 +74,30 @@ export default function DuplicateCleanup({ repoKey }: { repoKey: string }) {
   }
 
   return (
-    <SettingsRow
-      icon={<DuplicateIcon size={18} />}
-      title="Duplicates"
-      description={
-        !ready
-          ? "Checking your library…"
-          : count === 0
-            ? "None. Every photo and video is in your library once, and new uploads are checked so it stays that way."
-            : `${count.toLocaleString()} extra ${count === 1 ? "copy" : "copies"} of ${files.toLocaleString()} ${
-                files === 1 ? "file" : "files"
-              }, uploaded before duplicate checks existed.`
-      }
-      trailing={
-        ready && count > 0 ? (
-          <button type="button" onClick={() => void removeExtras()} className={rowButtonClass}>
-            Remove
-          </button>
-        ) : undefined
-      }
-    />
+    <div className={`flex min-h-[120px] min-w-0 flex-col items-start p-4 ${cardClass}`}>
+      <IconTile tone={ready && count > 0 ? "warning" : "neutral"}>
+        <DuplicateIcon size={18} />
+      </IconTile>
+      <span className="mt-auto flex min-w-0 flex-col gap-1 pt-4">
+        <span className="text-body font-medium text-ink">Duplicates</span>
+        <span className="telemetry text-ink-muted">
+          {!ready ? "Checking…" : count === 0 ? "0 extra" : `${count.toLocaleString()} extra`}
+        </span>
+        {ready && (
+          <span className="mt-1 animate-fade-in text-small text-ink-muted">
+            {count === 0
+              ? "None. Every photo and video is in your library once."
+              : `${count.toLocaleString()} extra ${count === 1 ? "copy" : "copies"} of ${files.toLocaleString()} ${
+                  files === 1 ? "file" : "files"
+                }, from uploads made before duplicate checks.`}
+          </span>
+        )}
+      </span>
+      {ready && count > 0 && (
+        <button type="button" onClick={() => void removeExtras()} className={`${rowButtonClass} mt-3`}>
+          Remove
+        </button>
+      )}
+    </div>
   );
 }

@@ -2,6 +2,57 @@
 
 import { useId } from "react";
 
+export interface TileSwitchProps {
+  checked: boolean;
+  onChange(checked: boolean): void;
+  disabled?: boolean;
+  id?: string;
+  /** Accessible name, unless `labelledBy` points at visible text. */
+  label?: string;
+  labelledBy?: string;
+  describedBy?: string;
+  className?: string;
+}
+
+/**
+ * The bare tile switch (docs/DESIGN.md › Switch): a 46×28 track with a rounded-square knob,
+ * signal when on. A real role="switch"; the hit area is 44px tall.
+ */
+export function TileSwitch({
+  checked,
+  onChange,
+  disabled,
+  id,
+  label,
+  labelledBy,
+  describedBy,
+  className,
+}: TileSwitchProps) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={labelledBy ? undefined : label}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`group relative inline-flex h-7 w-[46px] shrink-0 items-center rounded-[9px] transition-colors duration-200 ease-out-expo after:absolute after:-inset-x-1 after:-inset-y-2 after:content-[''] disabled:cursor-not-allowed ${
+        checked ? "bg-signal" : "bg-surface-3"
+      } ${className ?? ""}`}
+    >
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute left-[3px] top-[3px] h-[22px] w-[22px] rounded-[7px] transition-[transform,background-color] duration-200 ease-spring group-active:scale-90 ${
+          checked ? "translate-x-[18px] bg-signal-ink" : "translate-x-0 bg-ink-muted dark:bg-ink-faint"
+        }`}
+      />
+    </button>
+  );
+}
+
 export interface SwitchProps {
   checked: boolean;
   onChange(checked: boolean): void;
@@ -33,26 +84,14 @@ export default function Switch({ checked, onChange, label, description, disabled
           </span>
         )}
       </span>
-      <button
+      <TileSwitch
         id={id}
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-labelledby={labelId}
-        aria-describedby={description ? descriptionId : undefined}
+        checked={checked}
+        onChange={onChange}
         disabled={disabled}
-        onClick={() => onChange(!checked)}
-        className={`group relative inline-flex h-7 w-12 shrink-0 items-center overflow-hidden rounded-full border transition-colors duration-250 ease-out-expo disabled:cursor-not-allowed ${
-          checked ? "border-accent bg-accent" : "border-border-strong bg-surface-3"
-        }`}
-      >
-        <span
-          aria-hidden="true"
-          className={`pointer-events-none absolute left-[3px] top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-white shadow-[0_1px_3px_rgb(0_0_0/0.3)] transition-transform duration-250 ease-spring group-active:scale-90 ${
-            checked ? "translate-x-5" : "translate-x-0"
-          }`}
-        />
-      </button>
+        labelledBy={labelId}
+        describedBy={description ? descriptionId : undefined}
+      />
     </label>
   );
 }

@@ -6,5 +6,5 @@ import UploadClient from "./UploadClient";
 export default function UploadPage() {
   const session = useRequiredSession(true);
   if (!session) return null;
-  return <UploadClient />;
+  return <UploadClient repo={`${session.owner}/${session.repo}`} />;
 }

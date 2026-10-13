@@ -233,24 +233,24 @@ function VideoSlide({
             onClick={phase === "loading" ? undefined : play}
             aria-label={phase === "loading" ? "Loading video" : "Play video"}
             tabIndex={active ? 0 : -1}
-            className={`flex h-[72px] w-[72px] items-center justify-center rounded-full bg-black/45 text-white shadow-elevated ring-1 ring-white/25 backdrop-blur-md transition-transform duration-180 ease-out-expo active:scale-90 ${
+            className={`flex h-[72px] w-[72px] items-center justify-center rounded-full bg-black/55 text-white shadow-elevated ring-1 ring-white/25 transition-transform duration-180 ease-out-expo active:scale-[0.94] ${
               active ? "pointer-events-auto" : ""
             }`}
           >
             {phase === "loading" ? <ProgressRing value={progress} size={30} /> : <PlayIcon size={30} className="translate-x-0.5" />}
           </button>
           {active && phase === "loading" && (
-            <p className="rounded-full bg-black/45 px-3 py-1 text-small text-white/85 backdrop-blur-md" role="status">
+            <p className="rounded-tile bg-black/60 px-3 py-1.5 text-small text-white/85" role="status">
               Loading video{progress != null ? ` · ${Math.round(progress * 100)}%` : "…"}
             </p>
           )}
           {active && phase === "error" && error && (
-            <div className="pointer-events-auto flex max-w-xs flex-col items-center gap-3 rounded-2xl bg-black/55 px-4 py-3 backdrop-blur-md">
+            <div className="pointer-events-auto flex max-w-xs flex-col items-center gap-3 rounded-card bg-black/70 px-4 py-3.5">
               <p className="text-small text-white/85">{error}</p>
               <button
                 type="button"
                 onClick={onDownload}
-                className="inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-small font-semibold text-black transition-transform duration-180 active:scale-95"
+                className="inline-flex h-10 items-center gap-2 rounded-control bg-white px-4 text-small font-semibold text-black transition-transform duration-120 active:scale-[0.97]"
               >
                 <DownloadIcon size={16} />
                 {downloadLabel}
@@ -258,7 +258,7 @@ function VideoSlide({
             </div>
           )}
           {phase === "poster" && duration > 0 && (
-            <span className="rounded-full bg-black/45 px-2.5 py-0.5 text-micro font-medium tabular-nums text-white/90 backdrop-blur-md">
+            <span className="telemetry rounded-tile-sm bg-black/55 px-2 py-1 text-white/90">
               {formatDuration(duration)}
             </span>
           )}
@@ -271,7 +271,7 @@ function VideoSlide({
             type="button"
             onClick={togglePlay}
             aria-label={paused ? "Play" : "Pause"}
-            className={`absolute left-1/2 top-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/45 text-white ring-1 ring-white/20 backdrop-blur-md transition-opacity duration-250 active:scale-90 ${
+            className={`absolute left-1/2 top-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ring-1 ring-white/20 transition-opacity duration-250 active:scale-[0.94] ${
               paused || buffering || controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
             }`}
           >
@@ -290,7 +290,7 @@ function VideoSlide({
               controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
             }`}
           >
-            <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-full bg-black/40 py-0.5 pl-4 pr-1 text-micro font-medium tabular-nums text-white backdrop-blur-md">
+            <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-control bg-black/60 py-0.5 pl-3.5 pr-1 font-mono text-[11px] tabular-nums text-white ring-1 ring-white/10">
               <span className="w-9 shrink-0 text-right">{formatDuration(time)}</span>
               <input
                 type="range"
@@ -324,7 +324,7 @@ function VideoSlide({
                   if (video) video.muted = !video.muted;
                 }}
                 aria-label={muted ? "Unmute" : "Mute"}
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-180 hover:bg-white/10"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[11px] transition-colors duration-180 hover:bg-white/10"
               >
                 <VolumeIcon muted={muted} size={20} />
               </button>

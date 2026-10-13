@@ -126,6 +126,8 @@ const scheduledTrash = new Set<ScheduledTrash>();
 let overrideToken = 0;
 /** Repo + day the automatic Trash cleanup was tried on this page. */
 let purgeAttempt: string | null = null;
+/** Off on pages that only read the library (the background People runner). */
+let trashCleanup = true;
 
 let snapshot: LibrarySnapshot = EMPTY_SNAPSHOT;
 let itemsDirty = true;
@@ -705,12 +707,18 @@ function writePurgeDay(key: string, day: string): void {
   }
 }
 
+/** For pages that only read the library (the background People runner, lib/faces/runner.ts):
+ * the daily Trash cleanup is left to the app. */
+export function disableTrashCleanup(): void {
+  trashCleanup = false;
+}
+
 /** Once a day (after a sync), deletes for good what has been in Trash for 30 days, in one
  * commit per batch. Best effort: a failure waits for the next app start. */
 function purgeExpiredTrash(key: string, gen: number): void {
   const day = localDayKey(new Date());
   const attempt = `${key}|${day}`;
-  if (purgeAttempt === attempt || gen !== generation) return;
+  if (!trashCleanup || purgeAttempt === attempt || gen !== generation) return;
   purgeAttempt = attempt;
   if (readPurgeDays()[key] === day) return;
   const now = Date.now();

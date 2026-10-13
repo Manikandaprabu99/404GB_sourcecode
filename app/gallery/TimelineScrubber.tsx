@@ -252,11 +252,12 @@ export default function TimelineScrubber({ scrollRef, gridRef, marks, total, sti
 
   return (
     <div ref={rootRef} className="absolute inset-0">
+      {/* Year markers in the telemetry face. No blur: the grid scrolls under them. */}
       {showMarkers &&
         markers.map((marker) => (
           <span
             key={marker.label}
-            className="pointer-events-none absolute right-11 -translate-y-1/2 animate-fade-in rounded-full bg-surface/90 px-2 py-0.5 text-micro font-semibold tabular-nums text-ink-muted shadow-soft backdrop-blur-sm"
+            className="telemetry pointer-events-none absolute right-11 -translate-y-1/2 animate-fade-in rounded-[5px] border border-border/60 bg-surface/95 px-1.5 py-[3px] text-ink-muted shadow-soft"
             style={{ top: marker.y }}
           >
             {marker.label}
@@ -284,7 +285,7 @@ export default function TimelineScrubber({ scrollRef, gridRef, marks, total, sti
         aria-valuenow={Math.round(
           scrollRef.current ? (scrollRef.current.scrollTop / Math.max(1, scrollRef.current.scrollHeight - scrollRef.current.clientHeight)) * 100 : 0
         )}
-        className={`absolute right-1 top-0 flex h-10 items-center transition-opacity duration-250 ${
+        className={`absolute right-1.5 top-0 flex h-10 items-center transition-opacity duration-250 ${
           shown ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
         }`}
         style={{ touchAction: "none" }}
@@ -292,18 +293,23 @@ export default function TimelineScrubber({ scrollRef, gridRef, marks, total, sti
         onPointerLeave={finePointer ? () => setHover(false) : undefined}
         {...dragHandlers}
       >
+        {/* The month being scrubbed to, in a signal bubble (OCT 2024). */}
         {dragging && label && (
-          <span className="pointer-events-none mr-2 animate-scale-in whitespace-nowrap rounded-full bg-ink px-3.5 py-2 text-small font-semibold text-bg shadow-elevated">
+          <span className="telemetry pointer-events-none mr-2 flex h-9 animate-scale-in items-center whitespace-nowrap rounded-tile bg-signal px-3 text-[12px] text-signal-ink shadow-elevated">
             {label}
           </span>
         )}
+        {/* The handle is a tile, like every knob in the app: 30×40, two chevrons. */}
         <span
-          className={`flex h-10 w-8 cursor-grab flex-col items-center justify-center rounded-full border border-border bg-surface-2/95 text-ink-muted shadow-soft backdrop-blur-sm transition-transform duration-180 ease-out-expo active:cursor-grabbing ${
-            dragging ? "scale-110 text-ink" : ""
+          className={`flex h-10 w-[30px] cursor-grab flex-col items-center justify-center gap-[3px] rounded-tile border border-border-strong/60 bg-surface-3 text-ink-muted shadow-soft transition-[transform,color] duration-180 ease-out-expo active:cursor-grabbing ${
+            dragging ? "scale-105 text-ink" : ""
           }`}
         >
-          <svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor">
-            <path d="M6 1.5 10 6H2zM6 14.5 2 10h8z" />
+          <svg viewBox="0 0 12 7" width="11" height="6" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1.5 5.5 6 1.5l4.5 4" />
+          </svg>
+          <svg viewBox="0 0 12 7" width="11" height="6" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1.5 1.5 6 5.5l4.5-4" />
           </svg>
         </span>
       </div>

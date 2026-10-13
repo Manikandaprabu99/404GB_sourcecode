@@ -24,15 +24,16 @@ interface InfoSheetProps {
   loading: boolean;
 }
 
+// docs/DESIGN.md › List rows: a 36px icon tile, the label in the telemetry face.
 function Row({ icon, label, children }: { icon: ReactNode; label: string; children: ReactNode }) {
   return (
-    <div className="flex items-start gap-4 py-3">
-      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-2 text-ink-muted">
+    <div className="flex min-h-[56px] items-start gap-4 py-3">
+      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-tile bg-surface-2 text-ink-muted">
         {icon}
       </span>
       <div className="min-w-0 flex-1">
-        <dt className="text-micro font-medium uppercase tracking-wide text-ink-faint">{label}</dt>
-        <dd className="mt-0.5 break-words text-body text-ink">{children}</dd>
+        <dt className="telemetry text-ink-muted">{label}</dt>
+        <dd className="mt-1 break-words text-body tabular-nums text-ink">{children}</dd>
       </div>
     </div>
   );

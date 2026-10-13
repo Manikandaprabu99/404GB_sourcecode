@@ -23,7 +23,13 @@ interface SelectionBarProps {
   actions: SelectionAction[];
 }
 
-/** Floating action bar for a selection, pinned above the bottom tab bar. */
+// docs/DESIGN.md › Selection bar: surface-3 on ink, inverted (ink) on paper. These are the
+// paper colours, with dark: overrides back to the surface scale.
+const BAR = "bg-ink text-bg dark:border dark:border-border/60 dark:bg-surface-3 dark:text-ink";
+const HOVER = "hover:bg-bg/10 dark:hover:bg-ink/10";
+const BUTTON = `relative flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-md text-small font-medium transition-[background-color,color,opacity,transform] duration-120 ease-out-expo active:scale-[0.94] disabled:pointer-events-none disabled:opacity-35 ${HOVER}`;
+
+/** Floating action bar for a selection, pinned above the floating tab bar. */
 export default function SelectionBar({
   count,
   allSelected,
@@ -57,27 +63,27 @@ export default function SelectionBar({
     <div
       role="toolbar"
       aria-label="Selected items"
-      className="fixed inset-x-2 bottom-safe-[4.5rem] z-nav mx-auto max-w-2xl animate-fade-in-up sm:bottom-safe-6"
+      className="fixed bottom-safe-[5.25rem] left-safe-3 right-safe-3 z-nav mx-auto max-w-2xl animate-fade-in-up sm:bottom-safe-6"
     >
-      <div className="flex h-14 items-center gap-0.5 rounded-2xl border border-border bg-surface/95 px-1.5 shadow-elevated backdrop-blur-xl">
+      <div className={`flex h-14 items-center gap-0.5 rounded-card px-1.5 shadow-elevated ${BAR}`}>
         <button
           type="button"
           onClick={onCancel}
           aria-label="Cancel selection"
           title="Cancel"
-          className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full px-2.5 text-small font-medium text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink"
+          className={`${BUTTON} w-11 sm:w-auto sm:px-3`}
         >
           <CloseIcon size={18} />
           <span className="hidden sm:inline">Cancel</span>
         </button>
-        <p aria-live="polite" className="shrink-0 pl-0.5 text-small font-semibold tabular-nums text-ink">
+        <p aria-live="polite" className="telemetry shrink-0 pl-1 pr-1">
           {count}
           <span className="hidden min-[380px]:inline"> selected</span>
         </p>
         <button
           type="button"
           onClick={allSelected ? onDeselectAll : onSelectAll}
-          className="shrink-0 rounded-full px-2.5 py-1.5 text-small font-medium text-accent transition-colors duration-180 hover:bg-accent/10"
+          className={`${BUTTON} px-2.5 font-semibold text-accent-inverse dark:text-accent`}
         >
           {allSelected ? "Deselect all" : "Select all"}
         </button>
@@ -91,9 +97,8 @@ export default function SelectionBar({
               disabled={action.disabled || count === 0}
               aria-label={action.label}
               title={action.label}
-              className={`flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full px-2.5 text-small font-medium transition-colors duration-180 active:scale-95 disabled:pointer-events-none disabled:opacity-35 ${
-                action.tone === "danger" ? "text-danger hover:bg-danger/10" : "text-ink hover:bg-surface-2"
-              }`}
+              // On the inverted (ink) bar of the paper theme, the ink theme's danger reads.
+              className={`${BUTTON} min-w-[44px] px-2.5 ${action.tone === "danger" ? "text-[rgb(255_90_110)] dark:text-danger" : ""}`}
             >
               {action.icon}
               <span className="hidden md:inline">{action.label}</span>
@@ -109,14 +114,14 @@ export default function SelectionBar({
                 aria-label="More actions"
                 aria-expanded={menuOpen}
                 aria-haspopup="menu"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink transition-colors duration-180 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-35"
+                className={`${BUTTON} w-11`}
               >
                 <MoreIcon size={18} />
               </button>
               {menuOpen && (
                 <div
                   role="menu"
-                  className="absolute bottom-full right-0 mb-2 w-56 origin-bottom-right animate-scale-in rounded-xl border border-border bg-surface p-1.5 shadow-elevated"
+                  className="absolute bottom-full right-0 mb-2 w-56 origin-bottom-right animate-scale-in rounded-lg border border-border/60 bg-surface p-1.5 text-ink shadow-elevated"
                 >
                   {secondary.map((action) => (
                     <button
@@ -128,7 +133,7 @@ export default function SelectionBar({
                         setMenuOpen(false);
                         action.onClick();
                       }}
-                      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-small font-medium transition-colors duration-180 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-40 ${
+                      className={`flex min-h-[44px] w-full items-center gap-3 rounded-tile px-3 text-left text-body font-medium transition-colors duration-180 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-40 ${
                         action.tone === "danger" ? "text-danger" : "text-ink"
                       }`}
                     >

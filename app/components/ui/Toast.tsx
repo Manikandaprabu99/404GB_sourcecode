@@ -178,21 +178,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// Tone marks are small tiles, like everything else that signals state.
 function ToneIcon({ tone }: { tone: ToastTone }) {
   if (tone === "success") {
     return (
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-success">
-        <circle cx="12" cy="12" r="9" />
-        <path d="m8.5 12.2 2.4 2.4 4.6-5" />
-      </svg>
+      <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-success/15 text-success">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round">
+          <path d="m6.5 12.5 3.6 3.6 7.4-8" />
+        </svg>
+      </span>
     );
   }
   if (tone === "error") {
     return (
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-danger">
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 7.5v5.5M12 16.4v.1" />
-      </svg>
+      <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-danger/15 text-danger">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round">
+          <path d="M12 6.5v7M12 17.5v.1" />
+        </svg>
+      </span>
     );
   }
   return null;
@@ -261,16 +264,17 @@ function ToastView({
       onPointerLeave={(e) => e.pointerType === "mouse" && onHold("hover", false)}
       onFocus={() => !toast.leaving && onHold("focus", true)}
       onBlur={() => onHold("focus", false)}
-      className={`pointer-events-auto flex w-full max-w-md touch-pan-y select-none items-center gap-3 rounded-xl bg-ink py-3 pl-4 text-small text-bg shadow-elevated ${
-        hasAction ? "pr-2" : "pr-4"
-      } ${toast.leaving ? "animate-toast-out" : "animate-toast-in"}`}
+      className={`pointer-events-auto flex min-h-[52px] w-full max-w-md touch-pan-y select-none items-center gap-3 rounded-lg border border-border/60 bg-surface-3/90 py-2.5 text-small font-medium text-ink shadow-elevated backdrop-blur-[16px] backdrop-saturate-[1.3] ${
+        hasAction ? "pr-1.5" : "pr-4"
+      } ${tone === "default" ? "pl-4" : "pl-3"} ${toast.leaving ? "animate-toast-out" : "animate-toast-in"}`}
     >
       <ToneIcon tone={tone} />
       <span className="min-w-0 flex-1 break-words">{toast.message}</span>
       {hasAction && (
         <button
           type="button"
-          className="-my-2 shrink-0 rounded-lg px-3 py-3 text-small font-semibold text-accent-inverse transition-colors duration-180 hover:bg-bg/10"
+          // accent-strong: the paper theme's accent is under 4.5:1 on surface-3.
+          className="-my-1 min-h-[44px] shrink-0 rounded-tile px-3 text-small font-semibold text-accent-strong transition-colors duration-180 hover:bg-bg/40 dark:text-accent"
           onClick={() => {
             toast.onAction?.();
             onDismiss();

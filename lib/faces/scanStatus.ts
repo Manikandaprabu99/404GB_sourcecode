@@ -22,7 +22,9 @@ export type ScanReason =
   | "other-tab"
   | "other-model"
   | "signed-out"
-  | "starting";
+  | "starting"
+  /** The phone's background run (while charging, app closed) is still finishing. */
+  | "background";
 
 export interface ScanStatus {
   repoKey: string | null;
@@ -38,6 +40,8 @@ export interface ScanStatus {
   message: string | null;
   paused: boolean;
   mobileData: boolean;
+  /** This phone also finds people while it charges with the app closed (Android app, switch on). */
+  background: boolean;
 }
 
 const PAUSED_KEY = "404gb-faces:paused";
@@ -80,6 +84,7 @@ const SERVER: ScanStatus = {
   message: null,
   paused: false,
   mobileData: false,
+  background: false,
 };
 
 let status: ScanStatus = SERVER;

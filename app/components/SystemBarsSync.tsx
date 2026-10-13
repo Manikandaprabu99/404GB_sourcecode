@@ -12,7 +12,8 @@ import { SystemBars, SystemBarsStyle } from "@capacitor/core";
 import { isNativeApp } from "@/lib/native/platform";
 import { THEME_STORAGE_KEY } from "./ThemeToggle";
 
-const THEME_COLORS = { light: "#fafafb", dark: "#060609" } as const;
+// The --bg tokens of globals.css ("Paper" and "Ink").
+const THEME_COLORS = { light: "#f3f2ed", dark: "#0a0a0b" } as const;
 const OVERLAY_COLOR = "#000000";
 
 function currentTheme(): "light" | "dark" {

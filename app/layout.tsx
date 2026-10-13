@@ -7,24 +7,33 @@ import SystemBarsSync from "./components/SystemBarsSync";
 import { ToastProvider } from "./components/ui/Toast";
 import { ConfirmProvider } from "./components/ui/ConfirmDialog";
 
-// Self-hosted as static files checked into app/fonts/ (Inter and JetBrains
-// Mono, latin subset, variable-weight woff2) rather than next/font/google —
-// this needs zero network access at build time (some CI/sandboxed build
-// environments can't reach fonts.googleapis.com, e.g. behind a TLS-
-// intercepting proxy) and, being served from this app's own origin either
-// way, keeps working offline as an installed PWA. Exposed as CSS variables
-// so globals.css/tailwind.config.js can reference `font-sans`/`font-mono`.
-const inter = localFont({
-  src: "./fonts/inter-latin-variable.woff2",
-  variable: "--font-sans",
-  weight: "100 900",
+// Self-hosted as static files checked into app/fonts/ (latin subset, variable-weight
+// woff2, SIL OFL — licences next to them) rather than next/font/google: this needs zero
+// network access at build time (some CI/sandboxed build environments can't reach
+// fonts.googleapis.com, e.g. behind a TLS-intercepting proxy) and, being served from this
+// app's own origin either way, keeps working offline as an installed PWA. Exposed as CSS
+// variables so tailwind.config.js can offer `font-display` / `font-sans` / `font-mono`
+// (docs/DESIGN.md › Typography).
+const unbounded = localFont({
+  src: "./fonts/unbounded-latin-var.woff2",
+  variable: "--font-display",
+  weight: "200 900",
   display: "swap",
 });
-const jetbrainsMono = localFont({
-  src: "./fonts/jetbrains-mono-latin-variable.woff2",
-  variable: "--font-mono",
-  weight: "100 800",
+const hostGrotesk = localFont({
+  src: "./fonts/hostgrotesk-latin-var.woff2",
+  variable: "--font-sans",
+  weight: "300 800",
   display: "swap",
+});
+const kodeMono = localFont({
+  src: "./fonts/kodemono-latin-var.woff2",
+  variable: "--font-mono",
+  weight: "400 700",
+  display: "swap",
+  // An Arial-shaped fallback would be the wrong width for a monospace face.
+  adjustFontFallback: false,
+  fallback: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
 });
 
 export const metadata: Metadata = {
@@ -53,8 +62,8 @@ export const viewport: Viewport = {
   viewportFit: "cover",
   colorScheme: "dark light",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fafafb" },
-    { media: "(prefers-color-scheme: dark)", color: "#060609" },
+    { media: "(prefers-color-scheme: light)", color: "#f3f2ed" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0b" },
   ],
 };
 
@@ -70,7 +79,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${jetbrainsMono.variable}`}
+      className={`${unbounded.variable} ${hostGrotesk.variable} ${kodeMono.variable}`}
       suppressHydrationWarning
     >
       <head>

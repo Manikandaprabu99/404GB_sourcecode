@@ -129,28 +129,30 @@ export default function EditorSlider({
         onPointerCancel={stop}
         onLostPointerCapture={stop}
         onKeyDown={onKeyDown}
-        className="group relative h-11 flex-1 cursor-pointer touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+        className="group relative h-11 flex-1 cursor-pointer touch-none select-none rounded-tile outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
       >
-        <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-ink/15" />
+        {/* A 4px track filling with the signal colour, the knob a rounded square (the app's
+         * tile knob), the value in a lime bubble while dragging. */}
+        <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-[2px] bg-ink/15" />
         {bipolar && (
           <div
-            className="absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink/40"
+            className="absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-[1px] bg-ink/40"
             style={{ left: `${originPercent}%` }}
           />
         )}
         <div
-          className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-accent"
+          className="absolute top-1/2 h-1 -translate-y-1/2 rounded-[2px] bg-signal"
           style={{ left: `${fillLeft}%`, width: `${fillWidth}%` }}
         />
         <div
-          className={`absolute top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink shadow-elevated transition-transform duration-120 ease-out-expo ${
+          className={`absolute top-1/2 h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 rounded-[7px] bg-ink shadow-elevated transition-transform duration-120 ease-out-expo ${
             dragging ? "scale-110" : "group-hover:scale-105"
           }`}
           style={{ left: `${percent}%` }}
         />
         {dragging && (
           <div
-            className="pointer-events-none absolute bottom-full mb-1 -translate-x-1/2 rounded-md bg-surface-3 px-2 py-0.5 font-mono text-micro tabular-nums text-ink shadow-soft animate-scale-in"
+            className="pointer-events-none absolute bottom-full mb-1 flex h-6 -translate-x-1/2 items-center rounded-tile-sm bg-signal px-2 font-mono text-[12px] tabular-nums text-signal-ink shadow-soft animate-scale-in"
             style={{ left: `${percent}%` }}
           >
             {display}

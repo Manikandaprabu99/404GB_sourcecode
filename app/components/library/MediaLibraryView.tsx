@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { MediaIndexEntry } from "@/lib/media";
 import type { Album } from "@/lib/albums/types";
 import MediaViewer from "@/app/gallery/MediaViewer";
-import VirtualGrid from "@/app/gallery/VirtualGrid";
+import VirtualGrid, { groupHeaderHeight } from "@/app/gallery/VirtualGrid";
 import { groupMedia, type DateGroup } from "@/app/gallery/dateGroups";
 import { useConfirm } from "@/app/components/ui/ConfirmDialog";
 import { useToast } from "@/app/components/ui/Toast";
@@ -15,6 +15,7 @@ import { syncLibrary } from "@/lib/library/mediaStore";
 import { getHeaderHeight, getScrollPosition, setHeaderHeight } from "@/lib/library/viewState";
 import { stepZoom, useZoom, type ZoomLevel } from "@/lib/library/zoom";
 import AddToAlbumSheet from "./AddToAlbumSheet";
+import { useScrolledPast } from "./PageHeader";
 import ScrollArea from "./ScrollArea";
 import SelectionBar, { type SelectionAction } from "./SelectionBar";
 import SkeletonGrid from "./SkeletonGrid";
@@ -33,6 +34,11 @@ import { useSelection } from "./useSelection";
 export interface LibraryHeaderState {
   selectMode: boolean;
   startSelect: () => void;
+  /** True once the screen has scrolled ~24px: a large title collapses into the compact bar
+   * (docs/DESIGN.md › Page header). */
+  collapsed: boolean;
+  /** Height of the sticky header (px): what covers the top of the scroller. */
+  headerHeight: number;
 }
 
 interface MediaLibraryViewProps {
@@ -43,7 +49,14 @@ interface MediaLibraryViewProps {
   items: MediaIndexEntry[];
   /** Cold load: show skeleton tiles instead of the grid. */
   loading: boolean;
+  /** The sticky bar; date headers pin right below it. */
   header: (state: LibraryHeaderState) => ReactNode;
+  /** Content under the sticky bar that scrolls away with the page (the Photos screen's
+   * telemetry line, search field and filter chips). */
+  intro?: (state: LibraryHeaderState) => ReactNode;
+  /** Lines the content up with the top bar's centred column on wide screens (max-w-6xl)
+   * instead of filling the window. */
+  contained?: boolean;
   /** Banner between the header and the grid. */
   notice?: ReactNode;
   /** Shown when not loading and there is nothing to show. */
@@ -68,6 +81,9 @@ interface MediaLibraryViewProps {
 
 const NO_SETS: Record<string, MediaIndexEntry[]> = {};
 
+/** Same as PageHeader: the large title gives way to the compact bar after this much scroll. */
+const COLLAPSE_AFTER_PX = 24;
+
 function itemsLabel(count: number): string {
   return count === 1 ? "1 item" : `${count} items`;
 }
@@ -78,6 +94,8 @@ export default function MediaLibraryView({
   items,
   loading,
   header,
+  intro,
+  contained = false,
   notice,
   empty,
   resetKey,
@@ -94,6 +112,8 @@ export default function MediaLibraryView({
   const inTrash = mode === "trash";
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLSpanElement>(null);
+  const collapsed = useScrolledPast(sentinelRef);
   const [stickyTop, setStickyTop] = useState(() => getHeaderHeight(scrollKey));
   const [now, setNow] = useState(() => Date.now());
   const selection = useSelection(items);
@@ -353,6 +373,14 @@ export default function MediaLibraryView({
     },
   });
 
+  const headerState: LibraryHeaderState = {
+    selectMode: selection.active,
+    startSelect: () => selection.start(),
+    collapsed,
+    headerHeight: stickyTop,
+  };
+  const column = contained ? "mx-auto w-full max-w-6xl" : "";
+
   return (
     <>
       <div className="relative h-full">
@@ -364,12 +392,21 @@ export default function MediaLibraryView({
         // The timeline scrubber replaces the scrollbar; pinches switch views instead of zooming the page.
         className="touch-pan-y [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
+        {/* Scrolls past the top edge after COLLAPSE_AFTER_PX: an IntersectionObserver, so
+         * nothing runs per scroll event. */}
+        <span
+          ref={sentinelRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 h-px w-px"
+          style={{ top: COLLAPSE_AFTER_PX }}
+        />
         <div ref={headerRef} className="sticky top-0 z-30">
-          {header({ selectMode: selection.active, startSelect: () => selection.start() })}
+          {header(headerState)}
         </div>
-        {notice}
-        {!loading && aboveGrid?.({ selectMode: selection.active, openSet })}
-        <div className="sm:px-6">
+        {intro?.(headerState)}
+        {notice && <div className={column}>{notice}</div>}
+        {!loading && aboveGrid && <div className={column}>{aboveGrid({ selectMode: selection.active, openSet })}</div>}
+        <div className={`${column} sm:px-6`}>
           {loading ? (
             <SkeletonGrid />
           ) : items.length === 0 ? (
@@ -403,7 +440,8 @@ export default function MediaLibraryView({
             ? "bottom-[calc(9.25rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] sm:bottom-[calc(6.75rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))]"
             : "bottom-[calc(5rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] sm:bottom-[calc(2.25rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))]"
         }`}
-        style={{ top: stickyTop + 8 }}
+        // Under the pinned date header, so the handle never covers its telemetry line.
+        style={{ top: stickyTop + groupHeaderHeight(zoom) + 4 }}
       />
       </div>
 

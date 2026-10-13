@@ -10,7 +10,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useHistoryOverlay } from "@/lib/ui/useHistoryOverlay";
+import { CloseIcon } from "@/app/components/library/icons";
 import { trapTab, useEscapeLayer, useFocusReturn } from "./focus";
+import { iconButtonClass } from "./IconButton";
 
 export interface SheetProps {
   open: boolean;
@@ -25,6 +27,7 @@ const DRAG_CLOSE_PX = 110;
 /**
  * Bottom sheet on phones (drag the handle down to dismiss), centered dialog
  * on larger screens. Back, Escape and the backdrop all close it.
+ * (docs/DESIGN.md › Sheet: top radius 28, grabber 36×4, title in the h2 role.)
  */
 export default function Sheet({ open, onClose, title, children }: SheetProps) {
   const [mounted, setMounted] = useState(open);
@@ -95,7 +98,7 @@ export default function Sheet({ open, onClose, title, children }: SheetProps) {
     <div className="fixed inset-0 z-sheet flex items-end justify-center sm:items-center sm:p-6">
       <div
         aria-hidden="true"
-        className={`absolute inset-0 bg-black/50 ${open ? "animate-fade-in" : "animate-fade-out"}`}
+        className={`absolute inset-0 bg-black/55 ${open ? "animate-fade-in" : "animate-fade-out"}`}
         onClick={onClose}
       />
       <div
@@ -105,21 +108,21 @@ export default function Sheet({ open, onClose, title, children }: SheetProps) {
         aria-labelledby={title ? titleId : undefined}
         tabIndex={-1}
         onKeyDown={(e) => panelRef.current && trapTab(e, panelRef.current)}
-        className={`relative flex max-h-[88dvh] w-full flex-col overflow-hidden rounded-t-2xl border-t border-border bg-surface text-ink shadow-sheet outline-none sm:max-h-[80vh] sm:max-w-md sm:rounded-2xl sm:border sm:shadow-elevated ${
+        className={`relative flex max-h-[88dvh] w-full flex-col overflow-hidden rounded-t-sheet bg-surface text-ink shadow-sheet outline-none dark:border-t dark:border-border/60 sm:max-h-[80vh] sm:max-w-md sm:rounded-dialog sm:shadow-elevated sm:dark:border ${
           open ? "animate-sheet-in sm:animate-scale-in" : "animate-sheet-out sm:animate-scale-out"
         }`}
       >
         <div
-          className="shrink-0 touch-none select-none px-5 pt-2.5 sm:pt-4"
+          className="shrink-0 touch-none select-none px-5 pt-2 sm:pt-4"
           onPointerDown={onHandleDown}
           onPointerMove={onHandleMove}
           onPointerUp={onHandleUp}
           onPointerCancel={onHandleUp}
         >
-          <div className="mx-auto h-1 w-10 rounded-full bg-border-strong sm:hidden" aria-hidden="true" />
-          <div className="flex min-h-[44px] items-center justify-between gap-3 pt-1.5 sm:pt-0">
+          <div className="mx-auto h-1 w-9 rounded-full bg-border-strong sm:hidden" aria-hidden="true" />
+          <div className="flex min-h-[48px] items-center justify-between gap-3 pt-2 sm:pt-0">
             {title ? (
-              <h2 id={titleId} className="min-w-0 truncate text-h3 font-semibold">
+              <h2 id={titleId} className="min-w-0 truncate font-display text-h2 text-ink">
                 {title}
               </h2>
             ) : (
@@ -129,11 +132,9 @@ export default function Sheet({ open, onClose, title, children }: SheetProps) {
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="-mr-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink"
+              className={`-mr-1 ${iconButtonClass({ variant: "tile", size: 40 })}`}
             >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
-                <path d="M6 6l12 12M18 6 6 18" />
-              </svg>
+              <CloseIcon size={18} />
             </button>
           </div>
         </div>

@@ -33,6 +33,26 @@ export class FaceEngineUnavailableError extends Error {
   }
 }
 
+/** One photo took longer than `detectTimeoutMs`: the backend may be stuck rather than the photo bad. */
+export class FaceDetectTimeoutError extends Error {
+  constructor() {
+    super("Face detection timed out");
+    this.name = "FaceDetectTimeoutError";
+  }
+}
+
+export interface FaceEngineOptions {
+  /** TensorFlow.js backends to try, in order (default WebGL, WebAssembly, CPU). */
+  backends?: readonly string[];
+  /** How long the model may take to load (default 90 s). */
+  initTimeoutMs?: number;
+  /** How long one photo may take (default 120 s). */
+  detectTimeoutMs?: number;
+  /** Keep the model files in Cache Storage on a web host (default true; pages that serve
+   * them from the device, like the background runner, needn't). */
+  cacheModels?: boolean;
+}
+
 /** Test seam: an end-to-end test can replace the model with a deterministic detector. */
 export type StubFaceDetector = (input: {
   mediaId: string;
@@ -70,12 +90,14 @@ type WorkerReply =
   | { type: "faces"; id: number; faces: DetectedFace[]; backend: string }
   | { type: "detect-error"; id: number; error: string; decode: boolean };
 
-export async function createFaceEngine(): Promise<FaceEngine> {
+export async function createFaceEngine(options: FaceEngineOptions = {}): Promise<FaceEngine> {
   const stub = typeof window !== "undefined" ? window.__404GB_FACE_DETECTOR__ : undefined;
   if (typeof stub === "function") return stubEngine(stub);
   if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined" || typeof createImageBitmap === "undefined") {
     throw new FaceEngineUnavailableError("This browser can't run face grouping in the background.");
   }
+  const initTimeoutMs = options.initTimeoutMs ?? INIT_TIMEOUT_MS;
+  const detectTimeoutMs = options.detectTimeoutMs ?? DETECT_TIMEOUT_MS;
 
   const worker = new Worker(new URL("./faces.worker.ts", import.meta.url));
   const waiting = new Map<number, { resolve(faces: DetectedFace[]): void; reject(err: Error): void; timer: number }>();
@@ -95,7 +117,7 @@ export async function createFaceEngine(): Promise<FaceEngine> {
   const ready = new Promise<string>((resolve, reject) => {
     const timer = window.setTimeout(
       () => reject(new FaceEngineUnavailableError("The face model took too long to load.")),
-      INIT_TIMEOUT_MS
+      initTimeoutMs
     );
     worker.onmessage = (event: MessageEvent<WorkerReply>) => {
       const reply = event.data;
@@ -132,7 +154,8 @@ export async function createFaceEngine(): Promise<FaceEngine> {
     type: "init",
     modelUrl: new URL("/faces/models/", window.location.href).href,
     wasmUrl: new URL("/faces/wasm/", window.location.href).href,
-    backends: BACKENDS,
+    backends: options.backends ? [...options.backends] : BACKENDS,
+    cacheModels: options.cacheModels !== false,
   });
 
   try {
@@ -152,8 +175,8 @@ export async function createFaceEngine(): Promise<FaceEngine> {
         const id = nextId++;
         const timer = window.setTimeout(() => {
           waiting.delete(id);
-          reject(new Error("Face detection timed out"));
-        }, DETECT_TIMEOUT_MS);
+          reject(new FaceDetectTimeoutError());
+        }, detectTimeoutMs);
         waiting.set(id, { resolve, reject, timer });
         worker.postMessage({ type: "detect", id, blob });
       });

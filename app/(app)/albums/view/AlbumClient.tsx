@@ -20,6 +20,14 @@ import OverflowMenu from "@/app/components/library/OverflowMenu";
 import PageHeader from "@/app/components/library/PageHeader";
 import ScrollArea from "@/app/components/library/ScrollArea";
 import SkeletonGrid from "@/app/components/library/SkeletonGrid";
+import {
+  SelectButton,
+  SubScreenBar,
+  SubScreenTitle,
+  subScreenHeadingClass,
+} from "@/app/components/library/SubScreenHeader";
+import IconButton from "@/app/components/ui/IconButton";
+import { Telemetry } from "@/app/components/ui/SectionLabel";
 import { BackIcon, PencilIcon, PlusIcon, TrashIcon } from "@/app/components/library/icons";
 
 interface AlbumClientProps {
@@ -33,9 +41,6 @@ function dateRange(newest: number, oldest: number): string {
   const format = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
   return format.formatRange(new Date(oldest), new Date(newest));
 }
-
-const iconButtonClass =
-  "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink";
 
 export default function AlbumClient({ repoOwner, repoName, albumId }: AlbumClientProps) {
   const repoKey = repoKeyFor(repoOwner, repoName);
@@ -61,8 +66,8 @@ export default function AlbumClient({ repoOwner, repoName, albumId }: AlbumClien
     return library.items.filter((item) => ids.has(item.id));
   }, [album, library.items]);
 
-  const subtitle = useMemo(() => {
-    if (!album) return "";
+  const facts = useMemo(() => {
+    if (!album) return [];
     // Before the library has loaded, the album's own list is the best count (items in Trash included).
     const count = items.length > 0 || library.synced ? items.length : album.mediaIds.length;
     const parts = [count === 1 ? "1 item" : `${count} items`];
@@ -70,7 +75,7 @@ export default function AlbumClient({ repoOwner, repoName, albumId }: AlbumClien
       const range = dateRange(mediaTime(items[0]), mediaTime(items[items.length - 1]));
       if (range) parts.push(range);
     }
-    return parts.join(" · ");
+    return parts;
   }, [album, items, library.synced]);
 
   const goBack = () =>
@@ -80,9 +85,9 @@ export default function AlbumClient({ repoOwner, repoName, albumId }: AlbumClien
     });
 
   const backButton = (
-    <button type="button" onClick={goBack} aria-label="Back to albums" className={iconButtonClass}>
+    <IconButton variant="ghost" label="Back to albums" onClick={goBack}>
       <BackIcon size={20} />
-    </button>
+    </IconButton>
   );
 
   if (!album) {
@@ -162,58 +167,52 @@ export default function AlbumClient({ repoOwner, repoName, albumId }: AlbumClien
             </button>
           </EmptyState>
         }
-        header={({ selectMode, startSelect }) => (
-          <div className="bg-bg pt-safe sm:pt-0">
-            <div className="flex h-14 items-center gap-1 px-2 sm:px-6">
-              {backButton}
-              <div className="min-w-0 flex-1 pl-1">
-                <h1 className="truncate text-h3 font-semibold tracking-tight text-ink">{album.name}</h1>
-                <p className="truncate text-micro text-ink-muted">{subtitle}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPicking(true)}
-                aria-label="Add photos"
-                title="Add photos"
-                className={iconButtonClass}
-              >
-                <PlusIcon size={20} />
-              </button>
-              {items.length > 0 && !selectMode && (
-                <button
-                  type="button"
-                  onClick={startSelect}
-                  className="h-9 shrink-0 rounded-full px-3 text-small font-medium text-ink transition-colors duration-180 hover:bg-surface-2"
-                >
-                  Select
-                </button>
-              )}
-              <OverflowMenu
-                label="Album options"
-                items={[
-                  {
-                    key: "rename",
-                    label: "Rename album",
-                    icon: <PencilIcon size={18} />,
-                    onSelect: () => setRenaming(true),
-                  },
-                  {
-                    key: "add",
-                    label: "Add photos",
-                    icon: <PlusIcon size={18} />,
-                    onSelect: () => setPicking(true),
-                  },
-                  {
-                    key: "delete",
-                    label: "Delete album",
-                    icon: <TrashIcon size={18} />,
-                    tone: "danger",
-                    onSelect: () => void removeAlbum(),
-                  },
-                ]}
-              />
-            </div>
-          </div>
+        contained
+        header={({ selectMode, startSelect, collapsed }) => (
+          <SubScreenBar
+            backLabel="Back to albums"
+            onBack={goBack}
+            title={album.name}
+            collapsed={collapsed}
+            actions={
+              <>
+                <IconButton label="Add photos" onClick={() => setPicking(true)}>
+                  <PlusIcon size={20} />
+                </IconButton>
+                {items.length > 0 && !selectMode && <SelectButton onClick={startSelect} />}
+                <OverflowMenu
+                  label="Album options"
+                  items={[
+                    {
+                      key: "rename",
+                      label: "Rename album",
+                      icon: <PencilIcon size={18} />,
+                      onSelect: () => setRenaming(true),
+                    },
+                    {
+                      key: "add",
+                      label: "Add photos",
+                      icon: <PlusIcon size={18} />,
+                      onSelect: () => setPicking(true),
+                    },
+                    {
+                      key: "delete",
+                      label: "Delete album",
+                      icon: <TrashIcon size={18} />,
+                      tone: "danger",
+                      onSelect: () => void removeAlbum(),
+                    },
+                  ]}
+                />
+              </>
+            }
+          />
+        )}
+        intro={() => (
+          <SubScreenTitle
+            title={<h1 className={subScreenHeadingClass}>{album.name}</h1>}
+            telemetry={<Telemetry items={facts} className="whitespace-normal" />}
+          />
         )}
       />
 

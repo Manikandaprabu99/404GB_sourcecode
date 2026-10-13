@@ -7,6 +7,11 @@ import type { FileTaskSnapshot, FileUploadStatus } from "@/lib/upload/types";
 import { isNativeApp } from "@/lib/native/platform";
 import PageHeader from "@/app/components/library/PageHeader";
 import ScrollArea from "@/app/components/library/ScrollArea";
+import { cardClass, IconTile } from "@/app/components/library/SettingsBlocks";
+import { AlertIcon, CheckIcon, CloudOffIcon, PlusIcon } from "@/app/components/library/icons";
+import { buttonClass } from "@/app/components/ui/Button";
+import { Telemetry } from "@/app/components/ui/SectionLabel";
+import TileMeter from "@/app/components/ui/TileMeter";
 
 // Whether the user paused the queue. Module scope, like the queue itself, so it survives switching tabs.
 let pausedByUser = false;
@@ -16,12 +21,14 @@ const FINISHED = new Set<FileUploadStatus>(["done", "duplicate", "canceled"]);
 
 type Tone = "neutral" | "accent" | "success" | "danger" | "warning";
 
+// The status word in a row's telemetry line: accent while it's live or done, red when it failed.
+// (Accent is moss on paper, so it stays readable as text in both themes.)
 const TONE_CLASSES: Record<Tone, string> = {
-  neutral: "bg-surface-3 text-ink-muted",
-  accent: "bg-accent/15 text-accent",
-  success: "bg-success/15 text-success",
-  danger: "bg-danger/15 text-danger",
-  warning: "bg-warning/15 text-warning",
+  neutral: "text-ink-muted",
+  accent: "text-accent",
+  success: "text-accent",
+  danger: "text-danger",
+  warning: "text-ink",
 };
 
 // Queue messages that describe internals rather than what the person sees.
@@ -120,12 +127,35 @@ function useOnline(): boolean {
   return online;
 }
 
-function UploadCloudIcon() {
+function UpArrowIcon({ size = 16 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M7 16.5a4 4 0 0 1 .5-7.97A5.5 5.5 0 0 1 18 10.5v.06A3.94 3.94 0 0 1 17 18H8" />
-      <path d="M12 12v7m0-7 3 3m-3-3-3 3" />
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 19V5m0 0-6 6m6-6 6 6" />
     </svg>
+  );
+}
+
+/**
+ * The brand's 2×2 mark for the drop zone: three solid tiles and the missing one, dashed and
+ * breathing, with an arrow in it. Dragging files over fills it in with lime.
+ */
+function DropMark({ filled }: { filled: boolean }) {
+  return (
+    <span aria-hidden="true" className="grid grid-cols-2 gap-1.5">
+      <span className="h-9 w-9 rounded-[9px] bg-surface-3" />
+      <span
+        className={`relative flex h-9 w-9 items-center justify-center rounded-[9px] border-[1.5px] border-dashed transition-colors duration-180 ${
+          filled ? "border-transparent text-signal-ink" : "animate-breathe border-accent text-accent"
+        }`}
+      >
+        {filled && <span className="absolute -inset-[1.5px] animate-tile-fill rounded-[9px] bg-signal" />}
+        <span className="relative">
+          <UpArrowIcon />
+        </span>
+      </span>
+      <span className="h-9 w-9 rounded-[9px] bg-surface-3" />
+      <span className="h-9 w-9 rounded-[9px] bg-surface-3" />
+    </span>
   );
 }
 
@@ -141,22 +171,6 @@ function FileKindIcon({ video }: { video: boolean }) {
       <circle cx="9" cy="9.5" r="1.5" fill="currentColor" stroke="none" />
       <path d="m4.5 17 4.5-4.5 3.5 3.5 2.5-2.5 4.5 4.5" />
     </svg>
-  );
-}
-
-function ProgressBar({ value, tone, indeterminate }: { value: number; tone: "accent" | "muted" | "danger"; indeterminate?: boolean }) {
-  const color = tone === "danger" ? "bg-danger" : tone === "muted" ? "bg-ink-faint" : "bg-accent";
-  return (
-    <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
-      {indeterminate ? (
-        <div className={`absolute inset-y-0 left-0 w-2/5 rounded-full ${color} animate-indeterminate`} />
-      ) : (
-        <div
-          className={`h-full rounded-full transition-[width] duration-320 ease-out-expo ${color}`}
-          style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
-        />
-      )}
-    </div>
   );
 }
 
@@ -197,26 +211,31 @@ function Dropzone({ compact, onFiles }: { compact: boolean; onFiles: (files: Fil
         setDragOver(false);
         if (e.dataTransfer.files?.length) onFiles(Array.from(e.dataTransfer.files));
       }}
-      className={`group flex cursor-pointer items-center gap-4 rounded-2xl border-2 border-dashed text-left transition-all duration-180 ease-out-expo active:scale-[0.99] ${
-        compact ? "px-4 py-4" : "flex-col px-6 py-12 text-center"
-      } ${
-        dragOver
-          ? "scale-[1.01] border-accent bg-accent/10"
-          : "border-border bg-surface hover:border-border-strong hover:bg-surface-2"
-      }`}
+      // A big dashed tile (docs/DESIGN.md › Screens › Upload); a dashed row once there's a queue.
+      className={`group flex cursor-pointer items-center border-2 border-dashed transition-[background-color,border-color,transform] duration-180 ease-out-expo active:scale-[0.99] ${
+        compact ? "gap-4 rounded-card px-4 py-3.5 text-left" : "min-h-[17rem] flex-col justify-center rounded-card px-6 py-10 text-center sm:min-h-[19rem]"
+      } ${dragOver ? "scale-[1.01] border-accent bg-signal/10" : "border-border-strong hover:bg-surface-2/70"}`}
     >
-      <span
-        className={`flex shrink-0 items-center justify-center rounded-full transition-all duration-250 ease-out-expo ${
-          compact ? "h-11 w-11" : "h-16 w-16"
-        } ${dragOver ? "scale-110 bg-accent/20 text-accent" : "bg-accent/10 text-accent group-hover:scale-105"}`}
-      >
-        <UploadCloudIcon />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-body font-semibold text-ink">
+      {compact ? (
+        <span
+          aria-hidden="true"
+          className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-tile border-[1.5px] border-dashed transition-colors duration-180 ${
+            dragOver ? "border-transparent text-signal-ink" : "border-accent text-accent"
+          }`}
+        >
+          {dragOver && <span className="absolute -inset-[1.5px] animate-tile-fill rounded-tile bg-signal" />}
+          <span className="relative">
+            <PlusIcon size={20} />
+          </span>
+        </span>
+      ) : (
+        <DropMark filled={dragOver} />
+      )}
+      <span className={compact ? "min-w-0" : "mt-7 flex flex-col items-center"}>
+        <span className={compact ? "block text-body font-semibold text-ink" : "block font-display text-h2 text-ink"}>
           {compact ? "Add more" : "Choose photos and videos"}
         </span>
-        <span className="mt-0.5 block text-small text-ink-muted">
+        <span className={`block text-small text-ink-muted ${compact ? "mt-0.5" : "mt-2"}`}>
           <span className="sm:hidden">Tap to pick from your phone</span>
           <span className="hidden sm:inline">Drag them here, or click to browse</span>
         </span>
@@ -253,32 +272,51 @@ const FileRow = memo(function FileRow({
   const message = failed ? null : friendlyMessage(task);
   const errorText = failed ? friendlyError(task.error ?? task.message) : null;
   const rawError = failed ? (task.error ?? "").replace(/^\w*Error:\s*/, "").trim() : "";
-  const showProgress = active || failed;
+
+  // Uploading: the bytes sent so far in the telemetry line, the tile meter under it.
+  const sizeText =
+    task.status === "uploading" && task.bytesUploaded > 0
+      ? `${formatBytes(Math.min(task.bytesUploaded, task.size))} / ${formatBytes(task.size)}`
+      : formatBytes(task.size);
+  const meterValue = task.status === "processing" || task.status === "committing" ? 100 : percentOf(task);
+  const indeterminate = task.status === "hashing" || task.status === "queued";
 
   return (
-    <li className="rounded-xl border border-border bg-surface p-3.5 animate-fade-in-up">
+    <li className="px-4 py-3 animate-fade-in-up">
       <div className="flex items-center gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-muted">
+        <IconTile>
           <FileKindIcon video={task.mimeType.startsWith("video/")} />
-        </span>
+        </IconTile>
         <div className="min-w-0 flex-1">
           <p className="truncate text-body font-medium text-ink" title={task.filename}>
             {task.filename}
           </p>
-          <p className="text-small text-ink-faint">{formatBytes(task.size)}</p>
+          {/* A telemetry line: size (or bytes sent) and the status (2.4 MB · UPLOADING 42%). */}
+          <p className="telemetry mt-1 truncate text-ink-muted">
+            <span className="tabular-nums">{sizeText}</span>
+            <span aria-hidden="true" className="px-[0.45em] text-ink-faint">
+              ·
+            </span>
+            <span className={TONE_CLASSES[pill.tone]}>{pill.label}</span>
+          </p>
         </div>
-        <span
-          className={`shrink-0 rounded-full px-2.5 py-1 text-micro font-semibold tabular-nums ${TONE_CLASSES[pill.tone]}`}
-        >
-          {pill.label}
-        </span>
+        {task.status === "done" && (
+          <span aria-hidden="true" className="flex h-6 w-6 shrink-0 animate-check-pop items-center justify-center rounded-[7px] bg-signal text-signal-ink">
+            <CheckIcon size={14} strokeWidth={3} />
+          </span>
+        )}
+        {failed && (
+          <span aria-hidden="true" className="flex shrink-0 text-danger">
+            <AlertIcon size={20} />
+          </span>
+        )}
         {active && (
           <button
             type="button"
             onClick={() => onCancel(task.clientId)}
             aria-label={`Cancel ${task.filename}`}
             title="Cancel"
-            className="-mr-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-faint transition-colors duration-180 hover:bg-surface-2 hover:text-ink"
+            className="-mr-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-tile text-ink-muted transition-[background-color,color,transform] duration-180 ease-out-expo hover:bg-surface-2 hover:text-ink active:scale-[0.94]"
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
               <path d="M6 6l12 12M18 6 6 18" />
@@ -287,34 +325,34 @@ const FileRow = memo(function FileRow({
         )}
       </div>
 
-      {showProgress && (
-        <div className="mt-3">
-          <ProgressBar
-            value={failed ? percentOf(task) : task.status === "processing" || task.status === "committing" ? 100 : percentOf(task)}
-            tone={failed ? "danger" : task.status === "paused" ? "muted" : "accent"}
-            indeterminate={task.status === "hashing" || task.status === "queued"}
+      {active && (
+        // Decorative: the telemetry line above says how far it got.
+        <div className="mt-2.5 pl-12" aria-hidden="true">
+          <TileMeter
+            value={indeterminate ? undefined : meterValue}
+            max={indeterminate ? undefined : 100}
+            tiles={16}
+            fluid
+            valueText=""
+            active={task.status !== "paused"}
           />
         </div>
       )}
 
-      {message && <p className="mt-2 text-small text-ink-muted">{message}</p>}
+      {message && <p className="mt-2 pl-12 text-small text-ink-muted">{message}</p>}
 
       {failed && (
-        <div className="mt-2.5 flex items-start justify-between gap-3">
+        <div className="mt-2.5 flex items-start justify-between gap-3 pl-12">
           <div className="min-w-0">
             <p className="text-small text-danger">{errorText}</p>
             {rawError && rawError !== errorText && (
-              <details className="mt-1 text-micro text-ink-faint">
+              <details className="mt-1 text-micro text-ink-muted">
                 <summary className="cursor-pointer select-none">Details</summary>
                 <p className="mt-1 break-words font-mono">{rawError}</p>
               </details>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => onRetry(task.clientId)}
-            className="h-10 shrink-0 rounded-full bg-ink px-4 text-small font-semibold text-bg transition-all duration-180 ease-out-expo active:scale-95"
-          >
+          <button type="button" onClick={() => onRetry(task.clientId)} className={`${buttonClass({ variant: "secondary", size: "sm" })} shrink-0`}>
             Retry
           </button>
         </div>
@@ -323,7 +361,7 @@ const FileRow = memo(function FileRow({
   );
 });
 
-export default function UploadClient() {
+export default function UploadClient({ repo }: { /** owner/repo, for the telemetry line. */ repo?: string }) {
   // Seeded from the app-wide queue so coming back to this tab shows progress on the first frame.
   const [visible, setVisible] = useState<FileTaskSnapshot[]>(() =>
     typeof window === "undefined" ? [] : getUploadQueue().getSnapshots()
@@ -364,6 +402,8 @@ export default function UploadClient() {
       failed,
       counted: active + done + duplicates + failed,
       clearable: visible.some((t) => FINISHED.has(t.status)),
+      bytesDone,
+      bytesTotal,
       fraction: bytesTotal > 0 ? bytesDone / bytesTotal : 0,
     };
   }, [visible]);
@@ -410,10 +450,17 @@ export default function UploadClient() {
     working && summary.failed > 0 && `${summary.failed} couldn't upload`,
   ].filter(Boolean) as string[];
 
+  // The header's telemetry line: what's in the queue (or the promise), and where it goes.
+  const telemetry =
+    summary.counted > 0
+      ? [summary.counted === 1 ? "1 file" : `${summary.counted.toLocaleString()} files`, formatBytes(summary.bytesTotal), repo]
+      : ["Original quality", repo];
+  const percent = Math.round(summary.fraction * 100);
+
   return (
     <ScrollArea scrollKey="upload">
-      <PageHeader title="Upload" />
-      <main className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 pt-2 sm:px-6 sm:pt-6">
+      <PageHeader title="Upload" width="column" telemetry={<Telemetry items={telemetry} />} />
+      <main className="mx-auto flex w-full max-w-[720px] flex-col gap-5 px-4 pt-1 sm:px-6 sm:pt-3">
         <header className="flex flex-col gap-1.5 animate-fade-in-up">
           <p className="text-body text-ink-muted">
             Photos and videos keep their original quality. Uploads continue while you browse the app.
@@ -433,11 +480,14 @@ export default function UploadClient() {
         </header>
 
         {!online && (
-          <div role="status" className="flex items-center gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-small text-warning animate-fade-in">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
-              <path d="M3 3l18 18M8.5 16.5a5 5 0 0 1 7 0M5 12.5a10 10 0 0 1 4.2-2.4M19 12.5a10 10 0 0 0-2.1-1.6M2 8.8a15 15 0 0 1 4.3-2.6M22 8.8A15 15 0 0 0 11 5M12 20h.01" />
-            </svg>
-            You&apos;re offline. Uploads will continue when you&apos;re back online.
+          <div
+            role="status"
+            className="flex items-center gap-3 rounded-control border border-border/60 bg-surface-2 py-2 pl-2 pr-3 text-small text-ink-muted animate-fade-in"
+          >
+            <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-tile bg-surface-3">
+              <CloudOffIcon size={16} />
+            </span>
+            <span className="min-w-0 flex-1 py-1">You&apos;re offline. Uploads will continue when you&apos;re back online.</span>
           </div>
         )}
 
@@ -445,52 +495,48 @@ export default function UploadClient() {
 
         {visible.length > 0 && (
           <section aria-labelledby="upload-summary" className="flex flex-col gap-3">
-            <div className="rounded-2xl border border-border bg-surface p-4 shadow-soft">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0" aria-live="polite">
-                  <h2 id="upload-summary" className="text-body font-semibold text-ink">
-                    {headline}
-                  </h2>
-                  {details.length > 0 && <p className="text-small text-ink-muted">{details.join(" · ")}</p>}
-                </div>
-                <div className="flex flex-wrap gap-2">
+            <div className={`${cardClass} p-4 sm:p-5`}>
+              <div aria-live="polite">
+                <h2 id="upload-summary" className="font-display text-h2 text-ink">
+                  {headline}
+                </h2>
+                {details.length > 0 && <p className="mt-1 text-small text-ink-muted">{details.join(" · ")}</p>}
+              </div>
+              {working && (
+                <TileMeter
+                  value={Math.round(summary.fraction * 1000)}
+                  max={1000}
+                  tiles={24}
+                  fluid
+                  label={`${formatBytes(summary.bytesDone)} / ${formatBytes(summary.bytesTotal)}`}
+                  valueText={`${percent}%`}
+                  active={!paused}
+                  ariaLabel="Upload progress"
+                  className="mt-4"
+                />
+              )}
+              {(summary.failed > 1 || working || paused || summary.clearable) && (
+                <div className="mt-4 flex flex-wrap gap-2">
                   {summary.failed > 1 && (
-                    <button
-                      type="button"
-                      onClick={retryAll}
-                      className="h-10 rounded-full border border-border px-4 text-small font-medium text-ink transition-colors duration-180 hover:bg-surface-2"
-                    >
+                    <button type="button" onClick={retryAll} className={buttonClass({ variant: "secondary", size: "sm" })}>
                       Retry all
                     </button>
                   )}
                   {(working || paused) && (
-                    <button
-                      type="button"
-                      onClick={togglePause}
-                      className="h-10 rounded-full border border-border px-4 text-small font-medium text-ink transition-colors duration-180 hover:bg-surface-2"
-                    >
+                    <button type="button" onClick={togglePause} className={buttonClass({ variant: "secondary", size: "sm" })}>
                       {paused ? "Resume" : "Pause"}
                     </button>
                   )}
                   {summary.clearable && (
-                    <button
-                      type="button"
-                      onClick={clearFinished}
-                      className="h-10 rounded-full px-4 text-small font-medium text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink"
-                    >
+                    <button type="button" onClick={clearFinished} className={buttonClass({ variant: "ghost", size: "sm" })}>
                       Clear finished
                     </button>
                   )}
                 </div>
-              </div>
-              {working && (
-                <div className="mt-3">
-                  <ProgressBar value={summary.fraction * 100} tone={paused ? "muted" : "accent"} />
-                </div>
               )}
             </div>
 
-            <ul className="flex flex-col gap-2.5" aria-label="Files">
+            <ul aria-label="Files" className={`divide-y divide-border/60 overflow-hidden ${cardClass}`}>
               {visible.map((task) => (
                 <FileRow key={task.clientId} task={task} onCancel={onCancel} onRetry={onRetry} />
               ))}
@@ -499,10 +545,7 @@ export default function UploadClient() {
         )}
 
         {visible.length > 0 && !working && summary.done + summary.duplicates > 0 && (
-          <Link
-            href="/gallery"
-            className="group inline-flex w-fit items-center gap-1.5 rounded-full bg-ink px-5 py-2.5 text-small font-semibold text-bg shadow-soft transition-all duration-180 ease-out-expo hover:-translate-y-0.5 hover:shadow-elevated active:translate-y-0 active:scale-95 animate-fade-in"
-          >
+          <Link href="/gallery" className={`${buttonClass({ variant: "primary" })} group w-fit animate-fade-in`}>
             See them in your library
             <span aria-hidden className="transition-transform duration-180 ease-out-expo group-hover:translate-x-0.5">
               →

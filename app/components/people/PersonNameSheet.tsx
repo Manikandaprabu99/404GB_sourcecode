@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { PersonDetails } from "@/lib/faces/people";
 import Sheet from "@/app/components/ui/Sheet";
 import { primaryButtonClass, secondaryButtonClass } from "@/app/components/library/EmptyState";
+import SectionLabel from "@/app/components/ui/SectionLabel";
 import FaceAvatar from "./FaceAvatar";
 
 const NAME_MAX = 60;
@@ -66,7 +67,7 @@ export default function PersonNameSheet({
     <Sheet open={open} onClose={onClose} title={person.name ? "Rename" : "Add a name"}>
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div className="flex items-center gap-3">
-          <FaceAvatar repoKey={repoKey} face={person.cover} className="h-12 w-12" />
+          <FaceAvatar repoKey={repoKey} face={person.cover} className="h-12 w-12 ring-1 ring-border/60" />
           <input
             ref={inputRef}
             value={name}
@@ -76,23 +77,25 @@ export default function PersonNameSheet({
             aria-label="Name"
             enterKeyHint="done"
             autoComplete="off"
-            className="h-12 min-w-0 flex-1 rounded-xl border border-border bg-surface-2 px-4 text-body text-ink outline-none transition-colors duration-180 placeholder:text-ink-faint focus:border-accent"
+            className="h-12 min-w-0 flex-1 rounded-control bg-surface-2 px-4 text-body text-ink placeholder:text-ink-faint"
           />
         </div>
         {matches.length > 0 && (
           <div className="flex flex-col gap-1">
-            <p className="px-1 text-micro font-semibold uppercase tracking-wider text-ink-muted">Same person?</p>
+            <SectionLabel as="p" className="px-1 pb-1">
+              Same person?
+            </SectionLabel>
             {matches.map((other) => (
               <button
                 key={other.id}
                 type="button"
                 onClick={() => onSamePerson(other)}
-                className="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors duration-180 hover:bg-surface-2"
+                className="flex min-h-[56px] items-center gap-3 rounded-control px-2 py-2 text-left transition-colors duration-180 hover:bg-surface-2"
               >
                 <FaceAvatar repoKey={repoKey} face={other.cover} className="h-10 w-10" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-body font-medium text-ink">{other.name}</span>
-                  <span className="block text-small text-ink-muted">
+                  <span className="telemetry mt-1 block text-ink-muted">
                     Merge · {other.mediaIds.length.toLocaleString()} {other.mediaIds.length === 1 ? "photo" : "photos"}
                   </span>
                 </span>
@@ -100,7 +103,7 @@ export default function PersonNameSheet({
             ))}
           </div>
         )}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           {person.name && (
             <button type="button" onClick={() => onRename(null)} className={`${secondaryButtonClass} mr-auto`}>
               Remove name

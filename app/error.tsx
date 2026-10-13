@@ -17,7 +17,7 @@ export default function ErrorBoundary({
 
   return (
     <StatusScreen
-      eyebrow="Oops"
+      eyebrow="Error · Screen failed"
       title="Something went wrong"
       message="This screen hit a snag. Your photos are safe — try again, or head back to your library."
     >

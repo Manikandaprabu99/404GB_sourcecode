@@ -20,6 +20,9 @@ import EmptyState, { primaryButtonClass } from "@/app/components/library/EmptySt
 import Notice, { noticeActionClass } from "@/app/components/library/Notice";
 import PageHeader from "@/app/components/library/PageHeader";
 import ScrollArea from "@/app/components/library/ScrollArea";
+import { IconTile, cardClass } from "@/app/components/library/SettingsBlocks";
+import { Telemetry } from "@/app/components/ui/SectionLabel";
+import { iconButtonClass } from "@/app/components/ui/IconButton";
 import { AlbumsIcon, ChevronRightIcon, FolderIcon, PlusIcon, RefreshIcon, TrashIcon } from "@/app/components/library/icons";
 
 interface AlbumsClientProps {
@@ -36,15 +39,61 @@ function stagger(index: number): { animationDelay: string } {
   return { animationDelay: `${Math.min(index, 12) * 25}ms` };
 }
 
-function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+/** A section of the screen: a display title, an optional telemetry count and an action. */
+function Section({
+  title,
+  meta,
+  action,
+  children,
+}: {
+  title: string;
+  meta?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <section className="flex flex-col gap-3">
-      <div className="flex min-h-9 items-center justify-between gap-3">
-        <h2 className="text-body-lg font-semibold tracking-tight text-ink">{title}</h2>
+    <section className="flex flex-col gap-3.5">
+      <div className="flex min-h-9 items-end justify-between gap-3">
+        <div className="flex min-w-0 items-baseline gap-2.5">
+          <h2 className="truncate font-display text-h2 text-ink">{title}</h2>
+          {meta !== undefined && <span className="telemetry shrink-0 text-ink-muted">{meta}</span>}
+        </div>
         {action}
       </div>
       {children}
     </section>
+  );
+}
+
+const coverLinkClass =
+  "group relative isolate block aspect-square overflow-hidden rounded-[18px] bg-surface-2 transition-transform duration-250 ease-out-expo active:scale-[0.97]";
+const coverImageClass =
+  "absolute inset-0 h-full w-full object-cover transition-transform duration-320 ease-out-expo group-hover:scale-[1.04]";
+
+/**
+ * A cover card (docs/DESIGN.md › Screens › Albums): the cover photo full-bleed, a bottom
+ * gradient, the name and a mono count over it. Without a cover, the name sits on the tile.
+ */
+function CoverCaption({ name, count, onPhoto, large }: { name: string; count: string; onPhoto: boolean; large?: boolean }) {
+  return (
+    <>
+      {onPhoto && (
+        <span
+          aria-hidden="true"
+          className="absolute inset-x-0 bottom-0 h-3/4 bg-gradient-to-t from-black/75 via-black/30 to-transparent"
+        />
+      )}
+      <div className={`absolute inset-x-0 bottom-0 flex flex-col gap-1 ${large ? "p-4" : "p-2.5 sm:p-3"}`}>
+        <p
+          className={`line-clamp-2 break-words font-semibold leading-tight ${large ? "text-h3" : "text-[15px]"} ${
+            onPhoto ? "text-white" : "text-ink"
+          }`}
+        >
+          {name}
+        </p>
+        <p className={`telemetry ${onPhoto ? "text-white/80" : "text-ink-muted"}`}>{count}</p>
+      </div>
+    </>
   );
 }
 
@@ -62,67 +111,61 @@ function AlbumCard({
   count: number;
 }) {
   return (
-    <Link
-      href={albumHref(album.id)}
-      onClick={() => rememberAlbumListOrigin(album.id)}
-      className="group block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-    >
-      <div className="relative aspect-square overflow-hidden rounded-xl bg-surface-2 transition-transform duration-250 ease-out-expo group-hover:-translate-y-0.5 group-active:scale-[0.97]">
-        {coverId ? (
-          <GalleryThumb
-            repoKey={repoKey}
-            mediaId={coverId}
-            alt=""
-            size={800}
-            hasThumbnail={cover ? Boolean(cover.thumb) : true}
-            isVideo={cover?.mimeType.startsWith("video/")}
-            className="h-full w-full object-cover transition-transform duration-320 ease-out-expo group-hover:scale-[1.03]"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-ink-faint">
-            <AlbumsIcon size={36} />
-          </div>
-        )}
-      </div>
-      <p className="mt-2 truncate text-body font-medium text-ink">{album.name}</p>
-      <p className="text-small text-ink-muted">{countLabel(count)}</p>
+    <Link href={albumHref(album.id)} onClick={() => rememberAlbumListOrigin(album.id)} className={coverLinkClass}>
+      {coverId ? (
+        <GalleryThumb
+          repoKey={repoKey}
+          mediaId={coverId}
+          alt=""
+          size={800}
+          hasThumbnail={cover ? Boolean(cover.thumb) : true}
+          isVideo={cover?.mimeType.startsWith("video/")}
+          className={coverImageClass}
+        />
+      ) : (
+        <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center pb-10 text-ink-muted">
+          <AlbumsIcon size={32} />
+        </span>
+      )}
+      <CoverCaption name={album.name} count={countLabel(count)} onPhoto={Boolean(coverId)} />
     </Link>
   );
 }
 
-function CategoryCard({ category, repoKey }: { category: Category; repoKey: string }) {
+function CategoryCard({ category, repoKey, hero }: { category: Category; repoKey: string; hero: boolean }) {
   const cover = categoryCover(category.items);
   return (
     <Link
       href={categoryHref(category.id)}
       onClick={() => rememberAlbumListOrigin(`category:${category.id}`)}
-      className="group block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+      className={coverLinkClass}
     >
-      <div className="relative aspect-square overflow-hidden rounded-xl bg-surface-2 transition-transform duration-250 ease-out-expo group-hover:-translate-y-0.5 group-active:scale-[0.97]">
-        {cover ? (
-          <GalleryThumb
-            repoKey={repoKey}
-            mediaId={cover.id}
-            alt=""
-            hasThumbnail={Boolean(cover.thumb)}
-            isVideo={cover.mimeType.startsWith("video/")}
-            className="h-full w-full object-cover transition-transform duration-320 ease-out-expo group-hover:scale-[1.03]"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-ink-faint">
-            <FolderIcon size={28} />
-          </div>
-        )}
-      </div>
-      <p className="mt-1.5 truncate text-small font-medium text-ink">{category.name}</p>
-      <p className="text-micro text-ink-muted">{category.items.length.toLocaleString()}</p>
+      {cover ? (
+        <GalleryThumb
+          repoKey={repoKey}
+          mediaId={cover.id}
+          alt=""
+          size={hero ? 800 : 320}
+          hasThumbnail={Boolean(cover.thumb)}
+          isVideo={cover.mimeType.startsWith("video/")}
+          className={coverImageClass}
+        />
+      ) : (
+        <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center pb-8 text-ink-muted">
+          <FolderIcon size={26} />
+        </span>
+      )}
+      <CoverCaption name={category.name} count={category.items.length.toLocaleString()} onPhoto={Boolean(cover)} large={hero} />
     </Link>
   );
 }
 
-// Denser than albums: they're shortcuts into the library, not collections the user made.
-const CATEGORY_GRID = "grid grid-cols-3 gap-x-2.5 gap-y-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8";
-const ALBUM_GRID = "grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5";
+// A bento of shortcuts into the library (the first one, usually the camera, twice the size);
+// denser than albums, which are collections the user made.
+const CATEGORY_GRID = "grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 md:grid-cols-5 lg:grid-cols-6";
+const ALBUM_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5";
+/** From this many categories the first one gets the 2×2 spot. */
+const HERO_MIN = 4;
 
 /** Library: People, automatic categories, the user's albums, and Trash. */
 export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps) {
@@ -162,11 +205,7 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
     albumsContent = (
       <ul aria-busy="true" className={ALBUM_GRID}>
         {Array.from({ length: 4 }, (_, i) => (
-          <li key={i}>
-            <div className="skeleton aspect-square rounded-xl" />
-            <div className="skeleton mt-2.5 h-4 w-2/3 rounded-full" />
-            <div className="skeleton mt-1.5 h-3 w-1/3 rounded-full" />
-          </li>
+          <li key={i} className="skeleton aspect-square rounded-[18px]" />
         ))}
       </ul>
     );
@@ -183,17 +222,20 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
     albumsContent = (
       <ul className={ALBUM_GRID}>
         <li className="animate-fade-in">
+          {/* The missing tile: a dashed square waiting to be filled with an album. */}
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="group block w-full text-left outline-none"
+            className="group relative block aspect-square w-full rounded-[18px] border-2 border-dashed border-border-strong text-left transition-[border-color,background-color,transform] duration-250 ease-out-expo hover:border-accent hover:bg-accent/[0.06] active:scale-[0.97]"
           >
-            <span className="flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border-strong text-accent transition-all duration-250 ease-out-expo group-hover:border-accent group-hover:bg-accent/5 group-active:scale-[0.97] group-focus-visible:border-accent">
-              <PlusIcon size={28} />
+            <span className="absolute inset-0 flex items-center justify-center pb-10">
+              <span className="flex h-11 w-11 items-center justify-center rounded-tile bg-signal text-signal-ink transition-transform duration-250 ease-spring group-hover:scale-105">
+                <PlusIcon size={22} strokeWidth={2.2} />
+              </span>
             </span>
-            <span className="mt-2 block text-body font-medium text-ink">New album</span>
-            <span className="block text-small text-ink-muted">
-              {albums.length === 0 ? "Group photos and videos" : " "}
+            <span className="absolute inset-x-0 bottom-0 flex flex-col gap-1 p-2.5 sm:p-3">
+              <span className="text-[15px] font-semibold leading-tight text-ink">New album</span>
+              <span className="telemetry text-ink-muted">{albums.length === 0 ? "Group photos" : "Add one"}</span>
             </span>
           </button>
         </li>
@@ -217,11 +259,16 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
 
   let categoriesContent: JSX.Element | null;
   if (categories.length > 0) {
+    const hero = categories.length >= HERO_MIN;
     categoriesContent = (
       <ul className={CATEGORY_GRID}>
         {categories.map((category, i) => (
-          <li key={category.id} className="animate-fade-in" style={stagger(i)}>
-            <CategoryCard category={category} repoKey={repoKey} />
+          <li
+            key={category.id}
+            className={`animate-fade-in ${hero && i === 0 ? "col-span-2 row-span-2" : ""}`}
+            style={stagger(i)}
+          >
+            <CategoryCard category={category} repoKey={repoKey} hero={hero && i === 0} />
           </li>
         ))}
       </ul>
@@ -229,11 +276,8 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
   } else if (libraryLoading) {
     categoriesContent = (
       <ul aria-busy="true" className={CATEGORY_GRID}>
-        {Array.from({ length: 6 }, (_, i) => (
-          <li key={i}>
-            <div className="skeleton aspect-square rounded-xl" />
-            <div className="skeleton mt-2 h-3.5 w-2/3 rounded-full" />
-          </li>
+        {Array.from({ length: 7 }, (_, i) => (
+          <li key={i} className={`skeleton aspect-square rounded-[18px] ${i === 0 ? "col-span-2 row-span-2" : ""}`} />
         ))}
       </ul>
     );
@@ -242,20 +286,30 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
   }
 
   const trashCount = library.trashed.length;
+  const facts =
+    albumsLoading && libraryLoading
+      ? null
+      : [
+          albums.length === 1 ? "1 album" : `${albums.length.toLocaleString()} albums`,
+          categories.length > 0 ? `${categories.length.toLocaleString()} categories` : null,
+        ];
 
   return (
     <>
       <ScrollArea scrollKey="albums">
         <PageHeader
           title="Albums"
+          telemetry={facts ? <Telemetry items={facts} /> : <span className="skeleton block h-2.5 w-32 rounded-[3px]" />}
           actions={
             <button
               type="button"
               onClick={() => setCreating(true)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-small font-medium text-ink transition-colors duration-180 hover:bg-surface-2"
+              aria-label="New album"
+              title="New album"
+              className={`${iconButtonClass({ variant: "tile", size: 40 })} sm:w-auto sm:gap-2 sm:px-3`}
             >
-              <PlusIcon size={16} />
-              New album
+              <PlusIcon size={18} />
+              <span className="hidden text-small font-medium sm:inline">New album</span>
             </button>
           }
         />
@@ -273,21 +327,27 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
               : albumsState.error.message}
           </Notice>
         )}
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-7 px-4 pb-4 pt-2 sm:px-6">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-9 px-4 pb-4 pt-3 sm:px-6">
           <PeopleRow repoKey={repoKey} />
 
-          {categoriesContent && <Section title="Categories">{categoriesContent}</Section>}
+          {categoriesContent && (
+            <Section title="Categories" meta={categories.length > 0 ? categories.length.toLocaleString() : undefined}>
+              {categoriesContent}
+            </Section>
+          )}
 
-          <Section title="Your albums">{albumsContent}</Section>
+          <Section title="Your albums" meta={albumsLoading ? undefined : albums.length.toLocaleString()}>
+            {albumsContent}
+          </Section>
 
           <Link
             href="/albums/trash"
             onClick={() => rememberAlbumListOrigin("trash")}
-            className="group flex animate-fade-in items-center gap-3.5 rounded-2xl border border-border bg-surface px-4 py-3.5 outline-none transition-colors duration-180 hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent"
+            className={`group flex min-h-[64px] animate-fade-in items-center gap-3.5 px-4 py-3 transition-[background-color,transform] duration-180 ease-out-expo hover:bg-surface-2 active:scale-[0.99] ${cardClass}`}
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-ink-muted transition-colors duration-180 group-hover:bg-surface-3">
-              <TrashIcon size={19} />
-            </span>
+            <IconTile>
+              <TrashIcon size={18} />
+            </IconTile>
             <span className="min-w-0 flex-1">
               <span className="block text-body font-medium text-ink">Trash</span>
               <span className="block truncate text-small text-ink-muted">
@@ -296,7 +356,10 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
                   : `Deleted items stay here for ${TRASH_RETENTION_DAYS} days`}
               </span>
             </span>
-            <ChevronRightIcon size={18} className="shrink-0 text-ink-faint transition-transform duration-180 group-hover:translate-x-0.5" />
+            <ChevronRightIcon
+              size={18}
+              className="shrink-0 text-ink-muted transition-transform duration-180 group-hover:translate-x-0.5"
+            />
           </Link>
         </div>
       </ScrollArea>

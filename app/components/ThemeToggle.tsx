@@ -6,6 +6,8 @@
 // the first paint; SystemBarsSync follows OS and cross-tab changes when no
 // choice is stored. This module only flips the attribute and remembers it.
 import { useEffect, useState } from "react";
+import { iconButtonClass } from "./ui/IconButton";
+import SegmentedControl from "./ui/SegmentedControl";
 
 export const THEME_STORAGE_KEY = "404gb-theme";
 
@@ -64,20 +66,18 @@ export default function ThemeToggle({ className }: { className?: string }) {
       disabled={theme === null}
       aria-label={label}
       title={label}
-      className={`relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border text-ink-muted transition-all duration-180 ease-out-expo after:absolute after:-inset-1 after:content-[''] hover:border-border-strong hover:text-ink active:scale-90 ${
-        className ?? ""
-      }`}
+      className={`${iconButtonClass({ variant: "tile" })} ${className ?? ""}`}
     >
       <svg
         viewBox="0 0 24 24"
-        width="16"
-        height="16"
+        width="18"
+        height="18"
         fill="none"
         stroke="currentColor"
         strokeWidth={1.8}
         strokeLinecap="round"
         aria-hidden="true"
-        className={`absolute transition-all duration-320 ease-out-expo ${
+        className={`absolute transition-[opacity,transform] duration-320 ease-out-expo ${
           theme === "light" ? "rotate-0 scale-100 opacity-100" : "-rotate-90 scale-50 opacity-0"
         }`}
       >
@@ -86,20 +86,75 @@ export default function ThemeToggle({ className }: { className?: string }) {
       </svg>
       <svg
         viewBox="0 0 24 24"
-        width="16"
-        height="16"
+        width="18"
+        height="18"
         fill="none"
         stroke="currentColor"
         strokeWidth={1.8}
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"
-        className={`absolute transition-all duration-320 ease-out-expo ${
+        className={`absolute transition-[opacity,transform] duration-320 ease-out-expo ${
           theme === "dark" ? "rotate-0 scale-100 opacity-100" : "rotate-90 scale-50 opacity-0"
         }`}
       >
         <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z" />
       </svg>
     </button>
+  );
+}
+
+/** A tiny tile preview of a theme: its background with one lime tile. */
+function ThemePreview({ theme }: { theme: ThemePreference }) {
+  const paper = "#F3F2ED";
+  const ink = "#0A0A0B";
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" className="shrink-0">
+      <defs>
+        <clipPath id={`theme-preview-${theme}`}>
+          <rect width="16" height="16" rx="4.5" />
+        </clipPath>
+      </defs>
+      <g clipPath={`url(#theme-preview-${theme})`}>
+        <rect width="16" height="16" fill={theme === "light" ? paper : ink} />
+        {theme === "system" && <path d="M16 0v16H0Z" fill={paper} />}
+      </g>
+      <rect x="0.5" y="0.5" width="15" height="15" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.25" />
+      <rect x="4.5" y="4.5" width="7" height="7" rx="2" fill="#C8F542" />
+    </svg>
+  );
+}
+
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+  { value: "system", label: "System" },
+];
+
+/** Dark / Light / System as a segmented control with tiny previews (Settings › Library). */
+export function ThemeChoice({ className }: { className?: string }) {
+  const [preference, setPreference] = useState<ThemePreference | null>(null);
+
+  useEffect(() => {
+    setPreference(getThemePreference());
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === THEME_STORAGE_KEY) setPreference(getThemePreference());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  return (
+    <SegmentedControl
+      label="Theme"
+      value={preference ?? "system"}
+      disabled={preference === null}
+      options={THEME_OPTIONS.map(({ value, label }) => ({ value, label, icon: <ThemePreview theme={value} /> }))}
+      onChange={(value) => {
+        setPreference(value);
+        setThemePreference(value);
+      }}
+      className={className}
+    />
   );
 }

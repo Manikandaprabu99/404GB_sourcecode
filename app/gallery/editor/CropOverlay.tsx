@@ -65,8 +65,8 @@ function CornerMark({ handle }: { handle: CropHandle }) {
   if (handle.includes("e")) anchor.right = HIT / 2 - 2;
   return (
     <>
-      <span className="absolute rounded-full bg-white shadow-soft" style={{ ...anchor, ...horizontal }} />
-      <span className="absolute rounded-full bg-white shadow-soft" style={{ ...anchor, ...vertical }} />
+      <span className="absolute rounded-[1.5px] bg-white shadow-soft" style={{ ...anchor, ...horizontal }} />
+      <span className="absolute rounded-[1.5px] bg-white shadow-soft" style={{ ...anchor, ...vertical }} />
     </>
   );
 }
@@ -157,7 +157,7 @@ export default function CropOverlay({ crop, size, ratio, disabled, onChange, onI
             onPointerDown={begin(handle)}
           >
             <span
-              className={`rounded-full bg-white/90 shadow-soft ${
+              className={`rounded-[1.5px] bg-white/90 shadow-soft ${
                 handle === "n" || handle === "s" ? "h-[3px] w-6" : "h-6 w-[3px]"
               }`}
             />

@@ -2,76 +2,100 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------- Tokens (docs/DESIGN.md › Tokens, "Missing Tile") ---------- */
+/* RGB triplets, used by Tailwind as rgb(var(--x) / <alpha>). Dark ("Ink") is the default;
+ * light ("Paper") applies when the OS asks for it and the user hasn't picked dark, or when
+ * the user picked light. `--signal` is the lime used for fills in both themes (badges,
+ * primary buttons, switch tracks, the nav tile, progress, selection) and never for text on
+ * light; `--accent` is the accent for text and icons (lime on ink, moss on paper).
+ * `--ink-faint` is below 4.5:1 for small text (3.9:1 on bg in dark, 3.3:1 in light), so it
+ * is for placeholders, separators and other non-essential text; facts use `--ink-muted`. */
 :root {
-  --bg: 6 6 9;
-  --surface: 15 15 19;
-  --surface-2: 22 22 27;
-  --surface-3: 31 31 37;
-  --border: 39 39 46;
-  --border-strong: 63 63 72;
-  --ink: 250 250 251;
-  --ink-muted: 163 163 172;
-  --ink-faint: 110 110 120;
-  --accent: 129 140 248;
-  --accent-strong: 99 102 241;
-  --accent-ink: 12 12 18;
-  --accent-inverse: 79 70 229;
+  --bg: 10 10 11;
+  --surface: 18 18 20;
+  --surface-2: 26 26 29;
+  --surface-3: 35 35 39;
+  --border: 42 42 47;
+  --border-strong: 61 61 68;
+  --ink: 242 242 238;
+  --ink-muted: 161 161 168;
+  --ink-faint: 109 109 117;
+  --signal: 200 245 66;
+  --signal-ink: 14 20 0;
+  --accent: 200 245 66;
+  --accent-strong: 172 222 38;
+  --accent-ink: 14 20 0;
+  --accent-inverse: 74 112 0;
+  --accent-2: 139 124 255;
   --success: 74 222 128;
-  --danger: 248 113 113;
-  --danger-ink: 28 8 8;
-  --warning: 250 204 21;
+  --warning: 255 181 71;
+  --danger: 255 90 110;
+  --danger-ink: 30 6 10;
 
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --bg: 250 250 251;
+    --bg: 243 242 237;
     --surface: 255 255 255;
-    --surface-2: 244 244 247;
-    --surface-3: 234 234 239;
-    --border: 226 226 231;
-    --border-strong: 209 209 217;
-    --ink: 24 24 27;
-    --ink-muted: 82 82 94;
-    --ink-faint: 133 133 145;
-    --accent: 99 102 241;
-    --accent-strong: 79 70 229;
+    --surface-2: 234 233 227;
+    --surface-3: 224 223 216;
+    --border: 220 219 211;
+    --border-strong: 198 197 188;
+    --ink: 17 17 19;
+    --ink-muted: 85 85 92;
+    --ink-faint: 133 133 140;
+    --signal: 200 245 66;
+    --signal-ink: 14 20 0;
+    --accent: 74 112 0;
+    --accent-strong: 55 85 0;
     --accent-ink: 255 255 255;
-    --accent-inverse: 165 180 252;
-    --success: 22 163 74;
-    --danger: 220 38 38;
+    --accent-inverse: 200 245 66;
+    --accent-2: 91 75 234;
+    --success: 21 128 61;
+    --warning: 161 92 0;
+    --danger: 217 45 68;
     --danger-ink: 255 255 255;
-    --warning: 161 98 7;
 
     color-scheme: light;
   }
 }
 
 :root[data-theme="light"] {
-  --bg: 250 250 251;
+  --bg: 243 242 237;
   --surface: 255 255 255;
-  --surface-2: 244 244 247;
-  --surface-3: 234 234 239;
-  --border: 226 226 231;
-  --border-strong: 209 209 217;
-  --ink: 24 24 27;
-  --ink-muted: 82 82 94;
-  --ink-faint: 133 133 145;
-  --accent: 99 102 241;
-  --accent-strong: 79 70 229;
+  --surface-2: 234 233 227;
+  --surface-3: 224 223 216;
+  --border: 220 219 211;
+  --border-strong: 198 197 188;
+  --ink: 17 17 19;
+  --ink-muted: 85 85 92;
+  --ink-faint: 133 133 140;
+  --signal: 200 245 66;
+  --signal-ink: 14 20 0;
+  --accent: 74 112 0;
+  --accent-strong: 55 85 0;
   --accent-ink: 255 255 255;
-  --accent-inverse: 165 180 252;
-  --success: 22 163 74;
-  --danger: 220 38 38;
+  --accent-inverse: 200 245 66;
+  --accent-2: 91 75 234;
+  --success: 21 128 61;
+  --warning: 161 92 0;
+  --danger: 217 45 68;
   --danger-ink: 255 255 255;
-  --warning: 161 98 7;
 
   color-scheme: light;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+}
+
+/* Layout metrics shared by the floating phone tab bar (NavBar.tsx) and what has to clear
+ * it: 64px bar + 12px gap from the bottom + 16px of breathing room, plus the inset. */
+:root {
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --tabbar-space: calc(5.75rem + var(--safe-bottom));
 }
 
 * {
@@ -83,19 +107,22 @@ html {
   -webkit-text-size-adjust: 100%;
   /* Painted behind overscroll/bounce areas and before <body> renders. */
   background: rgb(var(--bg));
+  scrollbar-color: rgb(var(--border-strong)) transparent;
 }
 
 body {
   @apply bg-bg text-ink antialiased;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
+/* Text selection in the signal colour, like a selected tile. */
 ::selection {
-  background: rgb(var(--accent) / 0.35);
+  background: rgb(var(--signal));
+  color: rgb(var(--signal-ink));
 }
 
 /* ---------- Focus ---------- */
-/* In the base layer so a component can still opt out with outline utilities. */
+/* 2px ring in the accent with a 2px gap: lime on ink (the dark accent is the signal colour),
+ * moss on paper. In the base layer so a component can still opt out with outline utilities. */
 @layer base {
   :where(a, button, input, select, textarea, summary, [role="button"], [role="switch"], [tabindex]):focus-visible {
     outline: 2px solid rgb(var(--accent));
@@ -106,37 +133,41 @@ body {
   }
 }
 
-/* ---------- Motion-safety ---------- */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
+/* ---------- Telemetry labels ---------- */
+/* Small uppercase monospace facts (`12,431 ITEMS · 38.2 GB`): the `label` type role plus
+ * the font, case and tabular numbers. Colour comes from the usual text-* utilities. */
+@layer components {
+  .telemetry {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.6875rem;
+    line-height: 1.2;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
   }
 }
 
-/* ---------- Landing page background treatment ---------- */
-/* Soft, slow-drifting blurred color fields (a lightweight stand-in for a
- * "mesh gradient" hero) plus a faint fading grid — both pure CSS, no
- * canvas/WebGL, so it's cheap enough to run indefinitely. */
-.bg-blob {
-  position: absolute;
-  border-radius: 9999px;
-  filter: blur(72px);
-  opacity: 0.55;
-  will-change: transform;
-}
-
-.bg-grid-fade {
-  background-image:
-    linear-gradient(rgb(var(--ink) / 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(var(--ink) / 0.06) 1px, transparent 1px);
-  background-size: 44px 44px;
-  -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 30%, black 40%, transparent 78%);
-  mask-image: radial-gradient(ellipse 70% 55% at 50% 30%, black 40%, transparent 78%);
+/* ---------- Scrollbars (mouse and trackpad; touch screens overlay their own) ---------- */
+@media (hover: hover) and (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 5px;
+    background: rgb(var(--border-strong)) padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--ink-faint));
+  }
 }
 
 /* ---------- Skeleton shimmer (gallery thumbnails while loading) ---------- */
@@ -162,28 +193,63 @@ body {
   background-image: linear-gradient(
     90deg,
     transparent,
-    rgb(var(--surface-3) / 0.9),
+    rgb(var(--surface-3) / 0.85),
     transparent
   );
-  animation: shimmer 1.6s ease-in-out infinite;
+  animation: shimmer 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-/* ---------- Glass surfaces (sticky nav, overflow menu) ---------- */
+/* ---------- Glass (fixed chrome only: floating nav, collapsed header, toasts) ---------- */
+/* Blur is the most expensive thing a WebView paints, so it never goes on tiles or rows
+ * that scroll. Without backdrop-filter the surfaces just get more opaque. */
 .glass {
-  background: rgb(var(--surface) / 0.72);
-  backdrop-filter: blur(16px) saturate(1.4);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  background: rgb(var(--surface) / 0.8);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  backdrop-filter: blur(16px) saturate(1.3);
+}
+
+.glass-bg {
+  background: rgb(var(--bg) / 0.8);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+}
+
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .glass {
+    background: rgb(var(--surface) / 0.97);
+  }
+  .glass-bg {
+    background: rgb(var(--bg) / 0.97);
+  }
 }
 
 /* ---------- Safe areas ---------- */
 /* pt-safe / pb-safe / pt-safe-4 … come from the plugin in tailwind.config.js
  * and add the inset to a base value. Extra bottom padding on phones keeps
- * content clear of the fixed mobile tab bar (NavBar.tsx); scoped to a
- * max-width query so it never overrides `sm:p-8` etc. on larger screens. */
+ * content clear of the floating tab bar (NavBar.tsx); scoped to a max-width
+ * query so it never overrides `sm:p-8` etc. on larger screens. */
 @media (max-width: 639.98px) {
   .pb-tabbar-safe {
-    padding-bottom: calc(4.75rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+    padding-bottom: var(--tabbar-space);
   }
+}
+
+/* ---------- Landing page background treatment (legacy sign-in screen) ---------- */
+.bg-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(72px);
+  opacity: 0.55;
+  will-change: transform;
+}
+
+.bg-grid-fade {
+  background-image:
+    linear-gradient(rgb(var(--ink) / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--ink) / 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 30%, black 40%, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 55% at 50% 30%, black 40%, transparent 78%);
 }
 
 /* ---------- Media scrubber (video viewer) ---------- */
@@ -216,13 +282,14 @@ body {
   border-radius: 9999px;
   background: #fff;
 }
+/* The handle is a small tile, like every other knob in the app. */
 .range-media::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   height: 14px;
   width: 14px;
   margin-top: -5px;
-  border-radius: 9999px;
+  border-radius: 4px;
   background: #fff;
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
   transition: transform 120ms ease-out;
@@ -234,6 +301,129 @@ body {
   height: 14px;
   width: 14px;
   border: 0;
-  border-radius: 9999px;
+  border-radius: 4px;
   background: #fff;
+}
+
+/* ---------- Motion-safety ---------- */
+/* docs/DESIGN.md › Motion: with reduced motion nothing slides, scales or pulses; what's left
+ * are 120ms opacity (and colour) fades. Transitions keep only those properties, so transforms
+ * jump; the keyframes that move or scale are redefined as plain fades under the same names,
+ * and the pulsing ones hold still. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 120ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 120ms !important;
+    transition-property: opacity, color, background-color, border-color, outline-color, fill, stroke !important;
+    scroll-behavior: auto !important;
+  }
+
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes page-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes slide-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes sheet-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes viewer-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes tile-fill {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes check-pop {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes scale-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes sheet-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes toast-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes viewer-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes pop {
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes pulse {
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes tile-pulse {
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes breathe {
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes tile-step {
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes shimmer {
+    to {
+      transform: translateX(-100%);
+    }
+  }
+  @keyframes indeterminate {
+    to {
+      transform: translateX(0);
+    }
+  }
+  @keyframes blob {
+    to {
+      transform: none;
+    }
+  }
 }

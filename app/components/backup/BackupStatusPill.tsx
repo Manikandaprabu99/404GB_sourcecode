@@ -1,111 +1,89 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { describeBackup, type BackupPillIcon, type BackupPillTone } from "@/lib/library/backupStore";
+import { describeBackup, type BackupPill, type BackupPillIcon, type BackupPillTone, type BackupSnapshot } from "@/lib/library/backupStore";
 import { useBackupStatus, useWebUploadProgress } from "@/lib/library/hooks";
-import {
-  AlertIcon,
-  BatteryChargingIcon,
-  BatteryLowIcon,
-  ClockIcon,
-  CloudCheckIcon,
-  CloudOffIcon,
-  DownloadAppIcon,
-  LockIcon,
-  SignalIcon,
-  WifiIcon,
-} from "@/app/components/library/icons";
+import StatusBadge, { type StatusBadgeTone, type TileGlyphState } from "@/app/components/ui/StatusBadge";
 
-const TONES: Record<BackupPillTone, string> = {
-  progress: "bg-accent/15 text-accent",
-  ok: "bg-success/15 text-success",
-  warn: "bg-warning/15 text-warning",
-  action: "border border-border bg-surface-2 text-ink hover:border-border-strong",
-  muted: "bg-surface-2 text-ink-muted",
+const TONES: Record<BackupPillTone, StatusBadgeTone> = {
+  progress: "live",
+  ok: "live",
+  warn: "attention",
+  action: "neutral",
+  muted: "neutral",
 };
 
-function ProgressRing({ value }: { value?: number }) {
-  const radius = 6;
-  const circumference = 2 * Math.PI * radius;
-  const indeterminate = value === undefined;
-  const fraction = Math.min(1, Math.max(0.04, value ?? 0));
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="14"
-      height="14"
-      aria-hidden="true"
-      className={`shrink-0 ${indeterminate ? "animate-spin" : "-rotate-90"}`}
-    >
-      <circle cx="8" cy="8" r={radius} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
-      <circle
-        cx="8"
-        cy="8"
-        r={radius}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={indeterminate ? circumference * 0.7 : circumference * (1 - fraction)}
-        className="transition-[stroke-dashoffset] duration-320 ease-out-expo"
-      />
-    </svg>
-  );
+function glyphFor(tone: BackupPillTone): TileGlyphState {
+  if (tone === "progress") return "busy";
+  if (tone === "ok") return "done";
+  return "waiting";
 }
 
-function iconFor(icon: BackupPillIcon, progress?: number): ReactNode {
-  switch (icon) {
+/** The badge's short form of a backup state, in the spirit of `128 TO GO` / `WAITING · WI-FI`
+ * (shown uppercase). The full sentence stays the badge's accessible text. Also used by the
+ * backup card in Settings. */
+export function shortLabel(pill: BackupPill, backup: BackupSnapshot): string {
+  const status = backup.status;
+  if (pill.tone === "ok") return "Up to date";
+  switch (pill.icon) {
     case "sync":
-      return <ProgressRing value={progress} />;
-    case "check":
-      return <CloudCheckIcon size={14} strokeWidth={2} className="shrink-0" />;
-    case "wifi":
-      return <WifiIcon size={14} strokeWidth={2} className="shrink-0" />;
-    case "signal":
-      return <SignalIcon size={14} strokeWidth={2} className="shrink-0" />;
-    case "charging":
-      return <BatteryChargingIcon size={14} strokeWidth={2} className="shrink-0" />;
-    case "battery":
-      return <BatteryLowIcon size={14} strokeWidth={2} className="shrink-0" />;
-    case "clock":
-      return <ClockIcon size={14} strokeWidth={2} className="shrink-0" />;
-    case "alert":
-      return <AlertIcon size={14} strokeWidth={2} className="shrink-0" />;
-    case "off":
-      return <CloudOffIcon size={14} strokeWidth={2} className="shrink-0" />;
-    case "update":
-      return <DownloadAppIcon size={14} strokeWidth={2} className="shrink-0" />;
+      if (status?.state === "uploading") return status.pending > 0 ? `${status.pending.toLocaleString()} to go` : "Backing up";
+      return "Checking";
     case "lock":
-      return <LockIcon size={14} strokeWidth={2} className="shrink-0" />;
+      return "Sign in";
+    case "update":
+      return "Update app";
+    case "wifi":
+      return "Waiting · Wi-Fi";
+    case "signal":
+      return "Paused · Roaming";
+    case "charging":
+      return "Waiting · Charger";
+    case "battery":
+      return "Paused · Battery";
+    case "clock":
+      return pill.label.startsWith("GitHub limit") ? "Paused · GitHub limit" : "Starting soon";
+    case "off":
+      return pill.tone === "action" ? "Backup off" : "Waiting · Offline";
+    case "alert":
+      if (status?.state === "needs_permission") return "Allow access";
+      return status && status.failed > 0 ? `${status.failed.toLocaleString()} failed` : "Check backup";
+    default:
+      return pill.label;
   }
 }
 
 export function StatusPill({
   label,
+  short,
   tone,
-  icon,
   href,
-  progress,
 }: {
+  /** The full sentence (accessible text). */
   label: string;
+  /** What the badge shows; defaults to `label`. */
+  short?: string;
   tone: BackupPillTone;
+  /** Kept for callers; the badge's 2×2 glyph follows the tone instead. */
   icon: BackupPillIcon;
   href?: string;
+  /** 0..1 while uploading (the badge's glyph runs instead of showing a fraction). */
   progress?: number;
 }) {
   const body = (
-    <span
-      className={`inline-flex h-7 max-w-full animate-fade-in items-center gap-1.5 rounded-full px-2.5 text-micro font-semibold transition-colors duration-180 ${TONES[tone]}`}
+    <StatusBadge
+      tone={TONES[tone]}
+      glyph={glyphFor(tone)}
+      srLabel={short && short !== label ? label : undefined}
+      className="animate-fade-in"
     >
-      {iconFor(icon, progress)}
-      <span className="truncate">{label}</span>
-    </span>
+      {short ?? label}
+    </StatusBadge>
   );
   if (!href) return <span role="status" className="flex min-w-0">{body}</span>;
   return (
-    <Link href={href} className="flex min-w-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent">
+    // A 44px-tall hit area around the 24px badge.
+    <Link href={href} className="relative flex min-w-0 rounded-tile-sm after:absolute after:-inset-x-1 after:-inset-y-2.5 after:content-['']">
       {body}
     </Link>
   );
@@ -119,9 +97,11 @@ export default function BackupStatusPill() {
   const web = useWebUploadProgress();
 
   if (web.active) {
+    const toGo = Math.max(0, web.total - web.current + 1);
     return (
       <StatusPill
         label={web.paused ? "Upload paused" : `Uploading ${web.current} of ${web.total}`}
+        short={web.paused ? "Paused" : `${toGo.toLocaleString()} to go`}
         tone={web.paused ? "muted" : "progress"}
         icon="sync"
         progress={web.fraction}
@@ -132,5 +112,5 @@ export default function BackupStatusPill() {
 
   const pill = describeBackup(backup);
   if (!pill) return null;
-  return <StatusPill {...pill} />;
+  return <StatusPill {...pill} short={shortLabel(pill, backup)} />;
 }

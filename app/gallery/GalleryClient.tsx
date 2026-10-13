@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MediaIndexEntry } from "@/lib/media";
@@ -24,15 +24,32 @@ import { localDayKey } from "@/lib/library/trash";
 import { galleryView, type LibraryFilter } from "@/lib/library/viewState";
 import { useZoom } from "@/lib/library/zoom";
 import EmptyState, { primaryButtonClass, secondaryButtonClass } from "@/app/components/library/EmptyState";
-import MediaLibraryView from "@/app/components/library/MediaLibraryView";
+import MediaLibraryView, { type LibraryHeaderState } from "@/app/components/library/MediaLibraryView";
 import Notice, { noticeActionClass } from "@/app/components/library/Notice";
 import { RefreshIcon, UploadIcon } from "@/app/components/library/icons";
-import GalleryHeader from "./GalleryHeader";
+import { GalleryBar, GalleryIntro, type GalleryHeaderProps } from "./GalleryHeader";
 import MemoriesStrip from "./MemoriesStrip";
+import { formatBytes } from "./viewer/format";
 
 interface GalleryClientProps {
   repoOwner: string;
   repoName: string;
+}
+
+/** The telemetry line's count: what the grid shows, in the words of the filter or search. */
+function countFact(count: number, filter: LibraryFilter, searching: boolean): string {
+  const n = count.toLocaleString();
+  if (searching) return count === 1 ? "1 match" : `${n} matches`;
+  switch (filter) {
+    case "photos":
+      return count === 1 ? "1 photo" : `${n} photos`;
+    case "videos":
+      return count === 1 ? "1 video" : `${n} videos`;
+    case "favorites":
+      return count === 1 ? "1 favorite" : `${n} favorites`;
+    default:
+      return count === 1 ? "1 item" : `${n} items`;
+  }
 }
 
 /** The filter chip and the search query together (lib/library/search explains the query). */
@@ -56,6 +73,9 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   const [filter, setFilterState] = useState<LibraryFilter>(galleryView.filter);
   const [query, setQueryState] = useState(galleryView.query);
   const [searchOpen, setSearchOpen] = useState(false);
+  // The search field scrolled up under the sticky bar (the bar then offers a search button).
+  const [searchFieldHidden, setSearchFieldHidden] = useState(false);
+  const desktopSearchRef = useRef<HTMLInputElement>(null);
   const deferredQuery = useDeferredValue(query);
   const zoom = useZoom();
   const { people } = usePeople(repoKey);
@@ -118,6 +138,7 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   const entriesById = useMemo(() => new Map(library.items.map((item) => [item.id, item])), [library.items]);
 
   const visible = useMemo(() => applyFilter(library.items, filter, parsed), [library.items, filter, parsed]);
+  const visibleBytes = useMemo(() => visible.reduce((sum, item) => sum + (item.size ?? 0), 0), [visible]);
 
   const memories = useMemo(() => onThisDay(library.items, now), [library.items, now]);
   const memorySets = useMemo(
@@ -130,6 +151,15 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   const offline = !online || library.error?.kind === "offline";
   const loading = !hasLibrary && (!library.hydrated || (!library.synced && !library.error));
   const retry = () => void syncLibrary();
+
+  // `12,431 ITEMS · 38.2 GB` (or what a filter or search shows), plus BACKING UP while the
+  // phone uploads (the header adds it where there's room); nothing yet during a cold load.
+  const backingUp = backup.support === "available" && Boolean(backup.status?.enabled) && backup.status?.state === "uploading";
+  const telemetry = loading
+    ? null
+    : [countFact(visible.length, filter, deferredQuery.trim() !== ""), visibleBytes > 0 ? formatBytes(visibleBytes) : null].filter(
+        (fact): fact is string => Boolean(fact)
+      );
 
   const notice =
     hasLibrary && library.error?.kind === "auth" && library.error.code !== "no_repo" ? (
@@ -233,10 +263,36 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
     empty = <EmptyState illustration="photos" title="No photos yet" message="Photos you back up or upload show up here." />;
   }
 
+  const headerProps = ({ selectMode, startSelect, collapsed, headerHeight }: LibraryHeaderState): GalleryHeaderProps => ({
+    filter,
+    onFilterChange: setFilter,
+    query,
+    onQueryChange: setQuery,
+    searchOpen,
+    onSearchOpenChange: setSearchOpen,
+    offline,
+    canSelect: visible.length > 0,
+    selectMode,
+    onSelect: startSelect,
+    repoKey,
+    entriesById,
+    suggest,
+    terms: deferredQuery.trim() ? parsed.terms.filter((term) => term.kind !== "text") : [],
+    onSearchFocus: () => setSearchUsed(true),
+    telemetry,
+    backingUp,
+    collapsed,
+    headerHeight,
+    fieldHidden: searchFieldHidden,
+    onFieldHiddenChange: setSearchFieldHidden,
+    desktopSearchRef,
+  });
+
   return (
     <MediaLibraryView
       repoKey={repoKey}
       scrollKey="gallery"
+      contained
       items={visible}
       loading={loading}
       notice={notice}
@@ -254,25 +310,8 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
           />
         ) : null
       }
-      header={({ selectMode, startSelect }) => (
-        <GalleryHeader
-          filter={filter}
-          onFilterChange={setFilter}
-          query={query}
-          onQueryChange={setQuery}
-          searchOpen={searchOpen}
-          onSearchOpenChange={setSearchOpen}
-          offline={offline}
-          canSelect={visible.length > 0}
-          selectMode={selectMode}
-          onSelect={startSelect}
-          repoKey={repoKey}
-          entriesById={entriesById}
-          suggest={suggest}
-          terms={deferredQuery.trim() ? parsed.terms.filter((term) => term.kind !== "text") : []}
-          onSearchFocus={() => setSearchUsed(true)}
-        />
-      )}
+      header={(state) => <GalleryBar {...headerProps(state)} />}
+      intro={(state) => <GalleryIntro {...headerProps(state)} />}
     />
   );
 }

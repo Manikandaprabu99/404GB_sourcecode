@@ -1,11 +1,12 @@
-export const primaryAuthButtonClass =
-  "group inline-flex h-12 w-full items-center justify-center gap-2.5 rounded-full bg-ink px-6 text-body font-semibold text-bg shadow-soft transition-all duration-180 ease-out-expo hover:-translate-y-0.5 hover:shadow-glow-accent active:translate-y-0 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-60";
+import { buttonClass } from "@/app/components/ui/Button";
 
-export const secondaryAuthButtonClass =
-  "inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-border-strong px-6 text-body font-medium text-ink transition-colors duration-180 hover:bg-surface-2 active:scale-[0.98]";
+// The sign-in screen's buttons, from the design system's (docs/DESIGN.md › Buttons): full
+// width, and 48px tall on every screen size (the one place a big target beats density).
+export const primaryAuthButtonClass = `group ${buttonClass({ variant: "primary", block: true })} sm:!min-h-[48px] sm:!px-5 sm:!text-body`;
 
-export const textAuthButtonClass =
-  "inline-flex h-11 items-center justify-center gap-1.5 rounded-full px-4 text-small font-medium text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink";
+export const secondaryAuthButtonClass = `${buttonClass({ variant: "secondary", block: true })} sm:!min-h-[48px] sm:!px-5 sm:!text-body`;
+
+export const textAuthButtonClass = buttonClass({ variant: "ghost", size: "sm" });
 
 export function AuthSpinner({ size = 18 }: { size?: number }) {
   return (

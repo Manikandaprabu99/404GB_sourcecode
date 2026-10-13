@@ -6,7 +6,10 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { MediaIndexEntry } from "@/lib/media";
+import { buttonClass } from "@/app/components/ui/Button";
 import { useConfirm } from "@/app/components/ui/ConfirmDialog";
+import { TileGlyph } from "@/app/components/ui/StatusBadge";
+import TileMeter from "@/app/components/ui/TileMeter";
 import { useToast } from "@/app/components/ui/Toast";
 import { useHistoryOverlay } from "@/lib/ui/useHistoryOverlay";
 import { aspectRatio, fitCropToAspect, flipEdit, rotateEdit, transformedSize } from "@/lib/editor/geometry";
@@ -52,28 +55,35 @@ const TABS: { id: Tab; label: string; Icon: typeof FiltersIcon }[] = [
 
 const CLOSE_ANIMATION_MS = 180;
 
-// The editor is always dark (like a darkroom), whatever the app theme: the dark token values from globals.css.
+// The editor is always dark (like a darkroom), whatever the app theme: the dark ("Ink") token
+// values from globals.css.
 const DARK_TOKENS = {
-  "--bg": "6 6 9",
-  "--surface": "15 15 19",
-  "--surface-2": "22 22 27",
-  "--surface-3": "31 31 37",
-  "--border": "39 39 46",
-  "--border-strong": "63 63 72",
-  "--ink": "250 250 251",
-  "--ink-muted": "163 163 172",
-  "--ink-faint": "110 110 120",
-  "--accent": "129 140 248",
-  "--accent-strong": "99 102 241",
-  "--accent-ink": "12 12 18",
+  "--bg": "10 10 11",
+  "--surface": "18 18 20",
+  "--surface-2": "26 26 29",
+  "--surface-3": "35 35 39",
+  "--border": "42 42 47",
+  "--border-strong": "61 61 68",
+  "--ink": "242 242 238",
+  "--ink-muted": "161 161 168",
+  "--ink-faint": "109 109 117",
+  "--signal": "200 245 66",
+  "--signal-ink": "14 20 0",
+  "--accent": "200 245 66",
+  "--accent-strong": "172 222 38",
+  "--accent-ink": "14 20 0",
+  "--accent-inverse": "74 112 0",
+  "--accent-2": "139 124 255",
   "--success": "74 222 128",
-  "--danger": "248 113 113",
-  "--warning": "250 204 21",
+  "--warning": "255 181 71",
+  "--danger": "255 90 110",
+  "--danger-ink": "30 6 10",
   colorScheme: "dark",
   paddingLeft: "var(--safe-area-inset-left, env(safe-area-inset-left, 0px))",
   paddingRight: "var(--safe-area-inset-right, env(safe-area-inset-right, 0px))",
 } as CSSProperties;
 
+/** A round 44px icon button (docs/DESIGN.md › Viewer / editor chrome). */
 function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
   return (
     <button
@@ -81,32 +91,10 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink transition-colors duration-180 hover:bg-ink/10 active:bg-ink/15"
+      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink transition-[background-color,transform] duration-180 ease-out-expo hover:bg-ink/10 active:scale-[0.94] active:bg-ink/15"
     >
       {children}
     </button>
-  );
-}
-
-function ProgressRing({ fraction }: { fraction: number }) {
-  const radius = 22;
-  const circumference = 2 * Math.PI * radius;
-  return (
-    <svg viewBox="0 0 56 56" className="h-14 w-14 -rotate-90 text-accent" aria-hidden="true">
-      <circle cx="28" cy="28" r={radius} fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="4" />
-      <circle
-        cx="28"
-        cy="28"
-        r={radius}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="4"
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={circumference * (1 - Math.min(1, Math.max(0, fraction)))}
-        className="transition-[stroke-dashoffset] duration-320 ease-out-expo"
-      />
-    </svg>
   );
 }
 
@@ -306,19 +294,23 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
         </IconButton>
         <div className="flex min-w-0 flex-1 justify-center" aria-live="polite">
           {loadingOriginal ? (
-            <span className="flex items-center gap-2 rounded-full bg-surface-2 px-3 py-1.5 text-micro text-ink-muted animate-fade-in">
-              <SpinnerIcon size={14} />
-              Loading original{percent > 0 ? ` · ${percent}%` : "…"}
+            // The viewer's Original badge, neutral while the full-resolution photo loads.
+            <span className="telemetry flex h-6 min-w-0 items-center gap-1.5 rounded-tile-sm bg-surface-3 px-2 text-ink-muted animate-fade-in">
+              <TileGlyph state="busy" />
+              <span className="truncate">Loading original</span>
+              {percent > 0 ? <span className="tabular-nums text-ink">{percent}%</span> : null}
             </span>
           ) : sizeNote ? (
-            <span className="truncate text-micro text-ink-faint animate-fade-in">{sizeNote}</span>
+            <span className="telemetry truncate text-ink-muted animate-fade-in">{sizeNote}</span>
           ) : null}
         </div>
         <button
           type="button"
           onClick={handleSave}
           disabled={!canSave}
-          className="flex h-10 shrink-0 items-center gap-2 rounded-full bg-accent px-4 text-small font-semibold text-accent-ink transition-[background-color,color,transform] duration-180 ease-out-expo hover:bg-accent-strong active:scale-[0.97] disabled:bg-surface-3 disabled:text-ink-faint"
+          className={`flex h-10 shrink-0 items-center gap-2 rounded-control bg-signal px-4 text-small font-semibold text-signal-ink transition-[background-color,color,box-shadow,transform] duration-120 ease-out-expo hover:shadow-glow-signal active:scale-[0.97] disabled:shadow-none ${
+            saved ? "" : "disabled:bg-surface-3 disabled:text-ink-muted"
+          }`}
         >
           {busy ? <SpinnerIcon size={16} /> : saved ? <CheckIcon size={18} /> : null}
           {saved ? "Saved" : "Save copy"}
@@ -328,7 +320,7 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
       {loadingOriginal && (
         <div className="absolute inset-x-0 top-0 z-20 h-0.5 bg-transparent" aria-hidden="true">
           <div
-            className="h-full bg-accent transition-[width] duration-320 ease-out-expo"
+            className="h-full bg-signal transition-[width] duration-320 ease-out-expo"
             style={{ width: `${Math.max(4, percent)}%` }}
           />
         </div>
@@ -357,7 +349,7 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
             <div
               className={
                 preview
-                  ? "absolute inset-x-3 top-3 flex items-center gap-3 rounded-xl bg-surface-2/95 px-4 py-3 text-small shadow-elevated animate-fade-in-up"
+                  ? "absolute inset-x-3 top-3 flex items-center gap-3 rounded-control border border-border/60 bg-surface-2 py-2.5 pl-4 pr-2.5 text-small shadow-elevated animate-fade-in-up"
                   : "absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center text-small animate-fade-in"
               }
               role="alert"
@@ -367,19 +359,11 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
                 {preview ? "Couldn't load the full-resolution photo, so it can't be saved yet." : source.error}
               </span>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={source.retry}
-                  className="h-10 rounded-full bg-ink px-4 text-small font-semibold text-bg transition-transform duration-180 active:scale-[0.97]"
-                >
+                <button type="button" onClick={source.retry} className={buttonClass({ variant: "primary", size: "sm" })}>
                   Retry
                 </button>
                 {!preview && (
-                  <button
-                    type="button"
-                    onClick={() => void requestClose()}
-                    className="h-10 rounded-full px-4 text-small font-medium text-ink-muted hover:bg-surface-2"
-                  >
+                  <button type="button" onClick={() => void requestClose()} className={buttonClass({ variant: "ghost", size: "sm" })}>
                     Close
                   </button>
                 )}
@@ -388,7 +372,7 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
           )}
 
           {compare && (
-            <span className="pointer-events-none absolute left-3 top-3 rounded-full bg-black/60 px-3 py-1 text-micro font-medium text-white backdrop-blur-sm animate-fade-in">
+            <span className="telemetry pointer-events-none absolute left-3 top-3 flex h-6 items-center rounded-tile-sm bg-black/65 px-2 text-white animate-fade-in">
               Original
             </span>
           )}
@@ -404,54 +388,56 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
               }}
               onKeyUp={() => setCompare(false)}
               onContextMenu={(event) => event.preventDefault()}
-              className="absolute bottom-3 right-3 flex h-11 w-11 touch-none select-none items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-[background-color,transform] duration-180 active:scale-95 active:bg-black/75 animate-scale-in"
+              className="absolute bottom-3 right-3 flex h-11 w-11 touch-none select-none items-center justify-center rounded-full bg-black/60 text-white ring-1 ring-white/15 transition-[background-color,transform] duration-180 ease-out-expo active:scale-[0.94] active:bg-black/80 animate-scale-in"
             >
               <CompareIcon />
             </button>
           )}
 
           {saver.state.phase !== "idle" && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/55 px-6 backdrop-blur-[2px] animate-fade-in">
+            // No blur: the overlay is up for the whole save, over a full-size canvas.
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/65 px-6 animate-fade-in">
               {saver.state.phase === "error" ? (
                 <div
                   role="alert"
-                  className="flex w-full max-w-xs flex-col items-center gap-3 rounded-2xl bg-surface-2 p-5 text-center shadow-elevated animate-scale-in"
+                  className="flex w-full max-w-xs flex-col items-center gap-3 rounded-dialog border border-border/60 bg-surface p-5 text-center shadow-elevated animate-scale-in"
                 >
-                  <AlertIcon size={28} className="text-danger" />
+                  <span className="flex h-11 w-11 items-center justify-center rounded-tile bg-danger/15 text-danger">
+                    <AlertIcon size={22} />
+                  </span>
                   <p className="text-body font-semibold">Couldn&apos;t save your copy</p>
                   <p className="text-small text-ink-muted">{saver.state.error}</p>
                   <div className="mt-1 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={saver.dismiss}
-                      className="h-10 rounded-full px-4 text-small font-medium text-ink-muted hover:bg-surface-3"
-                    >
+                    <button type="button" onClick={saver.dismiss} className={buttonClass({ variant: "ghost", size: "sm" })}>
                       Keep editing
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleRetry}
-                      className="h-10 rounded-full bg-ink px-4 text-small font-semibold text-bg transition-transform duration-180 active:scale-[0.97]"
-                    >
+                    <button type="button" onClick={handleRetry} className={buttonClass({ variant: "primary", size: "sm" })}>
                       Retry
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col items-center gap-3 text-center animate-scale-in" aria-live="polite">
+                <div className="flex w-52 flex-col items-center gap-3 text-center animate-scale-in" aria-live="polite">
                   {saved ? (
-                    <span className="flex h-14 w-14 items-center justify-center rounded-full bg-accent text-accent-ink animate-scale-in">
-                      <CheckIcon size={28} />
-                    </span>
+                    <>
+                      <span className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-signal text-signal-ink animate-check-pop">
+                        <CheckIcon size={28} />
+                      </span>
+                      <p className="text-small font-medium text-white">{saver.state.label}</p>
+                    </>
                   ) : (
-                    <ProgressRing fraction={saver.state.fraction} />
+                    // Progress as the tile meter, the step in the telemetry line above it.
+                    <TileMeter
+                      value={Math.round(saver.state.fraction * 100)}
+                      max={100}
+                      tiles={10}
+                      fluid
+                      label={saver.state.label}
+                      valueText={`${Math.round(saver.state.fraction * 100)}%`}
+                      ariaLabel="Saving your copy"
+                      className="w-full text-left"
+                    />
                   )}
-                  <p className="text-small font-medium text-white">
-                    {saver.state.label}
-                    {saver.state.phase === "uploading" && saver.state.fraction > 0.05
-                      ? ` ${Math.round(saver.state.fraction * 100)}%`
-                      : ""}
-                  </p>
                 </div>
               )}
             </div>
@@ -509,17 +495,19 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
                   aria-selected={selected}
                   disabled={locked}
                   onClick={() => setTab(id)}
-                  className={`relative flex h-14 flex-1 flex-col items-center justify-center gap-0.5 text-micro font-medium transition-colors duration-180 ease-out-expo disabled:opacity-50 ${
-                    selected ? "text-accent" : "text-ink-muted hover:text-ink"
+                  className={`group flex h-[60px] flex-1 flex-col items-center justify-center gap-1 text-micro font-medium transition-colors duration-180 ease-out-expo disabled:opacity-50 ${
+                    selected ? "text-ink" : "text-ink-muted hover:text-ink"
                   }`}
                 >
-                  <Icon size={20} />
-                  {label}
+                  {/* The active tool's icon sits in the lime tile, like the tab bar's. */}
                   <span
-                    className={`absolute inset-x-8 top-0 h-0.5 rounded-full bg-accent transition-[opacity,transform] duration-250 ease-out-expo lg:bottom-0 lg:top-auto ${
-                      selected ? "scale-x-100 opacity-100" : "scale-x-50 opacity-0"
+                    className={`flex h-[30px] w-11 items-center justify-center rounded-tile transition-[background-color,color,transform] duration-250 ease-out-expo group-active:scale-[0.94] ${
+                      selected ? "bg-signal text-signal-ink" : ""
                     }`}
-                  />
+                  >
+                    <Icon size={20} />
+                  </span>
+                  {label}
                 </button>
               );
             })}

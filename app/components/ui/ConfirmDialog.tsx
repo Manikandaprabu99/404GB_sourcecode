@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useHistoryOverlay } from "@/lib/ui/useHistoryOverlay";
+import { buttonClass } from "./Button";
 import { trapTab, useEscapeLayer } from "./focus";
 
 export interface ConfirmOptions {
@@ -106,25 +107,25 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             aria-describedby={pending.message ? "confirm-message" : undefined}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => panelRef.current && trapTab(e, panelRef.current)}
-            className={`w-full rounded-t-2xl border-t border-border bg-surface px-5 pb-safe-5 pt-3 shadow-sheet sm:max-w-sm sm:rounded-2xl sm:border sm:p-6 sm:shadow-elevated ${
+            className={`w-full rounded-t-sheet bg-surface px-5 pb-safe-5 pt-2 shadow-sheet dark:border-t dark:border-border/60 sm:max-w-sm sm:rounded-dialog sm:p-6 sm:shadow-elevated sm:dark:border ${
               closing ? "animate-sheet-out sm:animate-scale-out" : "animate-sheet-in sm:animate-scale-in"
             }`}
           >
-            <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-border-strong sm:hidden" aria-hidden="true" />
+            <div className="mx-auto mb-5 h-1 w-9 rounded-full bg-border-strong sm:hidden" aria-hidden="true" />
             <div className="flex items-start gap-4">
               {pending.destructive && (
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger/15 text-danger" aria-hidden="true">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-tile bg-danger/15 text-danger" aria-hidden="true">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
                     <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-9 0 1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
                   </svg>
                 </span>
               )}
-              <div className="min-w-0 pt-1.5">
-                <h2 id="confirm-title" className="text-h3 font-semibold text-ink">
+              <div className="min-w-0 pt-1">
+                <h2 id="confirm-title" className="font-display text-h2 text-ink">
                   {pending.title}
                 </h2>
                 {pending.message && (
-                  <p id="confirm-message" className="mt-1.5 text-body text-ink-muted">
+                  <p id="confirm-message" className="mt-2 text-body text-ink-muted">
                     {pending.message}
                   </p>
                 )}
@@ -135,7 +136,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 ref={cancelRef}
                 type="button"
                 onClick={() => settle(false)}
-                className="h-12 flex-1 rounded-full bg-surface-2 px-5 text-body font-medium text-ink transition-colors duration-180 hover:bg-surface-3 active:scale-[0.98] sm:h-10 sm:flex-none sm:bg-transparent sm:text-small sm:hover:bg-surface-2"
+                className={`flex-1 sm:flex-none ${buttonClass({ variant: "secondary" })}`}
               >
                 {pending.cancelLabel ?? "Cancel"}
               </button>
@@ -143,11 +144,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 ref={confirmRef}
                 type="button"
                 onClick={() => settle(true)}
-                className={`h-12 flex-1 rounded-full px-5 text-body font-semibold transition-all duration-180 ease-out-expo active:scale-[0.98] sm:h-10 sm:flex-none sm:text-small ${
-                  pending.destructive
-                    ? "bg-danger text-danger-ink hover:bg-danger/90"
-                    : "bg-ink text-bg hover:bg-ink/90"
-                }`}
+                className={`flex-1 sm:flex-none ${buttonClass({ variant: pending.destructive ? "danger" : "primary" })}`}
               >
                 {pending.confirmLabel ?? "OK"}
               </button>

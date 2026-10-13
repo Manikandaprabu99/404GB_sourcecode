@@ -77,7 +77,7 @@ function ImageSlide({
     const displayable = canDisplayOriginal(item);
     return (
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 px-8 text-center">
-        <MediaPlaceholder variant="overlay" className="h-40 w-40 rounded-2xl" />
+        <MediaPlaceholder variant="overlay" className="h-40 w-40 rounded-card" />
         {!active ? null : !displayable ? (
           <div className="flex max-w-xs flex-col items-center gap-3">
             <p className="text-small text-white/75">
@@ -86,7 +86,7 @@ function ImageSlide({
             <button
               type="button"
               onClick={onDownload}
-              className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-small font-semibold text-black transition-transform duration-180 active:scale-95"
+              className="inline-flex h-11 items-center gap-2 rounded-control bg-white px-5 text-small font-semibold text-black transition-transform duration-120 active:scale-[0.97]"
             >
               <DownloadIcon size={18} />
               {downloadLabel}
@@ -98,7 +98,7 @@ function ImageSlide({
             <button
               type="button"
               onClick={onRetryOriginal}
-              className="inline-flex h-11 items-center rounded-full border border-white/25 px-5 text-small font-semibold text-white transition-colors duration-180 hover:bg-white/10"
+              className="inline-flex h-11 items-center rounded-control border border-white/25 px-5 text-small font-semibold text-white transition-[background-color,transform] duration-120 hover:bg-white/10 active:scale-[0.97]"
             >
               Try again
             </button>

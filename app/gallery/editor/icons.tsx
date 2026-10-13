@@ -50,12 +50,13 @@ export function FiltersIcon(props: IconProps) {
   );
 }
 
+/** Two sliders with square knobs, the app's tile knob. */
 export function AdjustIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
-      <circle cx="15" cy="7" r="2" />
-      <circle cx="9" cy="17" r="2" />
+      <path d="M3.5 7h8.5M18 7h2.5M3.5 17h2.5M12 17h8.5" />
+      <rect x="12" y="4" width="6" height="6" rx="1.6" />
+      <rect x="6" y="14" width="6" height="6" rx="1.6" />
     </Icon>
   );
 }

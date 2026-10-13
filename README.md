@@ -34,9 +34,11 @@ create a storage repo.
   backfill), verified chunk reads and client-side reconstruction of originals.
 - `lib/albums` — `manifest/albums.json` reads and edits.
 - `lib/session` — the session store (native Backup plugin in the app, localStorage in a
-  browser) and its IndexedDB mirror for the service worker.
+  browser, memory only on the background People runner) and its IndexedDB mirror for the
+  service worker.
 - `lib/auth` — Device Flow (via CapacitorHttp) and token checks.
 - `lib/library`, `lib/upload`, `lib/cache` — the UI's stores, upload queue and local caches.
-- `lib/faces` — People: on-device face detection and grouping, `manifest/faces.json`
-  ([`docs/FACES.md`](docs/FACES.md)).
+- `lib/faces` — People: on-device face detection and grouping, `manifest/faces.json`, and the
+  page the Android app runs while the phone charges (`app/runner/faces`, exported as
+  `runner/faces.html`) ([`docs/FACES.md`](docs/FACES.md)).
 - `public/sw.js` — offline shell and byte-range video streaming straight from GitHub.

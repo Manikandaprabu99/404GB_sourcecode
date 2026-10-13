@@ -53,12 +53,14 @@ const ScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(function ScrollAr
       className={`relative h-full overflow-y-auto overflow-x-hidden overscroll-contain ${className ?? ""}`}
     >
       {children}
+      {/* Room to scroll the end of the content clear of the floating tab bar (and the
+       * selection bar above it); --tabbar-space is defined in globals.css. */}
       <div
         aria-hidden="true"
         className={`transition-[height] duration-250 ease-out-expo ${
           selectionInset
-            ? "h-[calc(9rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] sm:h-[calc(6.5rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))]"
-            : "h-[calc(4.75rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] sm:h-[calc(2rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))]"
+            ? "h-[calc(9.5rem+var(--safe-bottom))] sm:h-[calc(6.5rem+var(--safe-bottom))]"
+            : "h-[var(--tabbar-space)] sm:h-[calc(2rem+var(--safe-bottom))]"
         }`}
       />
     </div>

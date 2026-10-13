@@ -9,9 +9,15 @@ import { closeOverlaysThen } from "@/lib/library/history";
 import EmptyState, { primaryButtonClass } from "@/app/components/library/EmptyState";
 import PageHeader from "@/app/components/library/PageHeader";
 import ScrollArea from "@/app/components/library/ScrollArea";
-import { BackIcon } from "@/app/components/library/icons";
+import { IconTile, cardClass } from "@/app/components/library/SettingsBlocks";
+import { BackIcon, ChevronDownIcon } from "@/app/components/library/icons";
+import { buttonClass } from "@/app/components/ui/Button";
+import IconButton from "@/app/components/ui/IconButton";
+import { Telemetry } from "@/app/components/ui/SectionLabel";
+import TileMeter from "@/app/components/ui/TileMeter";
 import FaceAvatar from "./FaceAvatar";
-import { scanDetail, scanFraction, scanHeadline, scanInProgress } from "./scanText";
+import { scanDetail, scanHeadline, scanInProgress } from "./scanText";
+import { ScanFaceIcon } from "./icons";
 
 interface PeopleClientProps {
   repoOwner: string;
@@ -29,18 +35,18 @@ function PersonTile({ person, repoKey }: { person: PersonDetails; repoKey: strin
     <li className="animate-fade-in">
       <Link
         href={personHref(person.id)}
-        className="group flex flex-col items-center rounded-2xl p-2 outline-none transition-colors duration-180 hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent"
+        className="group flex flex-col items-center rounded-card px-1 py-2 transition-colors duration-180 hover:bg-surface-2 focus-visible:outline-none"
       >
         <FaceAvatar
           repoKey={repoKey}
           face={person.cover}
           muted={person.hidden}
-          className="h-20 w-20 transition-transform duration-250 ease-out-expo group-active:scale-95 sm:h-24 sm:w-24"
+          className="h-20 w-20 ring-2 ring-transparent ring-offset-2 ring-offset-bg transition-[transform,box-shadow] duration-250 ease-out-expo group-focus-visible:ring-accent-2 group-active:scale-95 sm:h-24 sm:w-24"
         />
-        <span className={`mt-2 w-full truncate text-center text-small font-medium ${person.name ? "text-ink" : "text-ink-muted"}`}>
+        <span className={`mt-2.5 w-full truncate text-center text-small font-medium ${person.name ? "text-ink" : "text-ink-muted"}`}>
           {person.name ?? "Add a name"}
         </span>
-        <span className="text-micro text-ink-faint">{photos(person.mediaIds.length)}</span>
+        <span className="telemetry mt-1 text-ink-muted">{photos(person.mediaIds.length)}</span>
       </Link>
     </li>
   );
@@ -63,44 +69,56 @@ export default function PeopleClient({ repoOwner, repoName, showHidden }: People
     });
 
   const scanning = scanInProgress(status) && status.repoKey === repoKey;
-  const grid = "grid grid-cols-3 gap-x-1 gap-y-3 min-[480px]:grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8";
+  const named = visible.filter((p) => p.name).length;
+  const grid = "grid grid-cols-3 gap-x-1 gap-y-2 min-[480px]:grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8";
 
   return (
     <ScrollArea scrollKey="people">
       <PageHeader
         title="People"
-        subtitle={ready && visible.length > 0 ? `${visible.length.toLocaleString()} people` : undefined}
+        telemetry={
+          ready && visible.length > 0 ? (
+            <Telemetry
+              items={[`${visible.length.toLocaleString()} people`, named > 0 ? `${named.toLocaleString()} named` : null]}
+            />
+          ) : undefined
+        }
         leading={
-          <button
-            type="button"
-            onClick={goBack}
-            aria-label="Back"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink"
-          >
+          <IconButton variant="ghost" label="Back" onClick={goBack}>
             <BackIcon size={20} />
-          </button>
+          </IconButton>
         }
       />
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-3 pb-6 pt-2 sm:px-6">
         {scanning && (
-          <div className="mx-1 animate-fade-in rounded-2xl border border-border bg-surface px-4 py-3">
-            <p className="text-small font-medium text-ink">{scanHeadline(status)}</p>
-            {scanDetail(status) && <p className="mt-0.5 text-micro text-ink-muted">{scanDetail(status)}</p>}
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
-              <div
-                className="h-full rounded-full bg-accent transition-[width] duration-320 ease-out-expo"
-                style={{ width: `${Math.max(2, scanFraction(status) * 100)}%` }}
-              />
+          <div className={`mx-1 flex animate-fade-in flex-col gap-3.5 px-4 py-4 ${cardClass}`}>
+            <div className="flex items-center gap-3.5">
+              <IconTile tone="accent-2">
+                <ScanFaceIcon size={18} />
+              </IconTile>
+              <div className="min-w-0 flex-1">
+                <p className="text-body font-medium text-ink">{scanHeadline(status)}</p>
+                {scanDetail(status) && <p className="mt-0.5 text-small text-ink-muted">{scanDetail(status)}</p>}
+              </div>
             </div>
+            <TileMeter
+              fluid
+              tiles={20}
+              value={status.done}
+              max={status.total}
+              active={!status.paused}
+              ariaLabel="Photos checked for faces"
+            />
           </div>
         )}
 
         {!ready ? (
           <ul aria-busy="true" className={grid}>
             {Array.from({ length: 8 }, (_, i) => (
-              <li key={i} className="flex flex-col items-center p-2">
+              <li key={i} className="flex flex-col items-center px-1 py-2">
                 <div className="skeleton h-20 w-20 rounded-full sm:h-24 sm:w-24" />
-                <div className="skeleton mt-2.5 h-3 w-14 rounded-full" />
+                <div className="skeleton mt-3 h-3 w-14 rounded-[3px]" />
+                <div className="skeleton mt-1.5 h-2.5 w-10 rounded-[3px]" />
               </li>
             ))}
           </ul>
@@ -127,14 +145,18 @@ export default function PeopleClient({ repoOwner, repoName, showHidden }: People
         )}
 
         {ready && hidden.length > 0 && (
-          <section className="flex flex-col gap-2">
+          <section className="flex flex-col gap-2 border-t border-border/60 pt-4">
             <button
               type="button"
               onClick={() => setHiddenOpen((open) => !open)}
               aria-expanded={hiddenOpen}
-              className="self-start rounded-full px-3 py-1.5 text-small font-medium text-accent transition-colors duration-180 hover:bg-accent/10"
+              className={`${buttonClass({ variant: "ghost", size: "sm" })} self-start !text-accent`}
             >
               {hiddenOpen ? "Hide hidden people" : `Show hidden people (${hidden.length.toLocaleString()})`}
+              <ChevronDownIcon
+                size={16}
+                className={`transition-transform duration-250 ease-out-expo ${hiddenOpen ? "rotate-180" : ""}`}
+              />
             </button>
             {hiddenOpen && (
               <ul className={grid}>

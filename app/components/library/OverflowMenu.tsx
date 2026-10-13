@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { iconButtonClass, type IconButtonVariant } from "@/app/components/ui/IconButton";
 import { MoreVerticalIcon } from "./icons";
 
 export interface OverflowMenuItem {
@@ -11,8 +12,16 @@ export interface OverflowMenuItem {
   onSelect: () => void;
 }
 
-/** A "⋮" button with a small dropdown of actions. */
-export default function OverflowMenu({ items, label = "More options" }: { items: OverflowMenuItem[]; label?: string }) {
+/** A "⋮" button (a header action tile by default) with a small dropdown of actions. */
+export default function OverflowMenu({
+  items,
+  label = "More options",
+  variant = "tile",
+}: {
+  items: OverflowMenuItem[];
+  label?: string;
+  variant?: IconButtonVariant;
+}) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -40,14 +49,14 @@ export default function OverflowMenu({ items, label = "More options" }: { items:
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-10 w-10 items-center justify-center rounded-full text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink"
+        className={`${iconButtonClass({ variant })} ${open ? "!bg-surface-3 !text-ink" : ""}`}
       >
         <MoreVerticalIcon size={20} />
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1 w-52 origin-top-right animate-scale-in rounded-xl border border-border bg-surface p-1.5 shadow-elevated"
+          className="absolute right-0 top-full z-50 mt-2 w-56 origin-top-right animate-scale-in rounded-lg border border-border/60 bg-surface p-1.5 shadow-elevated"
         >
           {items.map((item) => (
             <button
@@ -58,7 +67,7 @@ export default function OverflowMenu({ items, label = "More options" }: { items:
                 setOpen(false);
                 item.onSelect();
               }}
-              className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-small font-medium transition-colors duration-180 hover:bg-surface-2 ${
+              className={`flex min-h-[44px] w-full items-center gap-3 rounded-tile px-3 text-left text-body font-medium transition-colors duration-180 hover:bg-surface-2 ${
                 item.tone === "danger" ? "text-danger" : "text-ink"
               }`}
             >

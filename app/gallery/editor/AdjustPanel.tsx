@@ -2,6 +2,8 @@
 
 import { ADJUSTMENTS } from "@/lib/editor/filters";
 import { hasAdjustments, type AdjustmentId, type Adjustments } from "@/lib/editor/types";
+import { buttonClass } from "@/app/components/ui/Button";
+import { chipClass } from "@/app/components/ui/Chip";
 import EditorSlider from "./EditorSlider";
 import { ContrastIcon, DropletIcon, ResetIcon, SunIcon, ThermometerIcon, VignetteIcon } from "./icons";
 
@@ -29,7 +31,7 @@ function ResetButton({ disabled, onReset }: { disabled: boolean; onReset: () => 
       type="button"
       onClick={onReset}
       disabled={disabled}
-      className="flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-small font-medium text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink disabled:pointer-events-none disabled:opacity-40"
+      className={`${buttonClass({ variant: "ghost", size: "sm" })} shrink-0 !gap-1.5 disabled:!opacity-40`}
     >
       <ResetIcon size={18} />
       Reset
@@ -63,7 +65,7 @@ export default function AdjustPanel({
           onChange={(value) => onChange(current.id, value)}
           onInteractionChange={onInteractionChange}
         />
-        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="-mx-4 flex items-center gap-2 overflow-x-auto px-4 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {ADJUSTMENTS.map(({ id, label }) => {
             const Icon = ICONS[id];
             const selected = id === current.id;
@@ -74,14 +76,13 @@ export default function AdjustPanel({
                 aria-pressed={selected}
                 disabled={disabled}
                 onClick={() => onActiveChange(id)}
-                className={`flex h-10 shrink-0 items-center gap-2 rounded-full px-3.5 text-small font-medium transition-colors duration-180 ease-out-expo disabled:opacity-50 ${
-                  selected ? "bg-ink text-bg" : "bg-surface-2 text-ink-muted hover:text-ink"
-                }`}
+                className={`${chipClass(selected)} !gap-2`}
               >
                 <Icon size={18} />
                 {label}
+                {/* Changed: a tiny lime tile (moss on the inverted chip). */}
                 {adjust[id] !== 0 && (
-                  <span className={`h-1.5 w-1.5 rounded-full ${selected ? "bg-accent-strong" : "bg-accent"}`} />
+                  <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-[2px] ${selected ? "bg-accent-inverse" : "bg-signal"}`} />
                 )}
               </button>
             );
@@ -96,7 +97,7 @@ export default function AdjustPanel({
           const Icon = ICONS[id];
           return (
             <div key={id}>
-              <div className="flex items-center gap-2 text-small text-ink-muted">
+              <div className="telemetry flex items-center gap-2 text-ink-muted">
                 <Icon size={16} />
                 {label}
               </div>

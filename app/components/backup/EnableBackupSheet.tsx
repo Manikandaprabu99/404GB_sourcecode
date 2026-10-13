@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Sheet from "@/app/components/ui/Sheet";
 import Switch from "@/app/components/ui/Switch";
+import SectionLabel from "@/app/components/ui/SectionLabel";
+import SelectCheck from "@/app/components/ui/SelectCheck";
 import type { BackupFolders, BackupOptions } from "@/lib/native/backup";
 import { primaryButtonClass, secondaryButtonClass } from "@/app/components/library/EmptyState";
 import NetworkChoice from "./NetworkChoice";
@@ -15,6 +17,7 @@ interface EnableBackupSheetProps {
   onClose: () => void;
 }
 
+/** One answer of a radio group: a card with the square check (docs/DESIGN.md › Tiles, not circles). */
 function Choice({
   checked,
   title,
@@ -32,21 +35,11 @@ function Choice({
       role="radio"
       aria-checked={checked}
       onClick={onSelect}
-      className={`flex w-full items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors duration-180 ${
-        checked ? "border-accent bg-accent/10" : "border-border hover:bg-surface-2"
+      className={`flex w-full items-start gap-3 rounded-control border px-3.5 py-3 text-left transition-[background-color,border-color,transform] duration-180 ease-out-expo active:scale-[0.99] ${
+        checked ? "border-accent bg-accent/[0.08]" : "border-border hover:bg-surface-2"
       }`}
     >
-      <span
-        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors duration-180 ${
-          checked ? "border-accent" : "border-ink-faint"
-        }`}
-      >
-        <span
-          className={`h-2.5 w-2.5 rounded-full bg-accent transition-transform duration-180 ease-spring ${
-            checked ? "scale-100" : "scale-0"
-          }`}
-        />
-      </span>
+      <SelectCheck selected={checked} variant="surface" className="mt-0.5" />
       <span className="min-w-0">
         <span className="block text-body font-medium text-ink">{title}</span>
         <span className="block text-small text-ink-muted">{description}</span>
@@ -72,14 +65,16 @@ export default function EnableBackupSheet({ open, defaults, busy, onConfirm, onC
 
   return (
     <Sheet open={open} onClose={onClose} title="Turn on backup">
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-6">
         <p className="text-small text-ink-muted">
           Photos and videos upload to your GitHub repo in original quality, even when the app is closed. Anything
           already in your library is skipped, so nothing is uploaded twice.
         </p>
 
         <div role="radiogroup" aria-label="Photos already on this phone" className="flex flex-col gap-2">
-          <h3 className="text-small font-semibold text-ink">Photos already on this phone</h3>
+          <SectionLabel as="h3" className="px-1 pb-0.5">
+            Photos already on this phone
+          </SectionLabel>
           <Choice
             checked={includeExisting}
             title="Back up everything"
@@ -95,7 +90,9 @@ export default function EnableBackupSheet({ open, defaults, busy, onConfirm, onC
         </div>
 
         <div role="radiogroup" aria-label="Folders" className="flex flex-col gap-2">
-          <h3 className="text-small font-semibold text-ink">Folders</h3>
+          <SectionLabel as="h3" className="px-1 pb-0.5">
+            Folders
+          </SectionLabel>
           <Choice
             checked={folders === "all"}
             title="All folders"
@@ -111,16 +108,18 @@ export default function EnableBackupSheet({ open, defaults, busy, onConfirm, onC
         </div>
 
         <div className="flex flex-col gap-2">
-          <h3 className="text-small font-semibold text-ink">Back up using</h3>
+          <SectionLabel as="h3" className="px-1 pb-0.5">
+            Back up using
+          </SectionLabel>
           <NetworkChoice wifiOnly={wifiOnly} onChange={setWifiOnly} />
-          <p className="text-micro text-ink-faint">
+          <p className="px-1 text-small text-ink-muted">
             {wifiOnly
               ? "Mobile data is never used."
               : "Uses mobile data when there's no Wi-Fi, but never while roaming."}
           </p>
         </div>
 
-        <div className="rounded-xl border border-border px-3.5 py-3">
+        <div className="rounded-control bg-surface-2 px-3.5 py-1">
           <Switch
             checked={chargingOnly}
             onChange={setChargingOnly}
@@ -129,7 +128,7 @@ export default function EnableBackupSheet({ open, defaults, busy, onConfirm, onC
           />
         </div>
 
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" onClick={onClose} disabled={busy} className={secondaryButtonClass}>
             Cancel
           </button>

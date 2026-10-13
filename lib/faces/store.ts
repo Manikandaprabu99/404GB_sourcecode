@@ -101,7 +101,8 @@ let hydration: Promise<void> = Promise.resolve();
 let headEtag: { etag: string; sha: string } | null = null;
 let syncInflight: Promise<void> | null = null;
 let lastSyncAt = 0;
-let flushing = false;
+/** The commit on its way, if any (later flushFaces calls join it). */
+let flushInflight: Promise<void> | null = null;
 let flushTimer = 0;
 let flushDueAt = 0;
 let retryDelayMs = RETRY_MIN_MS;
@@ -194,7 +195,7 @@ function reset(key: string | null) {
   loaded = false;
   synced = false;
   saving = false;
-  flushing = false;
+  flushInflight = null;
   error = null;
   version += 1;
   headEtag = null;
@@ -419,14 +420,22 @@ function scheduleFlush(delayMs: number) {
   }, Math.max(0, delayMs));
 }
 
-/** Commits everything pending now (also used when the app goes to the background). */
-export async function flushFaces(): Promise<void> {
-  if (!repoKey || flushing || pending.length === 0) return;
-  if (error?.code === "corrupt_manifest" || error?.kind === "auth") return;
+/** Commits everything pending now (also used when the app goes to the background); a commit
+ * already on its way is joined instead. */
+export function flushFaces(): Promise<void> {
+  if (flushInflight) return flushInflight;
+  if (!repoKey || pending.length === 0) return Promise.resolve();
+  if (error?.code === "corrupt_manifest" || error?.kind === "auth") return Promise.resolve();
+  const run = commitPending(repoKey).finally(() => {
+    if (flushInflight === run) flushInflight = null;
+  });
+  flushInflight = run;
+  return run;
+}
+
+async function commitPending(key: string): Promise<void> {
   const gen = generation;
-  const key = repoKey;
   const ops = pending.slice();
-  flushing = true;
   saving = true;
   emit(true);
   try {
@@ -461,12 +470,37 @@ export async function flushFaces(): Promise<void> {
     scheduleFlush(wait);
   } finally {
     if (gen === generation) {
-      flushing = false;
       saving = false;
       emit(true);
       if (pending.length > 0 && !flushTimer && !error) scheduleNextFlush();
     }
   }
+}
+
+const FINAL_COMMIT_ATTEMPTS = 3;
+
+/**
+ * Commits everything pending and waits for it, trying a failed commit again a couple of times
+ * (the background runner, before it says it's finished). Resolves with what kept the commit
+ * from landing, or null when nothing is left pending.
+ */
+export async function commitPendingFaces(): Promise<LibraryError | null> {
+  for (let attempt = 1; ; attempt++) {
+    if (!repoKey) return null;
+    await flushFaces();
+    if (pending.length === 0) return null;
+    // Waiting wouldn't help with these; the operations stay on this device for next time.
+    if (error && (error.kind === "auth" || error.kind === "rate-limit" || error.code === "corrupt_manifest")) return error;
+    if (attempt >= FINAL_COMMIT_ATTEMPTS) return error ?? { kind: "server", message: "Not everything could be saved" };
+    if (error) await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+  }
+}
+
+/** Writes the pending operations to this device right away (the page is about to go). */
+export function savePendingFaces(): Promise<void> {
+  window.clearTimeout(pendingWriteTimer);
+  pendingWriteTimer = 0;
+  return repoKey ? idb.writePending(repoKey, pending) : Promise.resolve();
 }
 
 function pendingCounts(): { edits: number; scans: number } {

@@ -3,38 +3,38 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import Switch from "@/app/components/ui/Switch";
+import SegmentedControl from "@/app/components/ui/SegmentedControl";
+import StatusBadge from "@/app/components/ui/StatusBadge";
+import TileMeter from "@/app/components/ui/TileMeter";
 import { useToast } from "@/app/components/ui/Toast";
 import { Backup, type BackupFolders, type BackupOptions, type BackupStatus } from "@/lib/native/backup";
 import {
   applyBackupStatus,
   backupRunProgress,
+  describeBackup,
   errorCode,
   errorMessage,
   describeWait,
   refreshBackupStatus,
-  type BackupPillIcon,
   type BackupRun,
 } from "@/lib/library/backupStore";
 import { formatRelativeTime } from "@/lib/library/dates";
 import { useBackupStatus } from "@/lib/library/hooks";
 import { flushPendingDeletes } from "@/lib/library/mediaStore";
 import { leaveForSignIn } from "@/lib/library/signedOut";
-import { SettingsCard, rowButtonClass } from "@/app/components/library/SettingsBlocks";
+import { IconTile, Stat, StatGrid, cardClass, rowButtonClass } from "@/app/components/library/SettingsBlocks";
 import {
   AlertIcon,
   BatteryChargingIcon,
-  BatteryLowIcon,
   ClockIcon,
-  CloudCheckIcon,
   CloudOffIcon,
   DownloadAppIcon,
   LockIcon,
   RefreshIcon,
-  SignalIcon,
   SyncIcon,
   UploadIcon,
-  WifiIcon,
 } from "@/app/components/library/icons";
+import { StatusPill, shortLabel } from "./BackupStatusPill";
 import EnableBackupSheet from "./EnableBackupSheet";
 import NetworkChoice from "./NetworkChoice";
 
@@ -45,6 +45,11 @@ const PERMISSION_MESSAGE =
 type BusyAction = "toggle" | "options" | "now" | "retry" | "battery";
 
 const FALLBACK_OPTIONS: BackupOptions = { includeExisting: true, folders: "all", wifiOnly: true, chargingOnly: false };
+
+const FOLDER_OPTIONS: { value: BackupFolders; label: string }[] = [
+  { value: "all", label: "All folders" },
+  { value: "camera", label: "Camera only" },
+];
 
 function readChoices(): Pick<BackupOptions, "includeExisting" | "folders"> {
   try {
@@ -73,6 +78,7 @@ function saveChoices(options: BackupOptions) {
   }
 }
 
+/** A tinted note inside the card: something to know (info) or to do (warn, danger). */
 function Callout({
   icon,
   tone,
@@ -86,14 +92,18 @@ function Callout({
   children: ReactNode;
   action?: ReactNode;
 }) {
-  const tones = {
-    warn: "border-warning/30 bg-warning/10 [&>span]:text-warning",
-    danger: "border-danger/30 bg-danger/10 [&>span]:text-danger",
-    info: "border-border bg-surface-2 [&>span]:text-ink-muted",
-  };
+  // Info notes sit in a well of the page colour, so their surface-2 buttons still stand out.
+  const box = { warn: "bg-warning/10", danger: "bg-danger/10", info: "bg-bg" }[tone];
+  const iconTone = {
+    warn: "bg-warning/15 text-warning",
+    danger: "bg-danger/15 text-danger",
+    info: "bg-surface-2 text-ink-muted",
+  }[tone];
   return (
-    <div role={tone === "info" ? undefined : "alert"} className={`flex gap-3 rounded-xl border p-3.5 ${tones[tone]}`}>
-      <span className="mt-0.5 shrink-0">{icon}</span>
+    <div role={tone === "info" ? undefined : "alert"} className={`flex gap-3 rounded-control p-3.5 ${box}`}>
+      <span aria-hidden="true" className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-tile ${iconTone}`}>
+        {icon}
+      </span>
       <div className="min-w-0 flex-1">
         <p className="text-small font-semibold text-ink">{title}</p>
         <p className="mt-0.5 text-small text-ink-muted">{children}</p>
@@ -103,13 +113,15 @@ function Callout({
   );
 }
 
-function Stat({ label, value, danger }: { label: string; value: number; danger?: boolean }) {
+/** A labelled control block inside the card: title, a line of explanation, the control. */
+function Option({ title, description, children }: { title: string; description: string; children: ReactNode }) {
   return (
-    <div className="bg-surface px-3 py-2.5">
-      <dt className="text-micro text-ink-muted">{label}</dt>
-      <dd className={`mt-0.5 text-h3 font-semibold tabular-nums ${danger ? "text-danger" : "text-ink"}`}>
-        {value.toLocaleString()}
-      </dd>
+    <div className="flex flex-col gap-2.5 px-4 py-4">
+      <div>
+        <p className="text-body font-medium text-ink">{title}</p>
+        <p className="mt-0.5 text-small text-ink-muted">{description}</p>
+      </div>
+      {children}
     </div>
   );
 }
@@ -127,51 +139,23 @@ function backlogEstimate(pending: number): string {
   return `about ${Math.round(hours / 24)} days`;
 }
 
-function waitIcon(icon: BackupPillIcon): ReactNode {
-  const className = "text-ink-muted";
-  switch (icon) {
-    case "charging":
-      return <BatteryChargingIcon size={18} className={className} />;
-    case "battery":
-      return <BatteryLowIcon size={18} className="text-warning" />;
-    case "signal":
-      return <SignalIcon size={18} className={className} />;
-    case "clock":
-      return <ClockIcon size={18} className={className} />;
-    case "off":
-      return <CloudOffIcon size={18} className={className} />;
-    default:
-      return <WifiIcon size={18} className={className} />;
-  }
-}
-
-
-function statusHeadline(status: BackupStatus, run: BackupRun | null): { icon: ReactNode; text: string } {
+/** The sentence next to the status badge. */
+function statusHeadline(status: BackupStatus, run: BackupRun | null): string {
   switch (status.state) {
     case "uploading": {
       const { done, total } = backupRunProgress(status, run);
-      return {
-        icon: <SyncIcon size={18} className="animate-spin text-accent [animation-duration:2.4s]" />,
-        text: total > 0 ? `Backing up ${Math.min(done + 1, total)} of ${total}` : "Backing up",
-      };
+      return total > 0 ? `Backing up ${Math.min(done + 1, total)} of ${total}` : "Backing up";
     }
     case "scanning":
-      return {
-        icon: <SyncIcon size={18} className="animate-spin text-accent [animation-duration:2.4s]" />,
-        text: "Checking for new photos and videos",
-      };
-    case "waiting": {
-      const wait = describeWait(status);
-      return { icon: waitIcon(wait.icon), text: wait.label };
-    }
+      return "Checking for new photos and videos";
+    case "waiting":
+      return describeWait(status).label;
     case "needs_permission":
-      return { icon: <AlertIcon size={18} className="text-warning" />, text: "Photo access needed" };
+      return "Photo access needed";
     case "needs_sign_in":
-      return { icon: <LockIcon size={18} className="text-warning" />, text: "Signed out" };
+      return "Signed out";
     default:
-      return status.pending > 0
-        ? { icon: <UploadIcon size={18} className="text-ink-muted" />, text: `${status.pending} waiting to back up` }
-        : { icon: <CloudCheckIcon size={18} className="text-success" />, text: "Everything is backed up" };
+      return status.pending > 0 ? `${status.pending} waiting to back up` : "Everything is backed up";
   }
 }
 
@@ -179,6 +163,36 @@ function statusHeadline(status: BackupStatus, run: BackupRun | null): { icon: Re
 async function signInAgain() {
   await Promise.race([flushPendingDeletes(), new Promise((resolve) => setTimeout(resolve, 8000))]);
   leaveForSignIn();
+}
+
+/** A card with an icon tile, a badge, a title and an explanation (backup isn't available here). */
+function InfoCard({
+  icon,
+  tone,
+  badge,
+  title,
+  children,
+}: {
+  icon: ReactNode;
+  tone: "accent" | "warning";
+  badge: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`flex gap-3.5 p-4 ${cardClass}`}>
+      <IconTile tone={tone} className="mt-0.5">
+        {icon}
+      </IconTile>
+      <div className="flex min-w-0 flex-1 flex-col items-start">
+        <StatusBadge tone={tone === "warning" ? "attention" : "neutral"} glyph="waiting">
+          {badge}
+        </StatusBadge>
+        <p className="mt-2.5 text-body font-medium text-ink">{title}</p>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 /** Backup section of Settings: on/off, options and live status of the phone's backup. */
@@ -211,83 +225,77 @@ export default function BackupSettings() {
 
   if (backup.support === "unknown") {
     return (
-      <SettingsCard>
-        <div className="flex items-center gap-3.5 px-4 py-4">
-          <span className="skeleton block h-9 w-9 rounded-full" />
-          <span className="skeleton block h-4 w-48 rounded-full" />
-        </div>
-      </SettingsCard>
+      <div aria-busy="true" className={`flex flex-col gap-3 p-4 ${cardClass}`}>
+        <span className="skeleton block h-4 w-48 rounded-[4px]" />
+        <span className="skeleton block h-3 w-64 max-w-full rounded-[3px]" />
+      </div>
     );
   }
 
   if (backup.support === "browser") {
     return (
-      <SettingsCard>
-        <div className="flex gap-3.5 p-4">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
-            <DownloadAppIcon size={20} />
-          </span>
-          <div className="min-w-0">
-            <p className="text-body font-medium text-ink">Automatic backup needs the Android app</p>
-            <p className="mt-1 text-small text-ink-muted">
-              The 404GB app backs up new photos and videos from your phone by itself, in original quality. In a
-              browser, add them from the Upload tab.
-            </p>
-            <Link href="/upload" className={`${rowButtonClass} mt-3`}>
-              <UploadIcon size={16} />
-              Go to Upload
-            </Link>
-          </div>
-        </div>
-      </SettingsCard>
+      <InfoCard
+        icon={<DownloadAppIcon size={18} />}
+        tone="accent"
+        badge="Android app only"
+        title="Automatic backup needs the Android app"
+      >
+        <p className="mt-1 text-small text-ink-muted">
+          The 404GB app backs up new photos and videos from your phone by itself, in original quality. In a browser,
+          add them from the Upload tab.
+        </p>
+        <Link href="/upload" className={`${rowButtonClass} mt-3`}>
+          <UploadIcon size={16} />
+          Go to Upload
+        </Link>
+      </InfoCard>
     );
   }
 
   if (backup.support === "app-update-needed") {
     return (
-      <SettingsCard>
-        <div className="flex gap-3.5 p-4">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-warning/15 text-warning">
-            <DownloadAppIcon size={20} />
-          </span>
-          <div className="min-w-0">
-            <p className="text-body font-medium text-ink">Update the app to turn on backup</p>
-            <p className="mt-1 text-small text-ink-muted">
-              This version of the 404GB app can&apos;t back up automatically. Install the latest version, then
-              come back here to turn it on.
-            </p>
-          </div>
-        </div>
-      </SettingsCard>
+      <InfoCard icon={<DownloadAppIcon size={18} />} tone="warning" badge="Update app" title="Update the app to turn on backup">
+        <p className="mt-1 text-small text-ink-muted">
+          This version of the 404GB app can&apos;t back up automatically. Install the latest version, then come back
+          here to turn it on.
+        </p>
+      </InfoCard>
     );
   }
 
   const status = backup.status;
   if (!status) {
     return (
-      <SettingsCard>
-        <div className="flex items-center justify-between gap-3 px-4 py-4">
-          <p className="text-small text-ink-muted">
-            {backup.error ? `Couldn't read backup status: ${backup.error}` : "Loading backup status…"}
-          </p>
-          {backup.error && (
-            <button type="button" onClick={() => void refreshBackupStatus()} className={rowButtonClass}>
-              Retry
-            </button>
-          )}
-        </div>
-      </SettingsCard>
+      <div className={`flex items-center justify-between gap-3 px-4 py-4 ${cardClass}`}>
+        <p className="text-small text-ink-muted">
+          {backup.error ? `Couldn't read backup status: ${backup.error}` : "Loading backup status…"}
+        </p>
+        {backup.error && (
+          <button type="button" onClick={() => void refreshBackupStatus()} className={rowButtonClass}>
+            Retry
+          </button>
+        )}
+      </div>
     );
   }
 
   const enabled = status.enabled && status.state !== "off";
   const running = status.state === "uploading" || status.state === "scanning";
-  const headline = statusHeadline(status, backup.run);
+  const pill = describeBackup(backup);
   const progress = status.state === "uploading" ? backupRunProgress(status, backup.run) : null;
   const currentPct =
     status.current && status.current.bytesTotal > 0
       ? Math.round((status.current.bytesDone / status.current.bytesTotal) * 100)
       : null;
+  // This run while it uploads; otherwise what's left of everything this phone has to back up.
+  const settled = status.uploaded + status.skippedDuplicates;
+  const meter = progress
+    ? { label: "This run", value: progress.done, max: progress.total }
+    : status.state === "scanning"
+      ? { label: "Checking", value: undefined, max: undefined }
+      : status.pending > 0
+        ? { label: "Backlog", value: settled, max: settled + status.pending }
+        : null;
 
   const openEnableSheet = () =>
     setSheetDefaults({ ...readChoices(), wifiOnly: status.wifiOnly, chargingOnly: status.chargingOnly });
@@ -315,8 +323,8 @@ export default function BackupSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <SettingsCard>
-        <div className="px-4 py-3.5">
+      <div className={`divide-y divide-border/60 overflow-hidden ${cardClass}`}>
+        <div className="px-4 py-1">
           <Switch
             checked={enabled}
             onChange={(checked) => {
@@ -336,7 +344,7 @@ export default function BackupSettings() {
         {error && (
           <div className="px-4 py-3.5">
             <Callout
-              icon={<AlertIcon size={18} />}
+              icon={<AlertIcon size={16} />}
               tone="danger"
               title={error.permission ? "Photo access was denied" : "Something went wrong"}
               action={
@@ -354,39 +362,42 @@ export default function BackupSettings() {
 
         {enabled && (
           <div className="flex flex-col gap-4 px-4 py-4">
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 shrink-0">{headline.icon}</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-body font-medium text-ink">{headline.text}</p>
-                <p className="text-small text-ink-muted">
+            <div className="flex flex-col items-start gap-2">
+              {pill && <StatusPill {...pill} href={undefined} short={shortLabel(pill, backup)} />}
+              <div className="min-w-0">
+                <p className="text-h3 text-ink">{statusHeadline(status, backup.run)}</p>
+                <p className="mt-0.5 text-small text-ink-muted">
                   {status.state === "waiting"
                     ? describeWait(status, now).detail
                     : status.lastBackupAt
                       ? `Last backup ${formatRelativeTime(status.lastBackupAt, now)}`
                       : "Nothing backed up from this phone yet"}
                 </p>
-                {progress && (
-                  <div className="mt-2.5">
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
-                      <div
-                        className="h-full rounded-full bg-accent transition-[width] duration-320 ease-out-expo"
-                        style={{ width: `${Math.max(2, progress.fraction * 100)}%` }}
-                      />
-                    </div>
-                    {status.current && (
-                      <p className="mt-1.5 truncate text-micro text-ink-faint">
-                        {status.current.name}
-                        {currentPct !== null ? ` · ${currentPct}%` : ""}
-                      </p>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
 
+            {meter && (
+              <div className="flex flex-col gap-2">
+                <TileMeter
+                  fluid
+                  tiles={20}
+                  label={meter.label}
+                  value={meter.value}
+                  max={meter.max}
+                  active={running}
+                />
+                {progress && status.current && (
+                  <p className="truncate font-mono text-[11px] tabular-nums tracking-[0.02em] text-ink-muted">
+                    {status.current.name}
+                    {currentPct !== null ? ` · ${currentPct}%` : ""}
+                  </p>
+                )}
+              </div>
+            )}
+
             {status.pending >= BACKLOG_NOTE_MIN &&
               (status.state === "uploading" || status.state === "waiting" || status.state === "scanning") && (
-                <Callout icon={<ClockIcon size={18} />} tone="info" title={`${status.pending.toLocaleString()} to go`}>
+                <Callout icon={<ClockIcon size={16} />} tone="info" title={`${status.pending.toLocaleString()} to go`}>
                   Your photos and videos are backed up newest first. GitHub takes roughly {UPLOADS_PER_HOUR} uploads an
                   hour, so this takes {backlogEstimate(status.pending)}. It carries on in the background by itself;
                   you don&apos;t need to keep the app open.
@@ -395,7 +406,7 @@ export default function BackupSettings() {
 
             {status.state === "needs_permission" && (
               <Callout
-                icon={<AlertIcon size={18} />}
+                icon={<AlertIcon size={16} />}
                 tone="warn"
                 title="404GB can't see your photos"
                 action={
@@ -415,7 +426,7 @@ export default function BackupSettings() {
 
             {status.state === "needs_sign_in" && (
               <Callout
-                icon={<LockIcon size={18} />}
+                icon={<LockIcon size={16} />}
                 tone="warn"
                 title="Sign in to keep backing up"
                 action={
@@ -430,7 +441,7 @@ export default function BackupSettings() {
 
             {status.batteryOptimized && (
               <Callout
-                icon={<BatteryChargingIcon size={18} />}
+                icon={<BatteryChargingIcon size={16} />}
                 tone="info"
                 title="Let backup run in the background"
                 action={
@@ -450,12 +461,12 @@ export default function BackupSettings() {
               </Callout>
             )}
 
-            <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-4">
-              <Stat label="Backed up" value={status.uploaded} />
-              <Stat label="Waiting" value={status.pending} />
-              <Stat label="Already in library" value={status.skippedDuplicates} />
-              <Stat label="Failed" value={status.failed} danger={status.failed > 0} />
-            </dl>
+            <StatGrid>
+              <Stat label="Backed up" value={status.uploaded.toLocaleString()} />
+              <Stat label="Waiting" value={status.pending.toLocaleString()} />
+              <Stat label="Already in library" value={status.skippedDuplicates.toLocaleString()} />
+              <Stat label="Failed" value={status.failed.toLocaleString()} tone={status.failed > 0 ? "danger" : undefined} />
+            </StatGrid>
 
             <div className="flex flex-wrap gap-2">
               <button
@@ -494,64 +505,44 @@ export default function BackupSettings() {
             </div>
           </div>
         )}
-      </SettingsCard>
 
-      {enabled && (
-        <SettingsCard>
-          <div className="px-4 py-3.5">
-            <p className="text-body font-medium text-ink">Back up using</p>
-            <p className="text-small text-ink-muted">
-              {status.wifiOnly
-                ? "Mobile data is never used. Backups wait for Wi-Fi."
-                : "Uses mobile data when there's no Wi-Fi, but never while roaming."}
-            </p>
-            <NetworkChoice
-              className="mt-2.5"
-              wifiOnly={status.wifiOnly}
-              disabled={busy !== null}
-              onChange={(wifiOnly) => setOption({ wifiOnly })}
-            />
-          </div>
-          <div className="px-4 py-3.5">
-            <Switch
-              checked={status.chargingOnly}
-              onChange={(checked) => setOption({ chargingOnly: checked })}
-              label="Only while charging"
-              description="Backup always pauses on low battery. Turn this on to back up only while plugged in."
-              disabled={busy !== null}
-            />
-          </div>
-          <div className="px-4 py-3.5">
-            <p className="text-body font-medium text-ink">Folders</p>
-            <p className="text-small text-ink-muted">Which folders on this phone are backed up.</p>
-            <div role="radiogroup" aria-label="Folders" className="mt-2.5 grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1">
-              {(
-                [
-                  { value: "all", label: "All folders" },
-                  { value: "camera", label: "Camera only" },
-                ] as { value: BackupFolders; label: string }[]
-              ).map(({ value, label }) => {
-                const active = status.folders === value;
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    disabled={busy !== null}
-                    onClick={() => !active && setOption({ folders: value })}
-                    className={`rounded-lg px-3 py-2 text-small font-medium transition-all duration-180 ease-out-expo disabled:opacity-60 ${
-                      active ? "bg-surface text-ink shadow-soft" : "text-ink-muted hover:text-ink"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+        {enabled && (
+          <>
+            <Option
+              title="Back up using"
+              description={
+                status.wifiOnly
+                  ? "Mobile data is never used. Backups wait for Wi-Fi."
+                  : "Uses mobile data when there's no Wi-Fi, but never while roaming."
+              }
+            >
+              <NetworkChoice
+                wifiOnly={status.wifiOnly}
+                disabled={busy !== null}
+                onChange={(wifiOnly) => setOption({ wifiOnly })}
+              />
+            </Option>
+            <div className="px-4 py-1">
+              <Switch
+                checked={status.chargingOnly}
+                onChange={(checked) => setOption({ chargingOnly: checked })}
+                label="Only while charging"
+                description="Backup always pauses on low battery. Turn this on to back up only while plugged in."
+                disabled={busy !== null}
+              />
             </div>
-          </div>
-        </SettingsCard>
-      )}
+            <Option title="Folders" description="Which folders on this phone are backed up.">
+              <SegmentedControl
+                label="Folders"
+                value={status.folders}
+                options={FOLDER_OPTIONS}
+                disabled={busy !== null}
+                onChange={(folders) => setOption({ folders })}
+              />
+            </Option>
+          </>
+        )}
+      </div>
 
       {!enabled && !error && (
         <p className="flex items-start gap-2 px-1 text-small text-ink-muted">
