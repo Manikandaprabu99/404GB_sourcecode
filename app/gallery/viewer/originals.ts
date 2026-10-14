@@ -1,8 +1,6 @@
 "use client";
 
-// Original-file loading for the viewer. One download per item no matter how many
-// callers (zoom, download, share) ask for it; finished files are kept as object
-// URLs in a small LRU so going back and forth doesn't download them again.
+// Original-file loading: one download per item for all callers, finished files kept in a small LRU.
 
 import { DEFAULT_CHUNK_SIZE } from "@/lib/chunking";
 import { ApiError, withRepo } from "@/lib/library/api";

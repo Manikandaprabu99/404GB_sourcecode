@@ -82,7 +82,7 @@ export default function PersonClient({ repoOwner, repoName, personId }: PersonCl
     });
 
   const backButton = (
-    <IconButton variant="ghost" label="Back" onClick={goBack}>
+    <IconButton variant="tile" label="Back" onClick={goBack}>
       <BackIcon size={20} />
     </IconButton>
   );
@@ -246,26 +246,33 @@ export default function PersonClient({ repoOwner, repoName, personId }: PersonCl
           />
         )}
         intro={() => (
-          // docs/DESIGN.md › People / person: the 96px face, the name in display 24, a count.
+          // A large face, the name (tap to rename) and the count.
           <SubScreenTitle
             leading={
               <FaceAvatar
                 repoKey={repoKey}
                 face={current.cover}
                 muted={current.hidden}
-                className="h-24 w-24 ring-1 ring-border/60"
+                className="h-24 w-24 shadow-[0_10px_30px_-10px_rgb(0_0_0/0.5)] ring-[3px] ring-surface sm:h-28 sm:w-28"
               />
             }
             title={
               current.name ? (
-                <h1 className="line-clamp-2 break-words font-display text-[1.5rem] font-bold leading-[1.15] tracking-[-0.02em] text-ink">
-                  {current.name}
+                <h1 className="line-clamp-2 break-words text-large-title text-ink">
+                  <button
+                    type="button"
+                    onClick={() => setNaming(true)}
+                    title="Rename"
+                    className="-mx-1.5 rounded-[10px] px-1.5 text-left transition-colors duration-180 hover:bg-ink/[0.06]"
+                  >
+                    {current.name}
+                  </button>
                 </h1>
               ) : (
                 <button
                   type="button"
                   onClick={() => setNaming(true)}
-                  className="-mx-1.5 self-start rounded-tile px-1.5 text-left font-display text-[1.5rem] font-bold leading-[1.15] tracking-[-0.02em] text-accent transition-colors duration-180 hover:bg-accent/10"
+                  className="-mx-1.5 self-start rounded-[10px] px-1.5 text-left text-large-title text-accent-text transition-colors duration-180 hover:bg-accent-soft"
                 >
                   Add a name
                 </button>

@@ -46,10 +46,11 @@ are saved next to your photos in your own repo so your other devices don't redo 
   calls/hour. While downloads must wait (budget used, offline, GitHub rate limit, or a metered
   connection without "Use mobile data"), photos whose thumbnails are on the device are still
   scanned.
-- **Pauses** while the app is hidden, while web uploads / phone backup / a library sync run,
-  for 1.2 s after any touch, scroll or key press, when the user pauses it in Settings, when
-  `faces.json` was written by another model version, and while the phone's background run (below)
-  is still finishing. After each photo it rests at least as long as the photo took (≥ 250 ms),
+- **Pauses** while the app is hidden, while this page's uploads or a library sync run, for 1.2 s
+  after user input (`pointerdown`, `touchmove`, `wheel`, `keydown`; `scroll` events don't count,
+  so a carousel or scroll restoration never holds it up), when the user pauses it in Settings,
+  when `faces.json` was written by another model version, and while the phone's background run
+  (below) is still finishing. After each photo it rests at least as long as the photo took (≥ 250 ms),
   then waits for an idle moment. One tab scans at a time (Web Locks).
 - Before scanning, the latest `faces.json` is read so photos another device already did are
   skipped. A photo the model can't read is remembered as failed on this device.
@@ -58,23 +59,36 @@ are saved next to your photos in your own repo so your other devices don't redo 
 
 ## Background
 
-In the Android app, matching also goes on while the phone **charges with the app closed** (mobile
-repo: `FaceScanWorker`, `FaceRunnerHost`, `FaceRunnerAssets`). The switch is
-`Backup.setFaceScan({ enabled })` (on by default); `getFaceScanStatus()` gives
-`{ enabled, running, lastRunAt, lastChecked, lastError }`.
+In the Android app, matching goes on **with the app closed** (mobile repo: `FaceScanWorker`,
+`FaceScanPolicy`, `FaceRunnerHost`, `FaceRunnerAssets`). Settings › People has two switches:
+**Find people in the background** (on by default) and **Only while charging** (off by default).
+`Backup.setFaceScan({ enabled?, chargingOnly? })`; `getFaceScanStatus()` gives
+`{ enabled, chargingOnly, running, checkedNow, pending, lastRunAt, lastChecked, lastError, lastReason }`
+(`pending`: a "soon" or follow-up run is queued; `lastReason`: `done`, `deadline`, `stopped`,
+`error`, or a skip: `battery-low`, `power-save`, `not-charging`).
 
-- **When**: WorkManager, about hourly, while charging with the battery not low and online (Wi-Fi
-  when backup is Wi-Fi only), once a session with a library is stored. Never while the app is on
-  screen; a run is stopped when the app comes to the foreground, the phone is unplugged, the switch
-  is turned off or the user signs out. At most 20 minutes per run (9 when Android refuses the
-  foreground notification "Finding people in your photos").
+- **When** (WorkManager, once a session with a library is stored; never while the app is on screen):
+  - about **90 s after the app goes to the background** (unique one-time work `404gb-faces-soon`,
+    KEEP; cancelled when the app comes back, which also stops a run that is going);
+  - about 90 s after the phone's backup commits new photos while the app is closed;
+  - as a **follow-up** when a run ends with `"deadline"` and photos left: ~1 min later while
+    charging, ~20 min on battery, never before the page's `resumeAt` (beyond an hour: left to
+    the hourly run);
+  - **hourly** as a safety net (`404gb-faces-background`).
+- **Constraints**: online (Wi-Fi when backup is Wi-Fi only), battery not low, and charging only
+  with "Only while charging". On battery the worker also skips (as a success, `lastReason` says
+  why) under **30 %** or with **Battery Saver** on, and re-checks every 15 s during a run.
+- **Length**: 20 minutes while charging (9 when Android refuses the foreground notification
+  "Finding people in your photos"), **8 minutes** on battery; unplugging mid-run cuts a run to 8.
+  One run at a time per process.
 - **Page**: the export's `runner/faces.html`, from `https://appassets.androidplatform.net`, in a
   WebView that is never on screen: no Capacitor (`hasNativePlugin` is false), no service worker,
   and its own `localStorage`/IndexedDB (the app's settings and thumbnail cache at
   `https://localhost` aren't there; the host deletes this origin's storage on sign-out). Requests
   to hosts other than `api.github.com` (and `*.githubusercontent.com`) are refused and the page
-  can't navigate away. Nobody touches it, so don't gate on visibility or user input. WebGL may not
-  come up in a WebView that is never drawn: fall back to WASM quickly.
+  can't navigate away. Nobody touches it, so don't gate on visibility or user input, and don't
+  rely on `requestAnimationFrame` (a never-drawn WebView may not run it; TF.js' WebGL backend
+  does): background runs use **WebAssembly** (then CPU) from the start.
 - **`window.FaceRunnerHost`** (synchronous; strings in and out):
   - `getAuth()` → `{ token, login, owner, repo, branch }` (`branch` "" = the default branch), or
     `"null"` when signed out.
@@ -83,16 +97,21 @@ repo: `FaceScanWorker`, `FaceRunnerHost`, `FaceRunnerAssets`). The switch is
     whether `/_local/thumb/` can find anything on this phone.
   - `progress(JSON.stringify({ checked, total }))`: photos this run has checked, out of those it
     is working through; the notification shows "1,240 of 8,000 photos".
-  - `finished(JSON.stringify({ checked, reason }))`: only **after the last commit**, the host
-    destroys the page right away. `reason`: `"done"` (nothing left), `"deadline"`, `"stopped"`, or
-    why the run was cut short (becomes `lastError`, at most 300 characters).
+  - `finished(JSON.stringify({ checked, reason, left?, resumeAt? }))`: only **after the last
+    commit**, the host destroys the page right away. `reason`: `"done"` (nothing left),
+    `"deadline"`, `"stopped"`, or why the run was cut short (becomes `lastError`, at most 300
+    characters). `left`: photos still unchecked; `resumeAt`: epoch ms when a used-up download
+    budget frees up, when that ended the run.
 - **Stopping**: define `window.__404gbStopRunner()` before the first host call. The host calls it
-  (deadline, app opened, unplugged, switched off); the page stops scanning, commits what it found
+  (deadline, app opened, battery, switched off); the page stops scanning, commits what it found
   and calls `finished` within 30 s, after which it is destroyed regardless. A page that hasn't
   called the host within 2 minutes of the run starting is closed as broken.
 - **Local thumbnails**: `GET /_local/thumb/<mediaId>` → an 800 px WebP made on the phone from its
   own copy of that photo (backed up from it, found in the library already, or saved from it, and
   unchanged since), or 404. They cost no GitHub requests, so try them before the budget.
+- **Logs**: `adb logcat -s 404gb.FaceScanWorker` shows why each run was skipped, how it started
+  (trigger, charger, battery, length), how it ended, bundled files served/missing, local
+  thumbnails and any follow-up; the page's console goes there too.
 
 The web side:
 
@@ -102,12 +121,13 @@ The web side:
   and faces stores at the repo (their caches are this origin's own; the daily Trash cleanup is
   left to the app) and runs `runBackgroundScan` (`lib/faces/scanner.ts`). Without a host it only
   says what it is for. `ServiceWorkerRegister` skips this page.
-- **The background loop** is the app's scanner without the visibility, input and pause gating:
+- **The background loop** is the app's scanner without the visibility, input and pause gating,
+  on WebAssembly:
   thumbnails from `/_local/thumb/` first (when `localThumbnails`), then this origin's cache, then
   GitHub within `budgetPerHour` (burst `budgetPerHour / 20` a minute, at least 30). It waits and
   yields through a worker's timers and `MessageChannel` (`lib/faces/timers.ts`), as a page nobody
-  looks at gets its timer chains throttled to one a minute. WebGL gets 30 s to load (and 45 s per
-  photo) before the run goes on with WebAssembly; the model files aren't put in Cache Storage.
+  looks at gets its timer chains throttled to one a minute. A photo gets 45 s; the model files
+  aren't put in Cache Storage.
   `progress` goes out when the library is in, then every 5 photos (or 3 s); `checked` counts
   every photo the run settled, `total` is that plus what's left.
 - **Ending**: it stops scanning 30 s before `deadlineMs` (halfway, for a run shorter than a
@@ -116,16 +136,17 @@ The web side:
   ended, another model's `faces.json`, a `faces.json` that isn't JSON, the library unreadable, no
   backend). Then everything pending goes into one commit (up to 24 s, tried up to 3 times); what
   doesn't land stays in this origin's IndexedDB for the next run, as do the detector results.
-  `finished`'s reason is `"done"`, `"deadline"` (also for a used-up budget), `"stopped"`, or a
-  sentence for Settings (e.g. "Your GitHub sign-in ended. Open 404GB to sign in again."); a
+  `finished`'s reason is `"done"`, `"deadline"` (also for a used-up budget, with `resumeAt`),
+  `"stopped"`, or a sentence for Settings (e.g. "Your GitHub sign-in ended. Open 404GB to sign in again."); a
   planned end whose commit failed reports the failure instead.
 - **In the app** (`lib/faces/background.ts`): the status is read when the scanner starts, when
   the app comes back to the foreground and every 2 s while a run is going. The app's scanner holds
-  off up to 3 s for that answer, waits while `running` ("Finding people in the background while
-  charging."), and after a run ends re-reads `faces.json` before it goes on. Settings › People has
-  `BackgroundScanToggle`: "Find people while charging" with the last run (photos checked, why it
-  stopped early) or "Running now"; it renders nothing in a browser or an app build without
-  `setFaceScan`/`getFaceScanStatus`.
+  off up to 3 s for that answer, waits while `running` ("Finding people in the background."), and
+  after a run ends re-reads `faces.json` before it goes on. Hidden, it says "Continues in the
+  background after you close 404GB." Settings › People has `BackgroundScanToggle`: the two
+  switches and a status line ("Runs a few minutes after you close 404GB", "Running now · 120
+  checked", "Last run 10:42 · 35 photos checked", the error or the skip reason); it renders
+  nothing in a browser or an app build without `setFaceScan`/`getFaceScanStatus`.
 
 ## `manifest/faces.json`
 
@@ -223,8 +244,8 @@ Distances are Euclidean between unit vectors.
   photo, plus the usual actions. Naming someone with an existing name offers to merge. A merged
   id redirects to the person it was merged into.
 - Settings › People (`PeopleSettings`): status and progress, Pause/Resume, Use mobile data,
-  Find people while charging (Android app, `BackgroundScanToggle`), Re-scan, Hidden people, the
-  privacy note and the backend in use.
+  Find people in the background / Only while charging (Android app, `BackgroundScanToggle`),
+  Re-scan, Hidden people, the privacy note and the backend in use.
 
 ## For other modules
 

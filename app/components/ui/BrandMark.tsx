@@ -1,24 +1,22 @@
-/**
- * The 404GB mark: a 2×2 photo grid with one tile missing (docs/DESIGN.md › App icon) — three
- * signal-lime tiles and a dashed lime outline on ink. Same art as public/icons/brand.svg and
- * the Android launcher icon (apps/mobile/brand/mark.svg).
- *
- * `missing`: "dashed" (still), "breathe" (the outline fades in and out, e.g. while loading)
- * or "fill" (it fills in with lime shortly after mounting, e.g. on the sign-in screen).
- */
+import { useId } from "react";
+
+/** The 404GB mark (same art as public/icons/brand.svg); `bare` draws the white glyph only.
+ * `missing` is accepted for the old API and ignored. */
 export default function BrandMark({
   className,
   title,
-  missing = "dashed",
   bare = false,
 }: {
   className?: string;
   /** Accessible name; omit when the mark sits next to visible "404GB" text. */
   title?: string;
   missing?: "dashed" | "breathe" | "fill";
-  /** Tiles only, without the ink square behind them. */
   bare?: boolean;
 }) {
+  const id = useId().replace(/:/g, "");
+  const bg = `${id}-bg`;
+  const sheen = `${id}-sheen`;
+  const front = `${id}-front`;
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -28,33 +26,43 @@ export default function BrandMark({
       aria-label={title}
       aria-hidden={title ? undefined : true}
     >
-      {!bare && <rect width="1024" height="1024" rx="224" fill="#0A0A0B" />}
-      <rect x="232" y="232" width="256" height="256" rx="64" fill="#C8F542" />
-      <rect
-        x="546"
-        y="242"
-        width="236"
-        height="236"
-        rx="56"
-        fill="none"
-        stroke="#C8F542"
-        strokeWidth="20"
-        strokeDasharray="40 28"
-        className={missing === "breathe" ? "animate-breathe" : undefined}
-      />
-      {missing === "fill" && (
-        <rect
-          x="536"
-          y="232"
-          width="256"
-          height="256"
-          rx="64"
-          fill="#C8F542"
-          className="origin-center animate-tile-fill [animation-delay:450ms] [animation-duration:360ms] [transform-box:fill-box]"
-        />
+      <defs>
+        <linearGradient id={bg} x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#1660EB" />
+          <stop offset="1" stopColor="#0A2878" />
+        </linearGradient>
+        <radialGradient id={sheen} cx="300" cy="140" r="820" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.22" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
+        </radialGradient>
+        <clipPath id={front}>
+          <rect x="228" y="397" width="472" height="392" rx="84" />
+        </clipPath>
+      </defs>
+      {!bare && (
+        <>
+          <rect width="1024" height="1024" rx="232" fill={`url(#${bg})`} />
+          <rect width="1024" height="1024" rx="232" fill={`url(#${sheen})`} />
+        </>
       )}
-      <rect x="232" y="536" width="256" height="256" rx="64" fill="#C8F542" />
-      <rect x="536" y="536" width="256" height="256" rx="64" fill="#C8F542" />
+      <rect
+        x="348"
+        y="261"
+        width="432"
+        height="356"
+        rx="76"
+        transform="rotate(9 564 439)"
+        fill="none"
+        stroke="#FFFFFF"
+        strokeOpacity={bare ? 0.7 : 0.62}
+        strokeWidth="40"
+      />
+      {!bare && <rect x="228" y="397" width="472" height="392" rx="84" fill="none" stroke={`url(#${bg})`} strokeWidth="56" />}
+      <g clipPath={`url(#${front})`}>
+        <rect x="228" y="397" width="472" height="392" fill="#FFFFFF" />
+        <path d="M228 789V712L372 584Q392 566 412 584L532 692L580 650Q598 634 616 650L700 724V789Z" fill="#1A5BE0" />
+        <circle cx="582" cy="505" r="38" fill="#1A5BE0" />
+      </g>
     </svg>
   );
 }

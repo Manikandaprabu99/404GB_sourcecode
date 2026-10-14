@@ -1,29 +1,34 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 
-export type IconButtonVariant = "tile" | "ghost" | "signal";
+export type IconButtonVariant = "tile" | "glass" | "ghost" | "signal" | "accent";
 
 export interface IconButtonStyle {
-  /** `tile`: surface-2 square (page header actions). `ghost`: no fill until hovered. `signal`: lime. */
+  /** `tile`/`glass`: translucent round header button (no blur); `ghost`; `signal`/`accent`. */
   variant?: IconButtonVariant;
   /** Visual size in px; the hit area is never under 44px. */
   size?: 36 | 40 | 44;
 }
 
 const SIZES = {
-  36: "h-9 w-9 rounded-tile after:-inset-1",
-  40: "h-10 w-10 rounded-md after:-inset-0.5",
-  44: "h-11 w-11 rounded-md after:inset-0",
+  36: "h-9 w-9 after:-inset-1",
+  40: "h-10 w-10 after:-inset-0.5",
+  44: "h-11 w-11 after:inset-0",
 } as const;
 
+const GLASS =
+  "bg-ink/[0.06] text-ink shadow-[inset_0_0_0_1px_rgb(var(--hairline))] hover:bg-ink/10 dark:bg-white/[0.08] dark:hover:bg-white/[0.12]";
+
 const VARIANTS: Record<IconButtonVariant, string> = {
-  tile: "bg-surface-2 text-ink hover:bg-surface-3",
-  ghost: "text-ink-muted hover:bg-surface-2 hover:text-ink",
-  signal: "bg-signal text-signal-ink hover:shadow-glow-signal",
+  tile: GLASS,
+  glass: GLASS,
+  ghost: "text-ink-muted hover:bg-ink/[0.06] hover:text-ink",
+  signal: "bg-accent text-accent-ink hover:bg-accent-strong",
+  accent: "bg-accent text-accent-ink hover:bg-accent-strong",
 };
 
-/** Class names of a square icon button, for <button> and <Link> alike. */
+/** Class names of a round icon button, for <button> and <Link> alike. */
 export function iconButtonClass({ variant = "tile", size = 40 }: IconButtonStyle = {}): string {
-  return `relative inline-flex shrink-0 select-none items-center justify-center transition-[background-color,color,box-shadow,opacity,transform] duration-120 ease-out-expo after:absolute after:content-[''] active:scale-[0.94] disabled:pointer-events-none disabled:opacity-40 ${SIZES[size]} ${VARIANTS[variant]}`;
+  return `relative inline-flex shrink-0 select-none items-center justify-center rounded-full transition-[background-color,color,box-shadow,opacity,transform] duration-160 ease-out-expo after:absolute after:rounded-full after:content-[''] active:scale-[0.92] disabled:pointer-events-none disabled:opacity-40 ${SIZES[size]} ${VARIANTS[variant]}`;
 }
 
 export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children">, IconButtonStyle {
@@ -32,7 +37,7 @@ export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonEle
   children: ReactNode;
 }
 
-/** A square icon-only button (docs/DESIGN.md › Page header: 40px, surface-2, radius 12). */
+/** A round icon-only button (docs/DESIGN.md › Page header: 40px glass icon buttons). */
 const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
   { label, title, variant, size, className, type = "button", children, ...rest },
   ref

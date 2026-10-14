@@ -92,21 +92,20 @@ function Callout({
   children: ReactNode;
   action?: ReactNode;
 }) {
-  // Info notes sit in a well of the page colour, so their surface-2 buttons still stand out.
-  const box = { warn: "bg-warning/10", danger: "bg-danger/10", info: "bg-bg" }[tone];
+  const box = { warn: "bg-warning/10", danger: "bg-danger/10", info: "bg-surface-2 dark:bg-ink/[0.05]" }[tone];
   const iconTone = {
     warn: "bg-warning/15 text-warning",
     danger: "bg-danger/15 text-danger",
-    info: "bg-surface-2 text-ink-muted",
+    info: "bg-accent-soft text-accent-text",
   }[tone];
   return (
     <div role={tone === "info" ? undefined : "alert"} className={`flex gap-3 rounded-control p-3.5 ${box}`}>
-      <span aria-hidden="true" className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-tile ${iconTone}`}>
+      <span aria-hidden="true" className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${iconTone}`}>
         {icon}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-small font-semibold text-ink">{title}</p>
-        <p className="mt-0.5 text-small text-ink-muted">{children}</p>
+        <p className="text-callout font-semibold text-ink">{title}</p>
+        <p className="mt-0.5 text-footnote text-ink-muted">{children}</p>
         {action && <div className="mt-2.5">{action}</div>}
       </div>
     </div>
@@ -119,7 +118,7 @@ function Option({ title, description, children }: { title: string; description: 
     <div className="flex flex-col gap-2.5 px-4 py-4">
       <div>
         <p className="text-body font-medium text-ink">{title}</p>
-        <p className="mt-0.5 text-small text-ink-muted">{description}</p>
+        <p className="mt-0.5 text-footnote text-ink-muted">{description}</p>
       </div>
       {children}
     </div>
@@ -226,8 +225,8 @@ export default function BackupSettings() {
   if (backup.support === "unknown") {
     return (
       <div aria-busy="true" className={`flex flex-col gap-3 p-4 ${cardClass}`}>
-        <span className="skeleton block h-4 w-48 rounded-[4px]" />
-        <span className="skeleton block h-3 w-64 max-w-full rounded-[3px]" />
+        <span className="skeleton block h-4 w-48 rounded-full" />
+        <span className="skeleton block h-3 w-64 max-w-full rounded-full" />
       </div>
     );
   }
@@ -323,7 +322,7 @@ export default function BackupSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className={`divide-y divide-border/60 overflow-hidden ${cardClass}`}>
+      <div className={`settings-card overflow-hidden ${cardClass}`}>
         <div className="px-4 py-1">
           <Switch
             checked={enabled}
@@ -365,8 +364,8 @@ export default function BackupSettings() {
             <div className="flex flex-col items-start gap-2">
               {pill && <StatusPill {...pill} href={undefined} short={shortLabel(pill, backup)} />}
               <div className="min-w-0">
-                <p className="text-h3 text-ink">{statusHeadline(status, backup.run)}</p>
-                <p className="mt-0.5 text-small text-ink-muted">
+                <p className="text-headline text-ink">{statusHeadline(status, backup.run)}</p>
+                <p className="mt-0.5 text-footnote text-ink-muted">
                   {status.state === "waiting"
                     ? describeWait(status, now).detail
                     : status.lastBackupAt
@@ -387,7 +386,7 @@ export default function BackupSettings() {
                   active={running}
                 />
                 {progress && status.current && (
-                  <p className="truncate font-mono text-[11px] tabular-nums tracking-[0.02em] text-ink-muted">
+                  <p className="truncate text-footnote tabular-nums text-ink-muted">
                     {status.current.name}
                     {currentPct !== null ? ` · ${currentPct}%` : ""}
                   </p>
@@ -545,7 +544,7 @@ export default function BackupSettings() {
       </div>
 
       {!enabled && !error && (
-        <p className="flex items-start gap-2 px-1 text-small text-ink-muted">
+        <p className="flex items-start gap-2 px-4 text-footnote text-ink-muted">
           <CloudOffIcon size={16} className="mt-0.5 shrink-0" />
           Turn on backup to upload photos and videos from this phone automatically, even when the app is closed.
         </p>

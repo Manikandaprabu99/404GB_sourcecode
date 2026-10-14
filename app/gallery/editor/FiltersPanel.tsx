@@ -102,12 +102,12 @@ export default function FiltersPanel({
               aria-checked={selected}
               disabled={disabled}
               onClick={() => onSelect(preset.id)}
-              className="group flex shrink-0 flex-col items-center gap-1.5 rounded-tile outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:opacity-50"
+              className="group flex shrink-0 flex-col items-center gap-1.5 rounded-[16px] outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
             >
-              {/* Tiles, not circles: the picked look gets the signal ring. */}
+              {/* Rounded previews; the picked look gets the accent ring. */}
               <span
-                className={`block h-16 w-16 overflow-hidden rounded-tile bg-surface-3 ring-2 ring-offset-2 ring-offset-bg transition-[box-shadow,transform] duration-180 ease-out-expo ${
-                  selected ? "scale-100 ring-signal" : "scale-95 ring-transparent group-hover:ring-ink/25"
+                className={`block h-16 w-16 overflow-hidden rounded-[16px] bg-surface-3 ring-2 ring-offset-2 ring-offset-bg transition-[box-shadow,transform] duration-180 ease-out-expo ${
+                  selected ? "scale-100 ring-accent" : "scale-95 ring-transparent group-hover:ring-white/25"
                 }`}
               >
                 <canvas
@@ -118,7 +118,7 @@ export default function FiltersPanel({
                   className="h-full w-full animate-fade-in"
                 />
               </span>
-              <span className={`text-micro ${selected ? "font-semibold text-ink" : "text-ink-muted"}`}>
+              <span className={`text-[12px] ${selected ? "font-semibold text-white" : "text-white/60"}`}>
                 {preset.label}
               </span>
             </button>

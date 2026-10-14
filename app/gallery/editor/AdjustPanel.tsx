@@ -2,8 +2,6 @@
 
 import { ADJUSTMENTS } from "@/lib/editor/filters";
 import { hasAdjustments, type AdjustmentId, type Adjustments } from "@/lib/editor/types";
-import { buttonClass } from "@/app/components/ui/Button";
-import { chipClass } from "@/app/components/ui/Chip";
 import EditorSlider from "./EditorSlider";
 import { ContrastIcon, DropletIcon, ResetIcon, SunIcon, ThermometerIcon, VignetteIcon } from "./icons";
 
@@ -31,7 +29,7 @@ function ResetButton({ disabled, onReset }: { disabled: boolean; onReset: () => 
       type="button"
       onClick={onReset}
       disabled={disabled}
-      className={`${buttonClass({ variant: "ghost", size: "sm" })} shrink-0 !gap-1.5 disabled:!opacity-40`}
+      className="lv-ed-chip shrink-0 !bg-transparent"
     >
       <ResetIcon size={18} />
       Reset
@@ -76,13 +74,16 @@ export default function AdjustPanel({
                 aria-pressed={selected}
                 disabled={disabled}
                 onClick={() => onActiveChange(id)}
-                className={`${chipClass(selected)} !gap-2`}
+                className="lv-ed-chip"
               >
                 <Icon size={18} />
                 {label}
-                {/* Changed: a tiny lime tile (moss on the inverted chip). */}
+                {/* Changed: a small dot (white on the selected accent chip). */}
                 {adjust[id] !== 0 && (
-                  <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-[2px] ${selected ? "bg-accent-inverse" : "bg-signal"}`} />
+                  <span
+                    aria-hidden="true"
+                    className={`h-1.5 w-1.5 rounded-full ${selected ? "bg-current opacity-80" : "bg-accent"}`}
+                  />
                 )}
               </button>
             );
@@ -97,7 +98,7 @@ export default function AdjustPanel({
           const Icon = ICONS[id];
           return (
             <div key={id}>
-              <div className="telemetry flex items-center gap-2 text-ink-muted">
+              <div className="flex items-center gap-2 text-[13px] font-medium text-white/65">
                 <Icon size={16} />
                 {label}
               </div>

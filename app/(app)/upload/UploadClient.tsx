@@ -21,12 +21,12 @@ const FINISHED = new Set<FileUploadStatus>(["done", "duplicate", "canceled"]);
 
 type Tone = "neutral" | "accent" | "success" | "danger" | "warning";
 
-// The status word in a row's telemetry line: accent while it's live or done, red when it failed.
+// The status word in a row's facts line: accent while it's live or done, red when it failed.
 // (Accent is moss on paper, so it stays readable as text in both themes.)
 const TONE_CLASSES: Record<Tone, string> = {
   neutral: "text-ink-muted",
-  accent: "text-accent",
-  success: "text-accent",
+  accent: "text-accent-text",
+  success: "text-accent-text",
   danger: "text-danger",
   warning: "text-ink",
 };
@@ -135,26 +135,16 @@ function UpArrowIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-/**
- * The brand's 2×2 mark for the drop zone: three solid tiles and the missing one, dashed and
- * breathing, with an arrow in it. Dragging files over fills it in with lime.
- */
+/** The drop zone's icon: an accent circle with an up arrow that fills in while dragging. */
 function DropMark({ filled }: { filled: boolean }) {
   return (
-    <span aria-hidden="true" className="grid grid-cols-2 gap-1.5">
-      <span className="h-9 w-9 rounded-[9px] bg-surface-3" />
-      <span
-        className={`relative flex h-9 w-9 items-center justify-center rounded-[9px] border-[1.5px] border-dashed transition-colors duration-180 ${
-          filled ? "border-transparent text-signal-ink" : "animate-breathe border-accent text-accent"
-        }`}
-      >
-        {filled && <span className="absolute -inset-[1.5px] animate-tile-fill rounded-[9px] bg-signal" />}
-        <span className="relative">
-          <UpArrowIcon />
-        </span>
-      </span>
-      <span className="h-9 w-9 rounded-[9px] bg-surface-3" />
-      <span className="h-9 w-9 rounded-[9px] bg-surface-3" />
+    <span
+      aria-hidden="true"
+      className={`flex h-16 w-16 items-center justify-center rounded-full transition-[background-color,color,transform] duration-240 ease-out-expo ${
+        filled ? "scale-110 bg-accent text-accent-ink shadow-glow-signal" : "bg-accent-soft text-accent-text"
+      }`}
+    >
+      <UpArrowIcon size={26} />
     </span>
   );
 }
@@ -211,31 +201,28 @@ function Dropzone({ compact, onFiles }: { compact: boolean; onFiles: (files: Fil
         setDragOver(false);
         if (e.dataTransfer.files?.length) onFiles(Array.from(e.dataTransfer.files));
       }}
-      // A big dashed tile (docs/DESIGN.md › Screens › Upload); a dashed row once there's a queue.
-      className={`group flex cursor-pointer items-center border-2 border-dashed transition-[background-color,border-color,transform] duration-180 ease-out-expo active:scale-[0.99] ${
-        compact ? "gap-4 rounded-card px-4 py-3.5 text-left" : "min-h-[17rem] flex-col justify-center rounded-card px-6 py-10 text-center sm:min-h-[19rem]"
-      } ${dragOver ? "scale-[1.01] border-accent bg-signal/10" : "border-border-strong hover:bg-surface-2/70"}`}
+      // A large rounded dashed drop area; a slim dashed row once there's a queue.
+      className={`group flex cursor-pointer items-center border-[1.5px] border-dashed transition-[background-color,border-color,transform] duration-180 ease-out-expo active:scale-[0.99] ${
+        compact ? "gap-4 rounded-card px-4 py-3.5 text-left" : "min-h-[17rem] flex-col justify-center rounded-hero px-6 py-10 text-center sm:min-h-[19rem]"
+      } ${dragOver ? "scale-[1.01] border-accent bg-accent-soft" : "border-border-strong bg-surface/40 hover:bg-surface-2/70"}`}
     >
       {compact ? (
         <span
           aria-hidden="true"
-          className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-tile border-[1.5px] border-dashed transition-colors duration-180 ${
-            dragOver ? "border-transparent text-signal-ink" : "border-accent text-accent"
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-180 ${
+            dragOver ? "bg-accent text-accent-ink" : "bg-accent-soft text-accent-text"
           }`}
         >
-          {dragOver && <span className="absolute -inset-[1.5px] animate-tile-fill rounded-tile bg-signal" />}
-          <span className="relative">
-            <PlusIcon size={20} />
-          </span>
+          <PlusIcon size={20} />
         </span>
       ) : (
         <DropMark filled={dragOver} />
       )}
       <span className={compact ? "min-w-0" : "mt-7 flex flex-col items-center"}>
-        <span className={compact ? "block text-body font-semibold text-ink" : "block font-display text-h2 text-ink"}>
+        <span className={compact ? "block text-body font-semibold text-ink" : "block text-title text-ink"}>
           {compact ? "Add more" : "Choose photos and videos"}
         </span>
-        <span className={`block text-small text-ink-muted ${compact ? "mt-0.5" : "mt-2"}`}>
+        <span className={`block text-footnote text-ink-muted ${compact ? "mt-0.5" : "mt-1.5"}`}>
           <span className="sm:hidden">Tap to pick from your phone</span>
           <span className="hidden sm:inline">Drag them here, or click to browse</span>
         </span>
@@ -273,7 +260,7 @@ const FileRow = memo(function FileRow({
   const errorText = failed ? friendlyError(task.error ?? task.message) : null;
   const rawError = failed ? (task.error ?? "").replace(/^\w*Error:\s*/, "").trim() : "";
 
-  // Uploading: the bytes sent so far in the telemetry line, the tile meter under it.
+  // Uploading: the bytes sent so far in the facts line, a thin bar under it.
   const sizeText =
     task.status === "uploading" && task.bytesUploaded > 0
       ? `${formatBytes(Math.min(task.bytesUploaded, task.size))} / ${formatBytes(task.size)}`
@@ -291,8 +278,8 @@ const FileRow = memo(function FileRow({
           <p className="truncate text-body font-medium text-ink" title={task.filename}>
             {task.filename}
           </p>
-          {/* A telemetry line: size (or bytes sent) and the status (2.4 MB · UPLOADING 42%). */}
-          <p className="telemetry mt-1 truncate text-ink-muted">
+          {/* Size (or bytes sent) and the status: 2.4 MB · Uploading 42%. */}
+          <p className="telemetry mt-0.5 truncate text-ink-muted">
             <span className="tabular-nums">{sizeText}</span>
             <span aria-hidden="true" className="px-[0.45em] text-ink-faint">
               ·
@@ -301,7 +288,7 @@ const FileRow = memo(function FileRow({
           </p>
         </div>
         {task.status === "done" && (
-          <span aria-hidden="true" className="flex h-6 w-6 shrink-0 animate-check-pop items-center justify-center rounded-[7px] bg-signal text-signal-ink">
+          <span aria-hidden="true" className="flex h-6 w-6 shrink-0 animate-check-pop items-center justify-center rounded-full bg-accent text-accent-ink">
             <CheckIcon size={14} strokeWidth={3} />
           </span>
         )}
@@ -316,7 +303,7 @@ const FileRow = memo(function FileRow({
             onClick={() => onCancel(task.clientId)}
             aria-label={`Cancel ${task.filename}`}
             title="Cancel"
-            className="-mr-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-tile text-ink-muted transition-[background-color,color,transform] duration-180 ease-out-expo hover:bg-surface-2 hover:text-ink active:scale-[0.94]"
+            className="-mr-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-muted transition-[background-color,color,transform] duration-180 ease-out-expo hover:bg-surface-2 hover:text-ink active:scale-[0.92]"
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
               <path d="M6 6l12 12M18 6 6 18" />
@@ -326,7 +313,7 @@ const FileRow = memo(function FileRow({
       </div>
 
       {active && (
-        // Decorative: the telemetry line above says how far it got.
+        // Decorative: the line above says how far it got.
         <div className="mt-2.5 pl-12" aria-hidden="true">
           <TileMeter
             value={indeterminate ? undefined : meterValue}
@@ -339,14 +326,14 @@ const FileRow = memo(function FileRow({
         </div>
       )}
 
-      {message && <p className="mt-2 pl-12 text-small text-ink-muted">{message}</p>}
+      {message && <p className="mt-2 pl-12 text-footnote text-ink-muted">{message}</p>}
 
       {failed && (
         <div className="mt-2.5 flex items-start justify-between gap-3 pl-12">
           <div className="min-w-0">
-            <p className="text-small text-danger">{errorText}</p>
+            <p className="text-footnote text-danger">{errorText}</p>
             {rawError && rawError !== errorText && (
-              <details className="mt-1 text-micro text-ink-muted">
+              <details className="mt-1 text-caption font-normal text-ink-muted">
                 <summary className="cursor-pointer select-none">Details</summary>
                 <p className="mt-1 break-words font-mono">{rawError}</p>
               </details>
@@ -361,7 +348,7 @@ const FileRow = memo(function FileRow({
   );
 });
 
-export default function UploadClient({ repo }: { /** owner/repo, for the telemetry line. */ repo?: string }) {
+export default function UploadClient({ repo }: { /** owner/repo, for the facts line. */ repo?: string }) {
   // Seeded from the app-wide queue so coming back to this tab shows progress on the first frame.
   const [visible, setVisible] = useState<FileTaskSnapshot[]>(() =>
     typeof window === "undefined" ? [] : getUploadQueue().getSnapshots()
@@ -450,7 +437,7 @@ export default function UploadClient({ repo }: { /** owner/repo, for the telemet
     working && summary.failed > 0 && `${summary.failed} couldn't upload`,
   ].filter(Boolean) as string[];
 
-  // The header's telemetry line: what's in the queue (or the promise), and where it goes.
+  // The header's facts line: what's in the queue (or the promise), and where it goes.
   const telemetry =
     summary.counted > 0
       ? [summary.counted === 1 ? "1 file" : `${summary.counted.toLocaleString()} files`, formatBytes(summary.bytesTotal), repo]
@@ -468,7 +455,7 @@ export default function UploadClient({ repo }: { /** owner/repo, for the telemet
           {native && (
             <Link
               href="/settings"
-              className="group mt-1 inline-flex w-fit items-center gap-1.5 text-small font-medium text-accent"
+              className="group mt-1 inline-flex w-fit items-center gap-1.5 text-callout font-semibold text-accent-text"
             >
               Automatic backup
               <span aria-hidden className="transition-transform duration-180 ease-out-expo group-hover:translate-x-0.5">
@@ -482,9 +469,9 @@ export default function UploadClient({ repo }: { /** owner/repo, for the telemet
         {!online && (
           <div
             role="status"
-            className="flex items-center gap-3 rounded-control border border-border/60 bg-surface-2 py-2 pl-2 pr-3 text-small text-ink-muted animate-fade-in"
+            className="flex items-center gap-3 rounded-control bg-surface-2 py-2 pl-2 pr-3 text-footnote text-ink-muted animate-fade-in dark:bg-ink/[0.06]"
           >
-            <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-tile bg-surface-3">
+            <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3">
               <CloudOffIcon size={16} />
             </span>
             <span className="min-w-0 flex-1 py-1">You&apos;re offline. Uploads will continue when you&apos;re back online.</span>
@@ -497,10 +484,10 @@ export default function UploadClient({ repo }: { /** owner/repo, for the telemet
           <section aria-labelledby="upload-summary" className="flex flex-col gap-3">
             <div className={`${cardClass} p-4 sm:p-5`}>
               <div aria-live="polite">
-                <h2 id="upload-summary" className="font-display text-h2 text-ink">
+                <h2 id="upload-summary" className="text-title text-ink">
                   {headline}
                 </h2>
-                {details.length > 0 && <p className="mt-1 text-small text-ink-muted">{details.join(" · ")}</p>}
+                {details.length > 0 && <p className="mt-1 text-footnote text-ink-muted">{details.join(" · ")}</p>}
               </div>
               {working && (
                 <TileMeter

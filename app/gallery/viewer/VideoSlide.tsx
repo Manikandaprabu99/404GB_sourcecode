@@ -169,7 +169,7 @@ function VideoSlide({
           <>
             {small && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={small} alt="" aria-hidden="true" draggable={false} className={`${LAYER} scale-105 blur-md`} />
+              <img src={small} alt="" aria-hidden="true" draggable={false} className={LAYER} />
             )}
             {poster && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -233,24 +233,26 @@ function VideoSlide({
             onClick={phase === "loading" ? undefined : play}
             aria-label={phase === "loading" ? "Loading video" : "Play video"}
             tabIndex={active ? 0 : -1}
-            className={`flex h-[72px] w-[72px] items-center justify-center rounded-full bg-black/55 text-white shadow-elevated ring-1 ring-white/25 transition-transform duration-180 ease-out-expo active:scale-[0.94] ${
-              active ? "pointer-events-auto" : ""
-            }`}
+            className={`lv-play lv-glass-still h-[76px] w-[76px] ${active ? "pointer-events-auto" : ""}`}
           >
-            {phase === "loading" ? <ProgressRing value={progress} size={30} /> : <PlayIcon size={30} className="translate-x-0.5" />}
+            {phase === "loading" ? (
+              <ProgressRing value={progress} size={30} className="lv-badge-ring" />
+            ) : (
+              <PlayIcon size={32} className="translate-x-0.5" />
+            )}
           </button>
           {active && phase === "loading" && (
-            <p className="rounded-tile bg-black/60 px-3 py-1.5 text-small text-white/85" role="status">
+            <p className="lv-glass-still rounded-full px-3.5 py-1.5 text-[13px] font-medium tabular-nums text-white/90" role="status">
               Loading video{progress != null ? ` · ${Math.round(progress * 100)}%` : "…"}
             </p>
           )}
           {active && phase === "error" && error && (
-            <div className="pointer-events-auto flex max-w-xs flex-col items-center gap-3 rounded-card bg-black/70 px-4 py-3.5">
-              <p className="text-small text-white/85">{error}</p>
+            <div className="lv-glass-still pointer-events-auto flex max-w-xs flex-col items-center gap-3 rounded-[22px] px-5 py-4">
+              <p className="text-[14px] leading-5 text-white/85">{error}</p>
               <button
                 type="button"
                 onClick={onDownload}
-                className="inline-flex h-10 items-center gap-2 rounded-control bg-white px-4 text-small font-semibold text-black transition-transform duration-120 active:scale-[0.97]"
+                className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-[15px] font-semibold text-black transition-transform duration-150 active:scale-[0.97]"
               >
                 <DownloadIcon size={16} />
                 {downloadLabel}
@@ -258,7 +260,7 @@ function VideoSlide({
             </div>
           )}
           {phase === "poster" && duration > 0 && (
-            <span className="telemetry rounded-tile-sm bg-black/55 px-2 py-1 text-white/90">
+            <span className="lv-glass-still rounded-full px-2.5 py-1 text-[12px] font-semibold tabular-nums text-white/90">
               {formatDuration(duration)}
             </span>
           )}
@@ -271,7 +273,7 @@ function VideoSlide({
             type="button"
             onClick={togglePlay}
             aria-label={paused ? "Play" : "Pause"}
-            className={`absolute left-1/2 top-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ring-1 ring-white/20 transition-opacity duration-250 active:scale-[0.94] ${
+            className={`lv-play lv-glass-still absolute left-1/2 top-1/2 -ml-9 -mt-9 h-[72px] w-[72px] ${
               paused || buffering || controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
             }`}
           >
@@ -286,11 +288,22 @@ function VideoSlide({
 
           <div
             data-gesture-ignore
-            className={`absolute inset-x-0 bottom-safe-[5.25rem] px-4 transition-opacity duration-250 ${
+            className={`absolute inset-x-0 bottom-safe-[6.25rem] px-safe-4 transition-opacity duration-250 ${
               controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
             }`}
           >
-            <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-control bg-black/60 py-0.5 pl-3.5 pr-1 font-mono text-[11px] tabular-nums text-white ring-1 ring-white/10">
+            {/* Glass without the blur: the video moves underneath. */}
+            <div className="lv-glass-still mx-auto flex max-w-[34rem] items-center gap-1.5 rounded-full py-0.5 pl-1 pr-1 text-[12px] font-medium tabular-nums text-white">
+              <button
+                type="button"
+                onClick={togglePlay}
+                aria-label={paused ? "Play" : "Pause"}
+                tabIndex={-1}
+                aria-hidden="true"
+                className="lv-round h-10 w-10 hover:bg-white/10"
+              >
+                {paused ? <PlayIcon size={18} className="translate-x-px" /> : <PauseIcon size={16} />}
+              </button>
               <span className="w-9 shrink-0 text-right">{formatDuration(time)}</span>
               <input
                 type="range"
@@ -300,8 +313,8 @@ function VideoSlide({
                 value={Math.min(time, duration || 0)}
                 aria-label="Seek"
                 aria-valuetext={`${formatDuration(time)} of ${formatDuration(duration)}`}
-                className="range-media mx-1 min-w-0 flex-1"
-                style={{ ["--range-fill" as string]: `${fill}%` }}
+                className="lv-range mx-1.5 min-w-0 flex-1"
+                style={{ ["--lv-fill" as string]: `${fill}%` }}
                 onPointerDown={() => {
                   scrubbingRef.current = true;
                 }}
@@ -324,7 +337,7 @@ function VideoSlide({
                   if (video) video.muted = !video.muted;
                 }}
                 aria-label={muted ? "Unmute" : "Mute"}
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[11px] transition-colors duration-180 hover:bg-white/10"
+                className="lv-round h-10 w-10 hover:bg-white/10"
               >
                 <VolumeIcon muted={muted} size={20} />
               </button>

@@ -116,8 +116,8 @@ export default function TrashClient({ repoOwner, repoName }: TrashClientProps) {
       badgeFor={badgeFor}
       aboveGrid={() =>
         items.length > 0 ? (
-          <p className="mx-3 mb-2 flex animate-fade-in items-center gap-3 rounded-control bg-surface-2 py-2 pl-2 pr-3.5 text-small text-ink-muted sm:mx-6">
-            <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-tile bg-surface-3">
+          <p className="mx-4 mb-3 flex animate-fade-in items-center gap-3 rounded-control bg-surface-2 py-2.5 pl-2.5 pr-3.5 text-footnote text-ink-muted dark:bg-ink/[0.06] sm:mx-6 lg:mx-8">
+            <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent-text">
               <ClockIcon size={16} />
             </span>
             Items are deleted for good {TRASH_RETENTION_DAYS} days after they&apos;re moved here. The corner of each one
@@ -150,7 +150,7 @@ export default function TrashClient({ repoOwner, repoName }: TrashClientProps) {
                   className={`${iconButtonClass({ variant: "tile", size: 40 })} !text-danger hover:!bg-danger/10 sm:w-auto sm:gap-2 sm:px-3`}
                 >
                   <DeleteForeverIcon size={18} />
-                  <span className="hidden text-small font-medium sm:inline">Empty trash</span>
+                  <span className="hidden text-callout font-semibold sm:inline">Empty trash</span>
                 </button>
                 <SelectButton onClick={startSelect} />
               </>

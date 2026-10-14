@@ -5,28 +5,23 @@ import { deviceFlowAvailable } from "@/lib/auth/deviceFlow";
 import { GithubIcon } from "@/app/components/library/icons";
 import DeviceSignIn from "./DeviceSignIn";
 import TokenSignIn from "./TokenSignIn";
-import { primaryAuthButtonClass, secondaryAuthButtonClass, textAuthButtonClass } from "./shared";
+import { primaryAuthButtonClass, textAuthButtonClass } from "./shared";
 
 type Mode = "choose" | "device" | "token";
 
-// A card on the page (docs/DESIGN.md › Cards); no glass: blur is for fixed chrome only.
-const cardClass =
-  "w-full rounded-card bg-surface p-5 shadow-soft animate-fade-in-up dark:border dark:border-border/60 dark:shadow-none sm:p-6";
+// A card on the page; no glass: blur is for fixed chrome only.
+const cardClass = "card w-full rounded-card p-5 animate-fade-in-up sm:p-6";
 
-/**
- * The ways to sign in: "Sign in with GitHub" (Device Flow, only inside the app and only
- * when this build has an OAuth client id) and a pasted personal access token (everywhere).
- * Rendered after the session has loaded, so it never hydrates against prerendered HTML.
- */
+/** "Sign in with GitHub" (Device Flow: app builds with a client id) or a pasted token (everywhere). */
 export default function SignInPanel({ lastLogin }: { lastLogin: string | null }) {
   const [deviceFlow] = useState(deviceFlowAvailable);
   const [mode, setMode] = useState<Mode>(deviceFlow ? "choose" : "token");
 
   const hint = lastLogin ? (
-    <p className="mb-4 flex items-center justify-center gap-2 text-small text-ink-muted">
-      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-[2px] bg-signal" />
+    <p className="mb-4 flex items-center justify-center gap-2 text-footnote text-ink-muted">
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
       <span>
-        Last signed in as <span className="font-mono text-ink">@{lastLogin}</span>
+        Last signed in as <span className="font-semibold text-ink">@{lastLogin}</span>
       </span>
     </p>
   ) : null;
@@ -64,8 +59,8 @@ export default function SignInPanel({ lastLogin }: { lastLogin: string | null })
           Sign in with GitHub
         </span>
       </button>
-      <button type="button" onClick={() => setMode("token")} className={secondaryAuthButtonClass}>
-        Use a personal access token
+      <button type="button" onClick={() => setMode("token")} className={textAuthButtonClass}>
+        Use a token instead
       </button>
     </div>
   );

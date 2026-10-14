@@ -54,7 +54,7 @@ export default function TokenSignIn({ autoFocus = false }: { autoFocus?: boolean
         <label htmlFor="github-token" className="text-body font-semibold text-ink">
           Personal access token
         </label>
-        <p id="github-token-hint" className="mt-1 text-small text-ink-muted">
+        <p id="github-token-hint" className="mt-1 text-footnote text-ink-muted">
           Create a token with the{" "}
           <code className="rounded-[5px] bg-surface-2 px-1.5 py-0.5 font-mono text-[0.8125em] text-ink">repo</code> scope
           and paste it here. It stays on this device and is only ever sent to GitHub.
@@ -66,7 +66,7 @@ export default function TokenSignIn({ autoFocus = false }: { autoFocus?: boolean
         target="_blank"
         rel="noreferrer"
         onClick={(event) => openExternal(event, NEW_TOKEN_URL)}
-        className={`group w-fit ${buttonClass({ variant: "secondary", size: "sm" })} !text-accent`}
+        className={`group w-fit ${buttonClass({ variant: "secondary", size: "sm" })}`}
       >
         Create a token on GitHub
         <ExternalIcon size={15} className="transition-transform duration-180 ease-out-expo group-hover:-translate-y-px group-hover:translate-x-px" />
@@ -91,7 +91,7 @@ export default function TokenSignIn({ autoFocus = false }: { autoFocus?: boolean
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? "github-token-hint github-token-error" : "github-token-hint"}
           disabled={busy}
-          className={`h-12 w-full rounded-control border bg-surface-2 pl-3.5 pr-12 font-mono text-small text-ink transition-colors duration-180 placeholder:text-ink-faint disabled:opacity-70 ${
+          className={`h-12 w-full rounded-control border bg-surface-2 pl-3.5 pr-12 font-mono text-[13px] text-ink transition-colors duration-180 placeholder:text-ink-faint disabled:opacity-70 ${
             error ? "border-danger" : "border-transparent"
           }`}
         />
@@ -100,14 +100,14 @@ export default function TokenSignIn({ autoFocus = false }: { autoFocus?: boolean
           onClick={() => setVisible((v) => !v)}
           aria-label={visible ? "Hide token" : "Show token"}
           aria-pressed={visible}
-          className="absolute right-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-tile text-ink-muted transition-colors duration-180 hover:bg-surface-3 hover:text-ink"
+          className="absolute right-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full text-ink-muted transition-colors duration-180 hover:bg-surface-3 hover:text-ink"
         >
           <EyeIcon off={visible} />
         </button>
       </div>
 
       {error && (
-        <p id="github-token-error" role="alert" className="text-small text-danger animate-fade-in">
+        <p id="github-token-error" role="alert" className="text-footnote text-danger animate-fade-in">
           {error}
         </p>
       )}
@@ -117,7 +117,7 @@ export default function TokenSignIn({ autoFocus = false }: { autoFocus?: boolean
         {busy ? "Checking…" : "Sign in"}
       </button>
 
-      <p className="text-small text-ink-muted">
+      <p className="text-footnote text-ink-muted">
         Fine-grained tokens work too: give them Contents (read and write) and Metadata (read) access to your photo repo.
       </p>
     </form>

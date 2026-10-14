@@ -1,5 +1,5 @@
 /** Service worker generation this build registers; must match SW_VERSION in public/sw.js. */
-export const SW_VERSION = 4;
+export const SW_VERSION = 5;
 /** Versioned so the controlling worker's scriptURL alone shows (synchronously) that it can stream. */
 export const SW_SCRIPT_URL = `/sw.js?v=${SW_VERSION}`;
 

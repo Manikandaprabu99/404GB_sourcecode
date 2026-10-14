@@ -1,10 +1,5 @@
-// The background People runner (docs/FACES.md "Background"): runner/faces.html, which the
-// Android app opens in a WebView nobody sees while the phone charges with the app closed. The
-// host (window.FaceRunnerHost, ./runnerHost) hands over the GitHub session and the run's
-// limits; this page then runs the app's own face scanner against its own copies of the
-// library and faces caches (this origin's IndexedDB), tells the host how far it is, and says
-// it's finished once what it found is committed. The host stops it early through
-// window.__404gbStopRunner().
+// The background People runner page (runner/faces.html) the Android app opens headlessly with the
+// app closed; host contract in ./runnerHost and docs/FACES.md "Background".
 
 import { disableTrashCleanup, ensureLibrary, syncLibrary } from "@/lib/library/mediaStore";
 import type { BackupAuth } from "@/lib/native/backup";
@@ -73,6 +68,7 @@ function tell(call: () => void): void {
 async function run(host: FaceRunnerHost, signal: AbortSignal): Promise<void> {
   let checked = 0;
   let reason: string;
+  const extra: { left?: number; resumeAt?: number } = {};
   try {
     const auth = readAuth(host);
     const config = readConfig(host);
@@ -94,11 +90,14 @@ async function run(host: FaceRunnerHost, signal: AbortSignal): Promise<void> {
       });
       checked = result.checked;
       reason = result.reason;
+      // The host chains a follow-up run on "deadline" while photos are left, not before resumeAt.
+      if (result.left !== null) extra.left = result.left;
+      if (result.resumeAt !== null) extra.resumeAt = result.resumeAt;
     }
   } catch (err) {
     reason = `Something went wrong: ${err instanceof Error ? err.message : String(err)}`;
   }
-  tell(() => host.finished(JSON.stringify({ checked, reason: reason.slice(0, MAX_REASON_LENGTH) })));
+  tell(() => host.finished(JSON.stringify({ checked, reason: reason.slice(0, MAX_REASON_LENGTH), ...extra })));
 }
 
 /** Starts the run (once per page), with the host's stop hook in place before the first call. */

@@ -1,19 +1,22 @@
 "use client";
 
+import "./gallery.css";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { MediaIndexEntry } from "@/lib/media";
 import { repoKeyFor } from "@/lib/cache";
-import { usePeople } from "@/lib/faces/people";
+import { useFaceScanStatus, usePeople, type Person } from "@/lib/faces/people";
 import { albumCoverId } from "@/lib/library/albumsStore";
 import { buildCategories, categoryCover } from "@/lib/library/categories";
+import { afterOverlayClosed } from "@/lib/library/history";
 import { useAlbums, useBackupStatus, useLibrary, useOnline } from "@/lib/library/hooks";
 import { syncLibrary } from "@/lib/library/mediaStore";
-import { onThisDay } from "@/lib/library/memories";
+import { spotlight, type Spotlight } from "@/lib/library/memories";
 import {
   compileQuery,
   libraryFacts,
+  matchesType,
   parseQuery,
   suggest as suggestFor,
   type ParsedQuery,
@@ -27,8 +30,11 @@ import EmptyState, { primaryButtonClass, secondaryButtonClass } from "@/app/comp
 import MediaLibraryView, { type LibraryHeaderState } from "@/app/components/library/MediaLibraryView";
 import Notice, { noticeActionClass } from "@/app/components/library/Notice";
 import { RefreshIcon, UploadIcon } from "@/app/components/library/icons";
-import { GalleryBar, GalleryIntro, type GalleryHeaderProps } from "./GalleryHeader";
+import type { DateGroup } from "./dateGroups";
+import { GalleryBar, GalleryIntro, QuickRail, type GalleryFilter, type GalleryHeaderProps, type RailInfo } from "./GalleryHeader";
 import MemoriesStrip from "./MemoriesStrip";
+import StoryPlayer from "./story/StoryPlayer";
+import type { GroupPerson } from "./VirtualGrid";
 import { formatBytes } from "./viewer/format";
 
 interface GalleryClientProps {
@@ -36,32 +42,72 @@ interface GalleryClientProps {
   repoName: string;
 }
 
-/** The telemetry line's count: what the grid shows, in the words of the filter or search. */
-function countFact(count: number, filter: LibraryFilter, searching: boolean): string {
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** "Recently added": uploaded in the last 30 days. */
+const RECENT_DAYS = 30;
+
+// The rail's collections that lib/library/viewState has no word for live here (module scope,
+// so a tab switch keeps them like the rest of galleryView).
+let savedFilter: GalleryFilter = galleryView.filter;
+
+const FILTER_NOUN: Partial<Record<GalleryFilter, [string, string]>> = {
+  photos: ["photo", "photos"],
+  videos: ["video", "videos"],
+  favorites: ["favorite", "favorites"],
+  screenshots: ["screenshot", "screenshots"],
+  selfies: ["selfie", "selfies"],
+};
+
+/** The subtitle's count: what the grid shows, in the words of the filter or search. */
+function countFact(count: number, filter: GalleryFilter, searching: boolean): string {
   const n = count.toLocaleString();
   if (searching) return count === 1 ? "1 match" : `${n} matches`;
-  switch (filter) {
-    case "photos":
-      return count === 1 ? "1 photo" : `${n} photos`;
-    case "videos":
-      return count === 1 ? "1 video" : `${n} videos`;
-    case "favorites":
-      return count === 1 ? "1 favorite" : `${n} favorites`;
-    default:
-      return count === 1 ? "1 item" : `${n} items`;
-  }
+  const noun = FILTER_NOUN[filter] ?? ["item", "items"];
+  return count === 1 ? `1 ${noun[0]}` : `${n} ${noun[1]}`;
 }
 
-/** The filter chip and the search query together (lib/library/search explains the query). */
-function applyFilter(items: MediaIndexEntry[], filter: LibraryFilter, parsed: ParsedQuery): MediaIndexEntry[] {
+/** The rail's filter and the search query together (lib/library/search explains the query). */
+function applyFilter(
+  items: MediaIndexEntry[],
+  filter: GalleryFilter,
+  parsed: ParsedQuery,
+  screenshotIds: ReadonlySet<string>,
+  now: Date
+): MediaIndexEntry[] {
   const matches = compileQuery(parsed);
   if (filter === "all" && !matches) return items;
+  const recentSince = now.getTime() - RECENT_DAYS * DAY_MS;
   return items.filter((item) => {
     if (filter === "photos" && !item.mimeType.startsWith("image/")) return false;
     if (filter === "videos" && !item.mimeType.startsWith("video/")) return false;
     if (filter === "favorites" && !item.favorite) return false;
+    if (filter === "screenshots" && !screenshotIds.has(item.id)) return false;
+    if (filter === "selfies" && !matchesType(item, "selfie")) return false;
+    if (filter === "recent") {
+      const added = Date.parse(item.createdAt);
+      if (Number.isNaN(added) || added < recentSince) return false;
+    }
     return !matches || matches(item);
   });
+}
+
+/** Placeholders in the hero's and rail's shapes while a cold load runs (the grid's follow). */
+function HeroSkeleton() {
+  return (
+    <div aria-hidden="true" className="animate-fade-in px-4 pb-1 pt-1 sm:px-6">
+      <div className="skeleton aspect-[4/5] max-h-[min(30rem,58vh)] w-full rounded-[26px] sm:aspect-[21/9] sm:max-h-[27.5rem]" />
+      <div className="flex h-6 items-center justify-center gap-1.5">
+        {[0, 1, 2].map((i) => (
+          <span key={i} className="skeleton block h-1.5 w-1.5 rounded-full" />
+        ))}
+      </div>
+      <div className="flex h-12 items-center gap-2 overflow-hidden">
+        {[52, 96, 78, 112, 124].map((w, i) => (
+          <span key={i} className="skeleton block h-9 shrink-0 rounded-full" style={{ width: w }} />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function GalleryClient({ repoOwner, repoName }: GalleryClientProps) {
@@ -70,15 +116,16 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   const library = useLibrary(repoKey);
   const backup = useBackupStatus();
   const online = useOnline();
-  const [filter, setFilterState] = useState<LibraryFilter>(galleryView.filter);
+  const [filter, setFilterState] = useState<GalleryFilter>(savedFilter);
   const [query, setQueryState] = useState(galleryView.query);
   const [searchOpen, setSearchOpen] = useState(false);
-  // The search field scrolled up under the sticky bar (the bar then offers a search button).
-  const [searchFieldHidden, setSearchFieldHidden] = useState(false);
   const desktopSearchRef = useRef<HTMLInputElement>(null);
   const deferredQuery = useDeferredValue(query);
   const zoom = useZoom();
   const { people } = usePeople(repoKey);
+  const scan = useFaceScanStatus();
+  const [story, setStory] = useState<Spotlight | null>(null);
+  const openSetRef = useRef<(setKey: string, id: string) => void>(() => {});
   // Album names matter only for search: the cached list until search is first used.
   const [searchUsed, setSearchUsed] = useState(() => galleryView.query.trim() !== "");
   const albumsState = useAlbums(repoKey, { load: searchUsed });
@@ -92,8 +139,10 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
-  const setFilter = (next: LibraryFilter) => {
-    galleryView.filter = next;
+  const setFilter = (next: GalleryFilter) => {
+    savedFilter = next;
+    const basic: LibraryFilter[] = ["all", "photos", "videos", "favorites"];
+    galleryView.filter = (basic as string[]).includes(next) ? (next as LibraryFilter) : "all";
     setFilterState(next);
   };
   const setQuery = (next: string) => {
@@ -111,6 +160,11 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   const now = useMemo(() => new Date(), [day]);
   const trashedIds = useMemo(() => new Set(library.trashed.map((item) => item.id)), [library.trashed]);
   const categories = useMemo(() => buildCategories(library.items), [library.items]);
+  const screenshotIds = useMemo(
+    () => new Set((categories.find((category) => category.id === "screenshots")?.items ?? []).map((item) => item.id)),
+    [categories]
+  );
+  const hasSelfies = useMemo(() => library.items.some((item) => matchesType(item, "selfie")), [library.items]);
   const searchContext = useMemo<SearchContext>(
     () => ({
       people: people.flatMap((person) =>
@@ -137,25 +191,58 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
   const parsed = useMemo(() => parseQuery(deferredQuery, searchContext), [deferredQuery, searchContext]);
   const entriesById = useMemo(() => new Map(library.items.map((item) => [item.id, item])), [library.items]);
 
-  const visible = useMemo(() => applyFilter(library.items, filter, parsed), [library.items, filter, parsed]);
+  const visible = useMemo(
+    () => applyFilter(library.items, filter, parsed, screenshotIds, now),
+    [library.items, filter, parsed, screenshotIds, now]
+  );
   const visibleBytes = useMemo(() => visible.reduce((sum, item) => sum + (item.size ?? 0), 0), [visible]);
 
-  const memories = useMemo(() => onThisDay(library.items, now), [library.items, now]);
+  const spotlights = useMemo(() => spotlight(library.items, now, people), [library.items, now, people]);
   const memorySets = useMemo(
-    () => Object.fromEntries(memories.map((memory) => [`memory:${memory.key}`, memory.items])),
-    [memories]
+    () => Object.fromEntries(spotlights.map((spot) => [`memory:${spot.key}`, spot.items])),
+    [spotlights]
   );
-  const showMemories = filter === "all" && !deferredQuery.trim();
+  const showHero = filter === "all" && !deferredQuery.trim() && !searchOpen;
+
+  // Day headers' avatar stacks: who appears in each day's photos, worked out once per group.
+  const groupPeople = useMemo(() => {
+    if (people.length === 0) return undefined;
+    const byMedia = new Map<string, Person[]>();
+    for (const person of people) {
+      for (const id of person.mediaIds) {
+        const list = byMedia.get(id);
+        if (list) list.push(person);
+        else byMedia.set(id, [person]);
+      }
+    }
+    const cache = new WeakMap<DateGroup, GroupPerson[]>();
+    return (group: DateGroup): GroupPerson[] => {
+      const known = cache.get(group);
+      if (known) return known;
+      const counts = new Map<Person, number>();
+      for (const item of group.items) {
+        for (const person of byMedia.get(item.id) ?? []) counts.set(person, (counts.get(person) ?? 0) + 1);
+      }
+      const result = Array.from(counts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([person]) => ({
+          id: person.id,
+          cover: person.cover,
+          entry: person.cover ? entriesById.get(person.cover.mediaId) : undefined,
+        }));
+      cache.set(group, result);
+      return result;
+    };
+  }, [people, entriesById]);
 
   const hasLibrary = library.items.length > 0;
   const offline = !online || library.error?.kind === "offline";
   const loading = !hasLibrary && (!library.hydrated || (!library.synced && !library.error));
   const retry = () => void syncLibrary();
 
-  // `12,431 ITEMS · 38.2 GB` (or what a filter or search shows), plus BACKING UP while the
-  // phone uploads (the header adds it where there's room); nothing yet during a cold load.
-  const backingUp = backup.support === "available" && Boolean(backup.status?.enabled) && backup.status?.state === "uploading";
-  const telemetry = loading
+  // `1,443 items · 17.8 GB` (or what a filter or search shows); nothing yet during a cold load.
+  const subtitle = loading
     ? null
     : [countFact(visible.length, filter, deferredQuery.trim() !== ""), visibleBytes > 0 ? formatBytes(visibleBytes) : null].filter(
         (fact): fact is string => Boolean(fact)
@@ -186,6 +273,7 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
       </Notice>
     ) : null;
 
+  const filterNoun = FILTER_NOUN[filter]?.[1] ?? (filter === "recent" ? "recently added items" : "library");
   let empty: JSX.Element;
   if (!hasLibrary && library.error && library.error.kind !== "auth") {
     empty =
@@ -242,7 +330,7 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
       <EmptyState
         illustration="search"
         title="No matches"
-        message={`Nothing in ${filter === "all" ? "your library" : `your ${filter}`} matches “${deferredQuery.trim()}”. Try a name, an app like WhatsApp, a date like “October 2024”, or part of a file name.`}
+        message={`Nothing in ${filter === "all" ? "your library" : `your ${filterNoun}`} matches “${deferredQuery.trim()}”. Try a name, an app like WhatsApp, a date like “October 2024”, or part of a file name.`}
       >
         <button type="button" onClick={() => setQuery("")} className={secondaryButtonClass}>
           Clear search
@@ -259,11 +347,20 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
     );
   } else if (filter === "videos") {
     empty = <EmptyState illustration="videos" title="No videos yet" message="Videos you back up or upload show up here." />;
+  } else if (filter === "screenshots") {
+    empty = <EmptyState illustration="photos" title="No screenshots" message="Screenshots you back up show up here." />;
+  } else if (filter === "selfies") {
+    empty = <EmptyState illustration="photos" title="No selfies" message="Selfies show up here when your phone marks them as selfies." />;
+  } else if (filter === "recent") {
+    empty = (
+      <EmptyState illustration="photos" title="Nothing added lately" message={`Photos and videos added in the last ${RECENT_DAYS} days show up here.`} />
+    );
   } else {
     empty = <EmptyState illustration="photos" title="No photos yet" message="Photos you back up or upload show up here." />;
   }
 
-  const headerProps = ({ selectMode, startSelect, collapsed, headerHeight }: LibraryHeaderState): GalleryHeaderProps => ({
+  const rail: RailInfo = { hasScreenshots: screenshotIds.size > 0, hasSelfies, people, scan, entriesById };
+  const headerProps = ({ selectMode, startSelect, collapsed }: LibraryHeaderState): GalleryHeaderProps => ({
     filter,
     onFilterChange: setFilter,
     query,
@@ -279,39 +376,59 @@ export default function GalleryClient({ repoOwner, repoName }: GalleryClientProp
     suggest,
     terms: deferredQuery.trim() ? parsed.terms.filter((term) => term.kind !== "text") : [],
     onSearchFocus: () => setSearchUsed(true),
-    telemetry,
-    backingUp,
+    subtitle,
     collapsed,
-    headerHeight,
-    fieldHidden: searchFieldHidden,
-    onFieldHiddenChange: setSearchFieldHidden,
     desktopSearchRef,
+    rail,
+    libraryEmpty: !hasLibrary,
   });
 
   return (
-    <MediaLibraryView
-      repoKey={repoKey}
-      scrollKey="gallery"
-      contained
-      items={visible}
-      loading={loading}
-      notice={notice}
-      empty={empty}
-      resetKey={`${filter}|${deferredQuery}`}
-      viewerSets={memorySets}
-      aboveGrid={({ selectMode, openSet }) =>
-        showMemories ? (
-          <MemoriesStrip
-            memories={memories}
-            repoKey={repoKey}
-            zoom={zoom}
-            disabled={selectMode}
-            onOpen={(memory) => openSet(`memory:${memory.key}`, memory.items[0].id)}
-          />
-        ) : null
-      }
-      header={(state) => <GalleryBar {...headerProps(state)} />}
-      intro={(state) => <GalleryIntro {...headerProps(state)} />}
-    />
+    <>
+      <MediaLibraryView
+        repoKey={repoKey}
+        scrollKey="gallery"
+        contained
+        items={visible}
+        loading={loading}
+        notice={notice}
+        empty={empty}
+        resetKey={`${filter}|${deferredQuery}`}
+        viewerSets={memorySets}
+        groupPeople={groupPeople}
+        aboveGrid={({ selectMode, openSet, loading: cold }) => {
+          openSetRef.current = openSet;
+          if (cold) return <HeroSkeleton />;
+          if (!hasLibrary) return null;
+          const props = headerProps({ selectMode, startSelect: () => {}, collapsed: false, headerHeight: 0 });
+          return (
+            <>
+              {showHero && (
+                <MemoriesStrip spotlights={spotlights} repoKey={repoKey} zoom={zoom} disabled={selectMode} onPlay={setStory} />
+              )}
+              {!searchOpen && (
+                <div className="px-4 pb-1 sm:px-6">
+                  <QuickRail {...props} />
+                </div>
+              )}
+            </>
+          );
+        }}
+        header={(state) => <GalleryBar {...headerProps(state)} />}
+        intro={(state) => <GalleryIntro {...headerProps(state)} />}
+      />
+      {story && (
+        <StoryPlayer
+          key={story.key}
+          spotlight={story}
+          repoKey={repoKey}
+          onClose={() => setStory(null)}
+          onOpenItem={(id) => {
+            const key = `memory:${story.key}`;
+            afterOverlayClosed(() => openSetRef.current(key, id));
+          }}
+        />
+      )}
+    </>
   );
 }

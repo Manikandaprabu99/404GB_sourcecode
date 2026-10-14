@@ -1,8 +1,6 @@
 "use client";
 
-// Pointer/wheel gestures for the photo viewer. Transforms are written straight to
-// the DOM (track, zoom layer, dismiss layer, backdrop) so dragging never waits on
-// a React render; React only hears about discrete outcomes through callbacks.
+// Pointer/wheel gestures for the viewer. Transforms go straight to the DOM; React hears only outcomes.
 
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import {
@@ -22,7 +20,6 @@ export const MAX_ZOOM = 5;
 const DOUBLE_TAP_ZOOM = 2.5;
 const NAV_MS = 300;
 const SNAP_MS = 280;
-const DISMISS_MS = 220;
 const DOUBLE_TAP_MS = 260;
 const DRAG_SLOP_TOUCH = 8;
 const DRAG_SLOP_MOUSE = 4;
@@ -47,8 +44,8 @@ export interface GestureCallbacks {
   onZoomedChange(zoomed: boolean): void;
   /** The slide-out animation finished; show the neighbour in that direction. */
   onNavigate(direction: -1 | 1): void;
-  /** Swipe-down finished animating out. */
-  onDismiss(): void;
+  /** Swipe-down released past the threshold; the photo stays where it was let go, for the viewer to animate. */
+  onDismiss(at: { x: number; y: number; s: number }): void;
   onSwipeUp(): void;
   /** 0..1 while the photo is dragged down (fade the chrome). */
   onDismissProgress(progress: number): void;
@@ -106,6 +103,7 @@ export function useViewerGestures(stageRef: RefObject<HTMLDivElement>, callbacks
     trackAnimUntil: 0,
     zoomAnimUntil: 0,
     dismissY: 0,
+    dismissX: 0,
     dismissing: false,
     zoomedNotified: false,
     zoomInFired: false,
@@ -173,18 +171,29 @@ export function useViewerGestures(stageRef: RefObject<HTMLDivElement>, callbacks
   const setDismiss = useCallback((dy: number, dx: number, ms = 0) => {
     const s = st.current;
     s.dismissY = dy;
+    s.dismissX = dx;
     const height = cb.current.getContext().height || 1;
     const progress = dy > 0 ? clamp(dy / (height * 0.45), 0, 1) : 0;
+    const resting = dy === 0 && dx === 0;
     const el = els.current.dismiss;
     if (el) {
       el.style.transition = ms ? `transform ${ms}ms ${EASE}` : "none";
-      el.style.transform =
-        dy === 0 && dx === 0 ? "" : `translate3d(${dx}px, ${dy}px, 0) scale(${1 - progress * 0.25})`;
+      el.style.transform = resting ? "" : `translate3d(${dx}px, ${dy}px, 0) scale(${1 - progress * 0.25})`;
+      // A compositor layer only while the photo follows the finger.
+      el.style.willChange = resting && !ms ? "" : "transform";
     }
     const backdrop = els.current.backdrop;
     if (backdrop) {
       backdrop.style.transition = ms ? `opacity ${ms}ms ${EASE}` : "none";
       backdrop.style.opacity = progress === 0 ? "" : String(1 - progress * 0.85);
+      backdrop.style.willChange = resting && !ms ? "" : "opacity";
+    }
+    if (resting && ms) {
+      window.setTimeout(() => {
+        if (s.dismissY !== 0 || s.dismissX !== 0) return;
+        if (els.current.dismiss) els.current.dismiss.style.willChange = "";
+        if (els.current.backdrop) els.current.backdrop.style.willChange = "";
+      }, ms + 40);
     }
     cb.current.onDismissProgress(progress);
   }, []);
@@ -484,19 +493,8 @@ export function useViewerGestures(stageRef: RefObject<HTMLDivElement>, callbacks
       const vy = s.velocity.y;
       if (dy > 110 || (vy > 0.55 && dy > 24)) {
         s.dismissing = true;
-        const el = els.current.dismiss;
-        if (el) {
-          el.style.transition = `transform ${DISMISS_MS}ms cubic-bezier(0.4,0,1,1), opacity ${DISMISS_MS}ms ease-in`;
-          el.style.transform = `translate3d(0, ${dy + ctx.height * 0.5}px, 0) scale(0.7)`;
-          el.style.opacity = "0";
-        }
-        const backdrop = els.current.backdrop;
-        if (backdrop) {
-          backdrop.style.transition = `opacity ${DISMISS_MS}ms ease-in`;
-          backdrop.style.opacity = "0";
-        }
-        cb.current.onDismissProgress(1);
-        window.setTimeout(() => cb.current.onDismiss(), DISMISS_MS);
+        const progress = clamp(dy / ((ctx.height || 1) * 0.45), 0, 1);
+        cb.current.onDismiss({ x: s.dismissX, y: dy, s: 1 - progress * 0.25 });
         return;
       }
       setDismiss(0, 0, SNAP_MS);
@@ -654,8 +652,20 @@ export function useViewerGestures(stageRef: RefObject<HTMLDivElement>, callbacks
     els.current.backdrop = el;
   }, []);
 
+  /** The current item's zoom (scale and pan from the stage centre). */
+  const currentZoom = useCallback((): Zoom => st.current.zoom, []);
+
+  /** Ends any drag at once (the viewer is closing). */
+  const cancel = useCallback(() => {
+    const s = st.current;
+    s.dismissing = true;
+    s.mode = "idle";
+    s.pointers.clear();
+    cancelTap();
+  }, [cancelTap]);
+
   return useMemo(
-    () => ({ setTrackEl, setZoomEl, setDismissEl, setBackdropEl, navigate, zoomBy, resetZoom, itemChanged }),
-    [setTrackEl, setZoomEl, setDismissEl, setBackdropEl, navigate, zoomBy, resetZoom, itemChanged]
+    () => ({ setTrackEl, setZoomEl, setDismissEl, setBackdropEl, navigate, zoomBy, resetZoom, itemChanged, currentZoom, cancel }),
+    [setTrackEl, setZoomEl, setDismissEl, setBackdropEl, navigate, zoomBy, resetZoom, itemChanged, currentZoom, cancel]
   );
 }

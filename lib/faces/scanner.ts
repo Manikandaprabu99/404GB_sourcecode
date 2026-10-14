@@ -1,16 +1,5 @@
-// Finds faces in the library a little at a time (docs/FACES.md): newest photos first, from
-// thumbnails already on this device when it has them, otherwise from GitHub within a small
-// hourly budget. In the app it works while the app is open and visible: it pauses while the
-// app is hidden, while this page's uploads/sync are busy, right after the user touches the
-// screen, when the user pauses it, and while the phone's background run is still finishing.
-// One tab scans at a time. Loaded lazily (app/components/people/PeopleScanner).
-//
-// runBackgroundScan is the same loop on the background People runner page (lib/faces/runner):
-// nobody looks at that page, so it doesn't wait for visibility or input; it takes its budget
-// and deadline from the Android host, tries the phone's own copies of the photos first, waits
-// and yields through timers a hidden page doesn't throttle (./timers), and ends — after one
-// commit of what it found — when everything is checked, at the deadline, when the host asks it
-// to stop, or when it can't go on.
+// Finds faces in the library a little at a time (docs/FACES.md "What gets scanned, and when").
+// runBackgroundScan is the same loop for the phone's headless runner page (docs/FACES.md "Background").
 
 import { getDb } from "@/lib/cache/db";
 import { getCachedThumbnail } from "@/lib/cache/thumbnailCache";
@@ -26,7 +15,6 @@ import { FACE_MODEL, normalizeBox, quantizeEmbedding } from "./doc";
 import {
   createFaceEngine,
   FaceDecodeError,
-  FaceDetectTimeoutError,
   FaceEngineUnavailableError,
   type FaceEngine,
   type FaceEngineOptions,
@@ -51,7 +39,7 @@ export const NETWORK_BUDGET_PER_HOUR = 600;
 const NETWORK_BURST_PER_MINUTE = 30;
 /** Rest between photos at least this long, and at least as long as the last one took. */
 const MIN_GAP_MS = 250;
-/** Wait this long after the user last touched/scrolled before running the model again. */
+/** Wait this long after the user last touched, wheeled or typed before running the model again. */
 const QUIET_AFTER_INPUT_MS = 1200;
 const OTHER_TAB_RETRY_MS = 30_000;
 const ENGINE_IDLE_DISPOSE_MS = 60_000;
@@ -70,10 +58,9 @@ const COMMIT_MARGIN_MS = 30_000;
 const FINAL_COMMIT_MS = 24_000;
 /** After a stop, the photo in hand gets this long before the commit goes ahead without it. */
 const STOP_GRACE_MS = 2000;
-/** WebGL may not come up in a WebView that is never drawn: it gets this long, then WebAssembly. */
-const GPU_INIT_TIMEOUT_MS = 30_000;
 const BACKGROUND_DETECT_TIMEOUT_MS = 45_000;
-const CPU_BACKENDS = ["wasm", "cpu"];
+/** A never-drawn WebView may never run WebGL's frame callbacks: background runs skip it. */
+const BACKGROUND_BACKENDS = ["wasm", "cpu"];
 /** Progress goes to the host every few photos, and every few seconds while photos come in. */
 const PROGRESS_EVERY = 5;
 const PROGRESS_INTERVAL_MS = 3000;
@@ -97,9 +84,9 @@ interface Background {
   localThumbnails: boolean;
   /** Photos /_local/thumb/ had no copy of. */
   notLocal: Set<string>;
-  /** WebGL didn't work out: WebAssembly (or the CPU) for the rest of the run. */
-  noGpu: boolean;
   checked: number;
+  /** When a used-up download budget frees up, if that ended the run. */
+  resumeAt: number | null;
   reported: { checked: number; at: number };
   onProgress(checked: number, total: number): void;
   /** Why the run ends; the first reason sticks. */
@@ -174,8 +161,8 @@ function installInputListeners() {
     lastInputAt = Date.now();
   };
   const opts = { capture: true, passive: true } as const;
-  for (const type of ["pointerdown", "wheel", "touchmove", "keydown"]) window.addEventListener(type, mark, opts);
-  document.addEventListener("scroll", mark, opts);
+  // Only what the user does: programmatic scrolls (a carousel, scroll restoration) never hold it up.
+  for (const type of ["pointerdown", "touchmove", "wheel", "keydown"]) window.addEventListener(type, mark, opts);
 }
 
 /** Images the scanner can read: a stored (always WebP) thumbnail, not a video, not in Trash. */
@@ -426,18 +413,11 @@ function nextItem(items: readonly MediaIndexEntry[], accept?: (item: MediaIndexE
   return null;
 }
 
-/** The model for this run; a background run gives WebGL a short while before WebAssembly. */
+/** The model for this run; background runs go straight to WebAssembly, with local model files. */
 function createEngine(run: Run): Promise<FaceEngine> {
-  const bg = run.background;
-  if (!bg) return createFaceEngine();
-  // The runner's model files are on the phone already; one photo may take a while on its CPU.
-  const options: FaceEngineOptions = { cacheModels: false, detectTimeoutMs: BACKGROUND_DETECT_TIMEOUT_MS };
-  if (bg.noGpu) return createFaceEngine({ ...options, backends: CPU_BACKENDS });
-  return createFaceEngine({ ...options, initTimeoutMs: GPU_INIT_TIMEOUT_MS }).catch((err: unknown) => {
-    if (!(err instanceof FaceEngineUnavailableError)) throw err;
-    bg.noGpu = true;
-    return createFaceEngine({ ...options, backends: CPU_BACKENDS });
-  });
+  if (!run.background) return createFaceEngine();
+  const options: FaceEngineOptions = { cacheModels: false, detectTimeoutMs: BACKGROUND_DETECT_TIMEOUT_MS, backends: BACKGROUND_BACKENDS };
+  return createFaceEngine(options);
 }
 
 async function ensureEngine(run: Run): Promise<FaceEngine> {
@@ -523,6 +503,7 @@ async function waitFor(run: Run, reason: ScanReason, until: number | null): Prom
   setScanStatus({ state: "waiting", reason, resumeAt: until, message: null });
   const bg = run.background;
   if (bg && until !== null && until >= bg.stopAt) {
+    if (reason === "budget") bg.resumeAt = until;
     endRun(run, reason === "rate-limit" ? ENDED.rateLimit : "deadline");
     return;
   }
@@ -626,13 +607,6 @@ async function scanLoop(run: Run): Promise<void> {
     } catch (err) {
       if (err instanceof FaceEngineUnavailableError) {
         engineError = err.message || "Face grouping can't run on this device.";
-        engine = null;
-        continue;
-      }
-      if (bg && !bg.noGpu && err instanceof FaceDetectTimeoutError && engine?.backend === "webgl") {
-        // A GPU that never answers in a WebView nobody sees: WebAssembly from now on.
-        bg.noGpu = true;
-        engine.dispose();
         engine = null;
         continue;
       }
@@ -781,6 +755,10 @@ export interface BackgroundScanResult {
   checked: number;
   /** "done" (nothing left), "deadline", "stopped", or why the run was cut short. */
   reason: string;
+  /** Photos still to check, or null before the library was in. */
+  left: number | null;
+  /** When a used-up download budget frees up, if that ended the run (the host waits for it). */
+  resumeAt: number | null;
 }
 
 /** One commit of everything found (as much as fits in time); what kept it from landing, or null. */
@@ -818,8 +796,8 @@ export async function runBackgroundScan(repoKey: string, options: BackgroundScan
     stopAt: Math.max(startedAt + (deadlineAt - startedAt) / 2, deadlineAt - COMMIT_MARGIN_MS),
     localThumbnails: options.localThumbnails,
     notLocal: new Set(),
-    noGpu: false,
     checked: 0,
+    resumeAt: null,
     reported: { checked: 0, at: 0 },
     onProgress: options.onProgress,
     reason: null,
@@ -849,6 +827,9 @@ export async function runBackgroundScan(repoKey: string, options: BackgroundScan
   // It did what it set out to, except saving: that's what the app should hear about.
   if (saveError && (reason === "done" || reason === "deadline" || reason === "stopped")) reason = saveError;
   reportProgress(run, true);
+  const library = getLibrarySnapshot();
+  const counts = progress(library.items);
+  const left = library.hydrated && library.repoKey === repoKey ? Math.max(0, counts.total - counts.done) : null;
   for (const unsubscribe of unsubscribers) unsubscribe();
   unsubscribers = [];
   if (current === run) current = null;
@@ -860,5 +841,5 @@ export async function runBackgroundScan(repoKey: string, options: BackgroundScan
     if (timers === workerTimers) timers = windowTimers;
     workerTimers?.dispose();
   });
-  return { checked: bg.checked, reason };
+  return { checked: bg.checked, reason, left, resumeAt: reason === "deadline" ? bg.resumeAt : null };
 }

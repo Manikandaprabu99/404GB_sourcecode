@@ -24,11 +24,8 @@ export interface SheetProps {
 const EXIT_MS = 220;
 const DRAG_CLOSE_PX = 110;
 
-/**
- * Bottom sheet on phones (drag the handle down to dismiss), centered dialog
- * on larger screens. Back, Escape and the backdrop all close it.
- * (docs/DESIGN.md › Sheet: top radius 28, grabber 36×4, title in the h2 role.)
- */
+/** Bottom sheet on phones (drag the header down to dismiss), centred dialog from `sm`.
+ * Back, Escape and the backdrop all close it. */
 export default function Sheet({ open, onClose, title, children }: SheetProps) {
   const [mounted, setMounted] = useState(open);
   const [canPortal, setCanPortal] = useState(false);
@@ -88,7 +85,7 @@ export default function Sheet({ open, onClose, title, children }: SheetProps) {
       onClose();
       return;
     }
-    panel.style.transition = "transform 260ms cubic-bezier(0.16,1,0.3,1)";
+    panel.style.transition = "transform 380ms cubic-bezier(0.32,0.72,0,1)";
     panel.style.transform = "";
   }
 
@@ -98,7 +95,7 @@ export default function Sheet({ open, onClose, title, children }: SheetProps) {
     <div className="fixed inset-0 z-sheet flex items-end justify-center sm:items-center sm:p-6">
       <div
         aria-hidden="true"
-        className={`absolute inset-0 bg-black/55 ${open ? "animate-fade-in" : "animate-fade-out"}`}
+        className={`absolute inset-0 bg-black/50 ${open ? "animate-fade-in" : "animate-fade-out"}`}
         onClick={onClose}
       />
       <div
@@ -108,21 +105,21 @@ export default function Sheet({ open, onClose, title, children }: SheetProps) {
         aria-labelledby={title ? titleId : undefined}
         tabIndex={-1}
         onKeyDown={(e) => panelRef.current && trapTab(e, panelRef.current)}
-        className={`relative flex max-h-[88dvh] w-full flex-col overflow-hidden rounded-t-sheet bg-surface text-ink shadow-sheet outline-none dark:border-t dark:border-border/60 sm:max-h-[80vh] sm:max-w-md sm:rounded-dialog sm:shadow-elevated sm:dark:border ${
+        className={`relative flex max-h-[88dvh] w-full flex-col overflow-hidden rounded-t-sheet bg-surface text-ink shadow-sheet outline-none dark:shadow-[inset_0_1px_0_rgb(255_255_255/0.07)] sm:max-h-[80vh] sm:max-w-md sm:rounded-sheet sm:shadow-elevated ${
           open ? "animate-sheet-in sm:animate-scale-in" : "animate-sheet-out sm:animate-scale-out"
         }`}
       >
         <div
-          className="shrink-0 touch-none select-none px-5 pt-2 sm:pt-4"
+          className="shrink-0 touch-none select-none border-b border-[rgb(var(--hairline))] px-5 pb-2 pt-2 sm:pt-4"
           onPointerDown={onHandleDown}
           onPointerMove={onHandleMove}
           onPointerUp={onHandleUp}
           onPointerCancel={onHandleUp}
         >
-          <div className="mx-auto h-1 w-9 rounded-full bg-border-strong sm:hidden" aria-hidden="true" />
-          <div className="flex min-h-[48px] items-center justify-between gap-3 pt-2 sm:pt-0">
+          <div className="mx-auto h-[5px] w-9 rounded-full bg-ink/20 sm:hidden" aria-hidden="true" />
+          <div className="flex min-h-[44px] items-center justify-between gap-3 pt-1.5 sm:pt-0">
             {title ? (
-              <h2 id={titleId} className="min-w-0 truncate font-display text-h2 text-ink">
+              <h2 id={titleId} className="min-w-0 truncate text-headline text-ink">
                 {title}
               </h2>
             ) : (
@@ -132,13 +129,13 @@ export default function Sheet({ open, onClose, title, children }: SheetProps) {
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className={`-mr-1 ${iconButtonClass({ variant: "tile", size: 40 })}`}
+              className={`-mr-1 ${iconButtonClass({ variant: "tile", size: 36 })}`}
             >
-              <CloseIcon size={18} />
+              <CloseIcon size={16} />
             </button>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-safe-6 pt-2 sm:pb-6">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-safe-6 pt-4 sm:pb-6">
           {children}
         </div>
       </div>

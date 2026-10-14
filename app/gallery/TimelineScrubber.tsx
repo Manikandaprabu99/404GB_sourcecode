@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
+import { tick as hapticTick } from "@/lib/ui/haptics";
 import { shortMonthLabel } from "./dateGroups";
 import { offsetWithin } from "./layoutMath";
 
@@ -62,6 +63,7 @@ export default function TimelineScrubber({ scrollRef, gridRef, marks, total, sti
   const [hovering, setHovering] = useState(false);
   const [finePointer, setFinePointer] = useState(false);
   const [label, setLabel] = useState("");
+  const lastLabelRef = useRef("");
   const [markers, setMarkers] = useState<{ y: number; label: string }[]>([]);
 
   useEffect(() => {
@@ -187,7 +189,13 @@ export default function TimelineScrubber({ scrollRef, gridRef, marks, total, sti
       const fraction = Math.min(1, Math.max(0, (clientY - rect.top - grabOffset.current) / g.track));
       const top = Math.round(fraction * g.maxScroll);
       g.scroller.scrollTop = top;
-      setLabel(labelAt(top, g.gridOffset));
+      const next = labelAt(top, g.gridOffset);
+      // One tick per month passed.
+      if (next !== lastLabelRef.current) {
+        if (lastLabelRef.current) hapticTick();
+        lastLabelRef.current = next;
+      }
+      setLabel(next);
     },
     [geometry, labelAt]
   );
@@ -206,13 +214,17 @@ export default function TimelineScrubber({ scrollRef, gridRef, marks, total, sti
     setDragging(true);
     setVisible(true);
     computeMarkers();
+    lastLabelRef.current = "";
     if (onThumb) {
       const g = geometry();
-      if (g) setLabel(labelAt(g.scroller.scrollTop, g.gridOffset));
+      if (g) {
+        lastLabelRef.current = labelAt(g.scroller.scrollTop, g.gridOffset);
+        setLabel(lastLabelRef.current);
+      }
     } else {
       scrollToPointer(e.clientY);
     }
-    navigator.vibrate?.(8);
+    hapticTick();
   };
 
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -252,12 +264,12 @@ export default function TimelineScrubber({ scrollRef, gridRef, marks, total, sti
 
   return (
     <div ref={rootRef} className="absolute inset-0">
-      {/* Year markers in the telemetry face. No blur: the grid scrolls under them. */}
+      {/* Year markers. No blur: the grid scrolls under them. */}
       {showMarkers &&
         markers.map((marker) => (
           <span
             key={marker.label}
-            className="telemetry pointer-events-none absolute right-11 -translate-y-1/2 animate-fade-in rounded-[5px] border border-border/60 bg-surface/95 px-1.5 py-[3px] text-ink-muted shadow-soft"
+            className="pointer-events-none absolute right-6 -translate-y-1/2 animate-fade-in rounded-full bg-surface/95 px-2 py-0.5 text-[12px] font-semibold tabular-nums text-ink-muted shadow-[inset_0_0_0_1px_rgb(var(--ink)/0.08)]"
             style={{ top: marker.y }}
           >
             {marker.label}
@@ -285,7 +297,7 @@ export default function TimelineScrubber({ scrollRef, gridRef, marks, total, sti
         aria-valuenow={Math.round(
           scrollRef.current ? (scrollRef.current.scrollTop / Math.max(1, scrollRef.current.scrollHeight - scrollRef.current.clientHeight)) * 100 : 0
         )}
-        className={`absolute right-1.5 top-0 flex h-10 items-center transition-opacity duration-250 ${
+        className={`absolute right-0 top-0 flex h-10 items-center pr-1 transition-opacity duration-240 ${
           shown ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
         }`}
         style={{ touchAction: "none" }}
@@ -293,24 +305,19 @@ export default function TimelineScrubber({ scrollRef, gridRef, marks, total, sti
         onPointerLeave={finePointer ? () => setHover(false) : undefined}
         {...dragHandlers}
       >
-        {/* The month being scrubbed to, in a signal bubble (OCT 2024). */}
+        {/* The month being scrubbed to, in a glass pill. */}
         {dragging && label && (
-          <span className="telemetry pointer-events-none mr-2 flex h-9 animate-scale-in items-center whitespace-nowrap rounded-tile bg-signal px-3 text-[12px] text-signal-ink shadow-elevated">
+          <span className="lp-scrub-pill pointer-events-none mr-3 flex h-10 animate-scale-in items-center whitespace-nowrap rounded-full px-4 text-[15px] font-semibold tabular-nums text-ink">
             {label}
           </span>
         )}
-        {/* The handle is a tile, like every knob in the app: 30×40, two chevrons. */}
-        <span
-          className={`flex h-10 w-[30px] cursor-grab flex-col items-center justify-center gap-[3px] rounded-tile border border-border-strong/60 bg-surface-3 text-ink-muted shadow-soft transition-[transform,color] duration-180 ease-out-expo active:cursor-grabbing ${
-            dragging ? "scale-105 text-ink" : ""
-          }`}
-        >
-          <svg viewBox="0 0 12 7" width="11" height="6" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M1.5 5.5 6 1.5l4.5 4" />
-          </svg>
-          <svg viewBox="0 0 12 7" width="11" height="6" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M1.5 1.5 6 5.5l4.5-4" />
-          </svg>
+        {/* A thin handle with a wide hit area; it thickens and takes the accent while dragged. */}
+        <span className="flex h-10 w-7 cursor-grab items-center justify-end active:cursor-grabbing">
+          <span
+            className={`block h-10 rounded-full transition-[transform,background-color] duration-160 ease-out ${
+              dragging ? "w-1.5 bg-accent" : "w-1 bg-ink/45"
+            }`}
+          />
         </span>
       </div>
     </div>

@@ -178,11 +178,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// Tone marks are small tiles, like everything else that signals state.
+// A round tone mark before the message.
 function ToneIcon({ tone }: { tone: ToastTone }) {
   if (tone === "success") {
     return (
-      <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-success/15 text-success">
+      <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-success/15 text-success">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round">
           <path d="m6.5 12.5 3.6 3.6 7.4-8" />
         </svg>
@@ -191,7 +191,7 @@ function ToneIcon({ tone }: { tone: ToastTone }) {
   }
   if (tone === "error") {
     return (
-      <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] bg-danger/15 text-danger">
+      <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-danger/15 text-danger">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round">
           <path d="M12 6.5v7M12 17.5v.1" />
         </svg>
@@ -264,17 +264,16 @@ function ToastView({
       onPointerLeave={(e) => e.pointerType === "mouse" && onHold("hover", false)}
       onFocus={() => !toast.leaving && onHold("focus", true)}
       onBlur={() => onHold("focus", false)}
-      className={`pointer-events-auto flex min-h-[52px] w-full max-w-md touch-pan-y select-none items-center gap-3 rounded-lg border border-border/60 bg-surface-3/90 py-2.5 text-small font-medium text-ink shadow-elevated backdrop-blur-[16px] backdrop-saturate-[1.3] ${
-        hasAction ? "pr-1.5" : "pr-4"
-      } ${tone === "default" ? "pl-4" : "pl-3"} ${toast.leaving ? "animate-toast-out" : "animate-toast-in"}`}
+      className={`glass hairline pointer-events-auto flex min-h-[48px] w-fit min-w-[min(16rem,100%)] max-w-md touch-pan-y select-none items-center gap-2.5 rounded-[24px] py-2 text-callout text-ink shadow-[0_12px_32px_-12px_rgb(0_0_0/0.5)] ${
+        hasAction ? "pr-1.5" : "pr-5"
+      } ${tone === "default" ? "pl-5" : "pl-2.5"} ${toast.leaving ? "animate-toast-out" : "animate-toast-in"}`}
     >
       <ToneIcon tone={tone} />
       <span className="min-w-0 flex-1 break-words">{toast.message}</span>
       {hasAction && (
         <button
           type="button"
-          // accent-strong: the paper theme's accent is under 4.5:1 on surface-3.
-          className="-my-1 min-h-[44px] shrink-0 rounded-tile px-3 text-small font-semibold text-accent-strong transition-colors duration-180 hover:bg-bg/40 dark:text-accent"
+          className="-my-1 min-h-[40px] shrink-0 rounded-full px-3.5 text-callout font-semibold text-accent-text transition-colors duration-180 hover:bg-accent-soft"
           onClick={() => {
             toast.onAction?.();
             onDismiss();

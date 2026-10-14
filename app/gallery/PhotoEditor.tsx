@@ -8,7 +8,6 @@ import { createPortal } from "react-dom";
 import type { MediaIndexEntry } from "@/lib/media";
 import { buttonClass } from "@/app/components/ui/Button";
 import { useConfirm } from "@/app/components/ui/ConfirmDialog";
-import { TileGlyph } from "@/app/components/ui/StatusBadge";
 import TileMeter from "@/app/components/ui/TileMeter";
 import { useToast } from "@/app/components/ui/Toast";
 import { useHistoryOverlay } from "@/lib/ui/useHistoryOverlay";
@@ -35,6 +34,7 @@ import FiltersPanel from "./editor/FiltersPanel";
 import { AdjustIcon, AlertIcon, CheckIcon, CloseIcon, CompareIcon, CropIcon, FiltersIcon, SpinnerIcon } from "./editor/icons";
 import { useEditorSource } from "./editor/useEditorSource";
 import { useSaveCopy } from "./editor/useSaveCopy";
+import "./viewer/viewer.css";
 
 export interface PhotoEditorProps {
   media: MediaIndexEntry;
@@ -55,28 +55,20 @@ const TABS: { id: Tab; label: string; Icon: typeof FiltersIcon }[] = [
 
 const CLOSE_ANIMATION_MS = 180;
 
-// The editor is always dark (like a darkroom), whatever the app theme: the dark ("Ink") token
-// values from globals.css.
+// Always dark: the Lumen dark neutrals; the accent follows the theme and is only used as a fill.
 const DARK_TOKENS = {
-  "--bg": "10 10 11",
-  "--surface": "18 18 20",
-  "--surface-2": "26 26 29",
-  "--surface-3": "35 35 39",
-  "--border": "42 42 47",
-  "--border-strong": "61 61 68",
-  "--ink": "242 242 238",
-  "--ink-muted": "161 161 168",
-  "--ink-faint": "109 109 117",
-  "--signal": "200 245 66",
-  "--signal-ink": "14 20 0",
-  "--accent": "200 245 66",
-  "--accent-strong": "172 222 38",
-  "--accent-ink": "14 20 0",
-  "--accent-inverse": "74 112 0",
-  "--accent-2": "139 124 255",
-  "--success": "74 222 128",
-  "--warning": "255 181 71",
-  "--danger": "255 90 110",
+  "--bg": "7 8 11",
+  "--surface": "16 18 23",
+  "--surface-2": "24 27 34",
+  "--surface-3": "33 37 46",
+  "--border": "37 41 51",
+  "--border-strong": "55 61 74",
+  "--ink": "244 246 250",
+  "--ink-muted": "160 167 182",
+  "--ink-faint": "122 129 145",
+  "--success": "52 211 153",
+  "--warning": "251 191 36",
+  "--danger": "255 99 117",
   "--danger-ink": "30 6 10",
   colorScheme: "dark",
   paddingLeft: "var(--safe-area-inset-left, env(safe-area-inset-left, 0px))",
@@ -91,7 +83,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink transition-[background-color,transform] duration-180 ease-out-expo hover:bg-ink/10 active:scale-[0.94] active:bg-ink/15"
+      className="lv-round bg-white/[0.08] hover:bg-white/[0.14]"
     >
       {children}
     </button>
@@ -294,23 +286,21 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
         </IconButton>
         <div className="flex min-w-0 flex-1 justify-center" aria-live="polite">
           {loadingOriginal ? (
-            // The viewer's Original badge, neutral while the full-resolution photo loads.
-            <span className="telemetry flex h-6 min-w-0 items-center gap-1.5 rounded-tile-sm bg-surface-3 px-2 text-ink-muted animate-fade-in">
-              <TileGlyph state="busy" />
-              <span className="truncate">Loading original</span>
-              {percent > 0 ? <span className="tabular-nums text-ink">{percent}%</span> : null}
+            // The viewer's Original badge while the full-resolution photo loads.
+            <span className="lv-badge lv-glass-still lv-fade-in min-w-0">
+              <SpinnerIcon size={13} />
+              <span className="truncate">Loading original{percent > 0 ? ` ${percent}%` : ""}</span>
             </span>
           ) : sizeNote ? (
-            <span className="telemetry truncate text-ink-muted animate-fade-in">{sizeNote}</span>
+            <span className="lv-fade-in truncate text-[13px] tabular-nums text-ink-muted">{sizeNote}</span>
           ) : null}
         </div>
         <button
           type="button"
           onClick={handleSave}
           disabled={!canSave}
-          className={`flex h-10 shrink-0 items-center gap-2 rounded-control bg-signal px-4 text-small font-semibold text-signal-ink transition-[background-color,color,box-shadow,transform] duration-120 ease-out-expo hover:shadow-glow-signal active:scale-[0.97] disabled:shadow-none ${
-            saved ? "" : "disabled:bg-surface-3 disabled:text-ink-muted"
-          }`}
+          data-saved={saved ? "true" : undefined}
+          className="lv-ed-save"
         >
           {busy ? <SpinnerIcon size={16} /> : saved ? <CheckIcon size={18} /> : null}
           {saved ? "Saved" : "Save copy"}
@@ -320,7 +310,7 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
       {loadingOriginal && (
         <div className="absolute inset-x-0 top-0 z-20 h-0.5 bg-transparent" aria-hidden="true">
           <div
-            className="h-full bg-signal transition-[width] duration-320 ease-out-expo"
+            className="h-full rounded-r-full bg-accent transition-[width] duration-320 ease-out-expo"
             style={{ width: `${Math.max(4, percent)}%` }}
           />
         </div>
@@ -372,7 +362,7 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
           )}
 
           {compare && (
-            <span className="telemetry pointer-events-none absolute left-3 top-3 flex h-6 items-center rounded-tile-sm bg-black/65 px-2 text-white animate-fade-in">
+            <span className="lv-badge lv-glass-still lv-fade-in pointer-events-none absolute left-3 top-3">
               Original
             </span>
           )}
@@ -388,7 +378,7 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
               }}
               onKeyUp={() => setCompare(false)}
               onContextMenu={(event) => event.preventDefault()}
-              className="absolute bottom-3 right-3 flex h-11 w-11 touch-none select-none items-center justify-center rounded-full bg-black/60 text-white ring-1 ring-white/15 transition-[background-color,transform] duration-180 ease-out-expo active:scale-[0.94] active:bg-black/80 animate-scale-in"
+              className="lv-round lv-glass-still absolute bottom-3 right-3 touch-none select-none animate-scale-in"
             >
               <CompareIcon />
             </button>
@@ -400,9 +390,9 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
               {saver.state.phase === "error" ? (
                 <div
                   role="alert"
-                  className="flex w-full max-w-xs flex-col items-center gap-3 rounded-dialog border border-border/60 bg-surface p-5 text-center shadow-elevated animate-scale-in"
+                  className="flex w-full max-w-xs flex-col items-center gap-3 rounded-[22px] bg-surface-2 p-5 text-center shadow-[inset_0_1px_0_rgb(255_255_255/0.06),0_16px_40px_rgb(0_0_0/0.4)] animate-scale-in"
                 >
-                  <span className="flex h-11 w-11 items-center justify-center rounded-tile bg-danger/15 text-danger">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-danger/15 text-danger">
                     <AlertIcon size={22} />
                   </span>
                   <p className="text-body font-semibold">Couldn&apos;t save your copy</p>
@@ -420,7 +410,7 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
                 <div className="flex w-52 flex-col items-center gap-3 text-center animate-scale-in" aria-live="polite">
                   {saved ? (
                     <>
-                      <span className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-signal text-signal-ink animate-check-pop">
+                      <span className="flex h-14 w-14 items-center justify-center rounded-full bg-accent text-accent-ink animate-check-pop">
                         <CheckIcon size={28} />
                       </span>
                       <p className="text-small font-medium text-white">{saver.state.label}</p>
@@ -444,7 +434,7 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
           )}
         </EditorStage>
 
-        <section className="flex shrink-0 flex-col border-t border-border/70 bg-bg lg:w-[22rem] lg:border-l lg:border-t-0">
+        <section className="flex shrink-0 flex-col bg-bg lg:w-[22rem] lg:border-l lg:border-border/60">
           <div key={tab} className="flex min-h-[8.75rem] flex-col justify-center py-2 animate-fade-in lg:order-last lg:flex-1 lg:justify-start lg:py-4">
             {tab === "filters" && (
               <FiltersPanel
@@ -479,39 +469,39 @@ export default function PhotoEditor({ media, onClose, onSaved }: PhotoEditorProp
               />
             )}
           </div>
-          <nav
-            role="tablist"
-            aria-label="Editing tools"
-            className="flex border-t border-border/70 lg:border-b lg:border-t-0"
-            style={{ paddingBottom: "var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))" }}
+          <div
+            className="px-4 pb-3 pt-1 lg:pb-3 lg:pt-4"
+            style={{ paddingBottom: "calc(0.75rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))" }}
           >
-            {TABS.map(({ id, label, Icon }) => {
-              const selected = tab === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  disabled={locked}
-                  onClick={() => setTab(id)}
-                  className={`group flex h-[60px] flex-1 flex-col items-center justify-center gap-1 text-micro font-medium transition-colors duration-180 ease-out-expo disabled:opacity-50 ${
-                    selected ? "text-ink" : "text-ink-muted hover:text-ink"
-                  }`}
-                >
-                  {/* The active tool's icon sits in the lime tile, like the tab bar's. */}
-                  <span
-                    className={`flex h-[30px] w-11 items-center justify-center rounded-tile transition-[background-color,color,transform] duration-250 ease-out-expo group-active:scale-[0.94] ${
-                      selected ? "bg-signal text-signal-ink" : ""
-                    }`}
+            {/* Pill tool tabs; the selected tab's pill slides between them. */}
+            <nav role="tablist" aria-label="Editing tools" className="lv-ed-tabs mx-auto max-w-sm">
+              <span
+                aria-hidden="true"
+                className="lv-ed-tab-thumb"
+                style={{
+                  width: `calc((100% - 0.5rem - ${TABS.length - 1} * 0.25rem) / ${TABS.length})`,
+                  transform: `translateX(calc(${TABS.findIndex((t) => t.id === tab)} * (100% + 0.25rem)))`,
+                }}
+              />
+              {TABS.map(({ id, label, Icon }) => {
+                const selected = tab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    disabled={locked}
+                    onClick={() => setTab(id)}
+                    className="lv-ed-tab"
                   >
-                    <Icon size={20} />
-                  </span>
-                  {label}
-                </button>
-              );
-            })}
-          </nav>
+                    <Icon size={18} />
+                    {label}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
         </section>
       </div>
     </div>,

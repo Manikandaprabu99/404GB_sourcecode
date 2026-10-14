@@ -86,7 +86,7 @@ function ImageSlide({
             <button
               type="button"
               onClick={onDownload}
-              className="inline-flex h-11 items-center gap-2 rounded-control bg-white px-5 text-small font-semibold text-black transition-transform duration-120 active:scale-[0.97]"
+              className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-[15px] font-semibold text-black transition-transform duration-120 active:scale-[0.97]"
             >
               <DownloadIcon size={18} />
               {downloadLabel}
@@ -98,7 +98,7 @@ function ImageSlide({
             <button
               type="button"
               onClick={onRetryOriginal}
-              className="inline-flex h-11 items-center rounded-control border border-white/25 px-5 text-small font-semibold text-white transition-[background-color,transform] duration-120 hover:bg-white/10 active:scale-[0.97]"
+              className="inline-flex h-11 items-center rounded-full bg-white/10 px-5 text-[15px] font-semibold text-white ring-1 ring-white/15 transition-[background-color,transform] duration-120 hover:bg-white/10 active:scale-[0.97]"
             >
               Try again
             </button>

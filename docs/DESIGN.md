@@ -1,207 +1,307 @@
-# 404GB design system — "Missing Tile"
+# 404GB design system — "Lumen"
 
-404GB stores your photos in a Git repo, and its logo is a 2×2 grid with one dashed, missing
-tile. The interface is built from that idea: **tiles, telemetry and one bright signal colour**.
-It should never read as stock Material, iOS, Google Photos or shadcn. Photos stay the hero:
-chrome is quiet ink, type does the talking, and lime marks what is live.
+Premium, calm, content-first. The photos are the hero; the chrome is quiet, glassy and
+precise, like a first-party phone app. Blue by default; the user can pick another accent colour,
+another font and the theme in Settings › Appearance. This replaces "Missing Tile" (no lime, no
+mono uppercase labels, no dashed tiles, no wide display font).
 
-Signature elements (use them consistently; they are what makes the app recognisable):
-
-1. **Tiles, not circles.** Rounded squares everywhere a stock app would use a circle or a pill:
-   the active-tab indicator, the switch knob, selection checks, progress meters, the scrubber
-   handle and status badges.
-2. **The missing tile.** A dashed outline that *fills in*: the nav indicator fills when a tab
-   becomes active, empty states show the 2×2 mark with its dashed tile breathing, skeletons and
-   drop zones use dashed tiles, and progress is a row of tiles filling with lime.
-3. **Telemetry labels.** Small uppercase monospace lines carry facts like a dev console:
-   `SUN 12 OCT · 14`, `12,431 ITEMS · 38.2 GB`, `128 TO GO`, `LAST COMMIT 3F9C2E1`.
-4. **Wide display type.** Big titles, years and numbers in Unbounded: `Photos`, `2024`,
-   `18.4 GB`, `3 years ago`.
-5. **Signal lime.** One saturated accent (#C8F542) on ink or paper, used for fills (badges,
-   primary buttons, switch tracks, nav tile, progress, selection), never as body text on light.
+Principles
+- **Content first.** Photos edge to edge, chrome floats above them on glass, and nothing competes
+  with the images.
+- **Premium detail.** One typeface family used with care: tight large titles, tabular numbers and
+  sentence case everywhere. Soft depth, generous spacing and real springs.
+- **Alive, not busy.** Motion explains where things come from (a photo opens from its tile and
+  goes back to it), and ambient colour comes from the photos themselves.
+- **Fast on a mid-range Android WebView.** Blur only on fixed chrome, animate only transform and
+  opacity, and never put per-tile shadows or filters in the grid.
 
 ## Tokens
 
-All colours are RGB triplets in `app/globals.css` (used as `rgb(var(--x) / <alpha>)` by
-Tailwind), keeping the existing names. New tokens: `--signal`, `--signal-ink`, `--accent-2`.
+All colours are RGB triplets in CSS variables (`rgb(var(--x) / <alpha-value>)` in Tailwind).
+Keep the existing token NAMES so screens keep working: bg, surface, surface-2, surface-3, border,
+border-strong, ink, ink-muted, ink-faint, accent, accent-strong, accent-ink, accent-inverse,
+accent-2, signal, signal-ink, success, warning, danger, danger-ink. `signal`/`signal-ink` become
+aliases of `accent`/`accent-ink`. Add:
 
-| Token | Dark ("Ink") | Light ("Paper") | Use |
-| --- | --- | --- | --- |
-| `--bg` | 10 10 11 `#0A0A0B` | 243 242 237 `#F3F2ED` | app background |
-| `--surface` | 18 18 20 `#121214` | 255 255 255 `#FFFFFF` | cards, sheets, nav |
-| `--surface-2` | 26 26 29 `#1A1A1D` | 234 233 227 `#EAE9E3` | inputs, inactive chips, tiles |
-| `--surface-3` | 35 35 39 `#232327` | 224 223 216 `#E0DFD8` | pressed, raised in dark |
-| `--border` | 42 42 47 `#2A2A2F` | 220 219 211 `#DCDBD3` | hairlines |
-| `--border-strong` | 61 61 68 `#3D3D44` | 198 197 188 `#C6C5BC` | focus-adjacent, dividers |
-| `--ink` | 242 242 238 `#F2F2EE` | 17 17 19 `#111113` | primary text |
-| `--ink-muted` | 161 161 168 `#A1A1A8` | 85 85 92 `#55555C` | secondary text |
-| `--ink-faint` | 109 109 117 `#6D6D75` | 133 133 140 `#85858C` | telemetry, placeholders |
-| `--signal` | 200 245 66 `#C8F542` | 200 245 66 `#C8F542` | **fills**: badges, primary buttons, switch on, nav tile, progress, checks |
-| `--signal-ink` | 14 20 0 `#0E1400` | 14 20 0 `#0E1400` | text/icons on signal |
-| `--accent` | 200 245 66 `#C8F542` | 74 112 0 `#4A7000` | accent **text/icons** (links, active labels) |
-| `--accent-strong` | 172 222 38 | 55 85 0 | hover/pressed accent |
-| `--accent-ink` | 14 20 0 | 255 255 255 | text on `bg-accent` |
-| `--accent-inverse` | 74 112 0 | 200 245 66 | accent on the opposite theme's surface |
-| `--accent-2` | 139 124 255 `#8B7CFF` | 91 75 234 `#5B4BEA` | secondary highlight (People, faces, brand mark) — sparingly |
-| `--success` | 74 222 128 | 21 128 61 | |
-| `--warning` | 255 181 71 | 161 92 0 | |
-| `--danger` | 255 90 110 | 217 45 68 | |
-| `--danger-ink` | 30 6 10 | 255 255 255 | |
+- `--accent-text`: accent-coloured text and icons on bg/surface (AA 4.5:1).
+- `--accent-soft`: a tinted fill. It is the accent at about 14% over surface, precomputed as a
+  triplet.
+- `--glow`: the aurora tint behind headers (the accent, used at 0.10–0.18 alpha).
 
-Focus ring: 2px `signal` (dark) / 2px `accent` (light) with 2px offset in `bg`. Selection
-highlight on tiles: `signal`. Contrast: body text ≥ 4.5:1 in both themes; never lime text on
-light backgrounds (use `accent`, which is moss there).
+| token | dark | light |
+| --- | --- | --- |
+| bg | 7 8 11 | 246 247 249 |
+| surface | 16 18 23 | 255 255 255 |
+| surface-2 | 24 27 34 | 240 242 245 |
+| surface-3 | 33 37 46 | 231 234 239 |
+| border | 37 41 51 | 225 228 234 |
+| border-strong | 55 61 74 | 203 208 217 |
+| ink | 244 246 250 | 13 15 20 |
+| ink-muted | 160 167 182 | 82 89 104 |
+| ink-faint | 122 129 145 (decoration only) | 132 139 153 (decoration only) |
+| success | 52 211 153 | 4 120 87 |
+| warning | 251 191 36 | 180 83 9 |
+| danger | 255 99 117 | 214 40 57 |
 
-## Typography
+"Pure black" option (dark only, for OLED): bg 0 0 0, surface 12 13 16, surface-2 20 22 27.
 
-Self-hosted variable woff2 (OFL) in `app/fonts/` with their licence files (≈ 87 KB total,
-replacing Inter + JetBrains Mono): **Unbounded** (`--font-display`, wght 200–900, 50.9 KB),
-**Host Grotesk** (`--font-sans`, wght 300–800, 20.3 KB), **Kode Mono** (`--font-mono`,
-wght 400–700, 15.8 KB). Sources and licences: the 404GB scratchpad copy of the tile study
-(`design/tile/fonts/`) or Google Fonts.
+### Accent palettes (Settings › Appearance › Accent)
 
-| Role (Tailwind `fontSize` key) | Font | Size / line | Weight | Tracking | Where |
+Here `fill` is `--accent`, the buttons, switches and selection. `text` is `--accent-text`, for
+links and active icons on bg. `accent-ink` is white unless noted. Verify AA and adjust only the
+lightness, never the hue:
+- white on `fill` should reach at least 4.5:1;
+- `text` on bg should reach at least 4.5:1.
+
+| id | name | dark fill | dark text | light fill | light text |
 | --- | --- | --- | --- | --- | --- |
-| `display` | display | 40 / 1.05 | 700 | −0.03em | year headers, sign-in wordmark, hero numbers |
-| `h1` | display | 30 / 1.1 | 700 | −0.02em | page titles (Photos, Albums, Settings…) |
-| `h2` | display | 20 / 1.2 | 600 | −0.01em | section titles (On this day, Categories), month headers 22px, sheet titles |
-| `h3` | sans | 17 / 1.3 | 600 | −0.005em | day headers, card titles |
-| `body-lg` | sans | 16 / 1.5 | 400 | | |
-| `body` | sans | 15 / 1.5 | 400 | | default |
-| `small` | sans | 13 / 1.45 | 400 | | descriptions |
-| `micro` | sans | 11 / 1.3 | 500 | 0.02em | nav labels |
-| `label` (new) | mono | 11 / 1.2 | 500 | 0.08em, UPPERCASE | telemetry, section labels, badges |
+| blue (default) | Sapphire | 41 111 246 | 120 172 255 | 22 96 235 | 18 84 214 |
+| indigo | Indigo | 88 86 230 | 165 163 255 | 79 70 229 | 67 56 202 |
+| violet | Violet | 139 76 230 | 198 164 255 | 124 58 237 | 109 40 217 |
+| teal | Lagoon | 13 128 120 | 94 234 212 | 15 118 110 | 17 94 89 |
+| green | Emerald | 4 128 90 | 110 231 183 | 4 120 87 | 6 95 70 |
+| orange | Sunset | 214 72 10 | 253 166 102 | 194 65 12 | 154 52 18 |
+| rose | Rose | 214 26 70 | 253 139 160 | 190 18 60 | 159 18 57 |
+| graphite | Graphite | 228 230 236 (accent-ink 13 15 20) | 228 230 236 | 30 33 40 | 30 33 40 |
 
-Numbers in telemetry are tabular (`tabular-nums`). Big numbers: display font with the unit in
-`h2` size, `ink-muted` (e.g. **18.4** GB).
+`accent-2` is a fixed secondary for people and faces: dark 167 139 250, light 109 40 217. For
+the violet accent use teal (45 212 191 / 15 118 110) instead.
+
+Implementation: `html[data-accent="<id>"]` sets the accent variables for both themes. Without
+the attribute it is blue. The choice is stored in localStorage `404gb-accent` and applied by
+the same inline head script as the theme, so there is no flash. The theme-color meta and
+SystemBarsSync follow bg.
+
+## Typography (Settings › Appearance › Font)
+
+One family for everything. Large titles use the same family, heavier and tighter.
+- `--font-sans` is the chosen family.
+- `--font-display` is an alias of `--font-sans`.
+- `--font-mono` is only for code-like values such as the device code and commit sha. Use Geist
+  Mono, or ui-monospace when it isn't loaded.
+
+Font choices are OFL variable woff2 files in app/fonts/ with their licences, loaded with
+next/font/local. A font file is only downloaded when it is used.
+
+| id | name | notes |
+| --- | --- | --- |
+| geist (default) | Geist | crisp, modern, premium-standard |
+| inter | Inter | classic, SF-like (use Inter's display optical size for titles if available) |
+| jakarta | Plus Jakarta Sans | warm, rounded |
+| manrope | Manrope | geometric, airy |
+| system | Device font | system-ui / Roboto (no download) |
+
+`html[data-font="<id>"]` switches `--font-sans`. It is stored in localStorage `404gb-font` and
+applied by the head script.
+
+| role | size/line | weight | tracking |
+| --- | --- | --- | --- |
+| large-title | 32/38 (34/40 desktop) | 700 | -0.025em |
+| title | 22/28 | 650 | -0.015em |
+| headline | 17/22 | 600 | -0.01em |
+| body | 15/22 | 400 | 0 |
+| callout | 14/20 | 500 | 0 |
+| footnote | 13/18 | 450 | 0 |
+| caption | 12/16 | 550 | 0.01em |
+
+Rules:
+- Sentence case everywhere: no uppercase labels and no letter-spaced mono "telemetry".
+- Counts and sizes use `tabular-nums` in the sans font.
+- Section headings in lists are 13px/600 in ink-muted, sentence case.
 
 ## Shape, space, elevation
 
-- Radii: tiles in the photo grid **3px**; tile controls 8–10px (`rounded-tile` = 10px); cards
-  **20px**; sheets 28px (top); dialogs 24px; inputs 14px; chips full pill; avatars round (faces
-  are the one place circles stay).
-- Spacing: 4px grid; screen gutter 16px (phone) / 24px (≥ sm); card padding 16–20px; grid gap
-  2px (phone), 3px (sm), 4px (≥ lg).
-- Elevation: dark mode separates by surface steps plus 1px `border/60`; light mode uses white
-  cards with `shadow-soft`. Glass blur (backdrop-filter ≤ 20px) **only** on the floating nav,
-  the collapsed page header, sheets and toasts — never per tile or in scrolling lists.
-- Optional ambient glow: one very faint radial lime/iris glow behind the top of a page header
-  (≤ 10% opacity, fixed, decorative) — skip it if it costs scrolling smoothness.
+- **Radii:** photo tiles 4px (grid gaps 2px phone, 3px desktop); controls 14px; cards 22px;
+  sheets 28px top corners; hero cards 26px; chips and buttons full pill; avatars round.
+- **Spacing:** a 4px base. Screen gutters are 16px on phone and 32px on desktop. Cards have 16–20px
+  padding.
+- **Depth, dark theme:** a 1px top inner highlight (white at 6%) on cards plus a very subtle
+  vertical gradient (surface to surface at 92%). No drop shadows.
+- **Depth, light theme:** two-layer soft shadows (0 1px 2px at 6%, 0 8px 24px at 6%).
+- **Glass (fixed chrome only: nav, compact headers, viewer bars, sheets' grabber area):**
+  `backdrop-filter: blur(24px) saturate(160%)` over bg at 72% (dark) or 78% (light), with a 1px
+  hairline border (white 8% / black 6%).
+- **Aurora:** a large radial gradient of `--glow` at 0.12 alpha behind the top of Photos,
+  Settings and sign-in. It is static: no animation, no blur filter.
 
 ## Motion
 
-Easing: `ease-out-expo` (0.16, 1, 0.3, 1) for most moves; `ease-spring` for the nav tile and
-switch knob. Durations: 120 (press), 180 (chips, small fades), 250 (sheets, toasts, page fade),
-320–360 (nav tile slide + fill, grid zoom). Animate only transform and opacity.
+- Springs: standard `cubic-bezier(0.32, 0.72, 0, 1)` at 380ms (iOS-like sheet curve); quick
+  ease-out at 160ms for presses.
+- Press feedback: scale 0.97 plus a slight dim on every tappable card and tile.
+- Haptics: `lib/ui/haptics.ts` with `tick()` (8ms), `select()` (12ms) and `confirm()`
+  ([10, 40, 18]). It uses `navigator.vibrate` when available and is a no-op otherwise or with
+  reduced motion. Haptics are for long-press selection, drag-select steps, pull to close, toggles
+  and successful actions.
+- Reduced motion: fades only, at 120ms. No Ken Burns, no shared-element zoom (crossfade instead).
 
-- Nav tile: slides to the new tab (translateX, 340ms spring), then the dashed outline fills
-  with lime (scale/opacity of the fill layer, 160ms). Icons press-scale 0.94.
-- Page enter: fade + 8px rise, 240ms. Grid first paint: rows fade in with a short stagger (first
-  viewport only). Zoom (Day/Month/Year) keeps the existing anchored scale animation.
-- Selection: tile shrinks to 0.88 with 12px radius; the square check pops (scale 0.6 → 1).
-- Progress tiles fill left to right; the tile being filled pulses gently.
-- Empty-state missing tile breathes (opacity 0.4 ↔ 1, 2.4s).
-- `prefers-reduced-motion`: no slides, scales or pulses; 120ms opacity fades only.
+## Components (foundation)
 
-## Components
-
-- **Bottom nav (phone):** floating bar, 12px from the sides and `12px + safe-area` from the
-  bottom, 64px tall, radius 22, `surface/80` + blur 16 + saturate 1.3, 1px `border/70`,
-  `shadow-elevated`. Four equal items (Photos, Albums, Upload, Settings): 22px icon + `micro`
-  label. Active: the lime tile (44×30, radius 10) behind the icon, icon in `signal-ink`, label
-  in `ink`; inactive icons `ink-muted`, labels `ink-faint`. Content scrolls under it (bottom
-  padding accounts for it). **Desktop top bar:** 56px, the brand mark + wordmark "404GB"
-  (display, 16px), text tabs with a sliding 4px lime tile underline, repo as a mono chip.
-- **Page header:** large title (`h1`) with an optional telemetry line and right-side actions
-  (40px icon buttons, `surface-2`, radius 12). After ~24px of scroll it collapses into a compact
-  bar: title 17px sans 600, `bg/80` + blur, hairline bottom border; the large title fades/
-  translates out.
-- **Status badge** (backup, scan state): 24px tall, radius 8, `label` text. Live/OK →
-  `bg-signal text-signal-ink` (`128 TO GO`, `UP TO DATE`); neutral → `surface-3` +
-  `ink-muted` (`WAITING · WI-FI`, `PAUSED · BATTERY`); attention → `warning/15` + `warning`
-  (`SIGN IN`, `ALLOW ACCESS`). While uploading, a 4-tile glyph before the text fills in turn.
-- **Tile meter** (progress): N small tiles (16×8, radius 3, gap 3) — filled `signal`, empty
-  `surface-3`, current one pulsing; label above/right in `label` text (`1,240 / 8,000`).
-- **Chips** (filters): 34px, full pill, padding 14. Inactive `surface-2` + `ink-muted`;
-  active inverted (`bg-ink text-bg`); press 0.96. Search-term chips: `surface-3` + `ink` with ×.
-- **Search field:** 46px, radius 14, `surface-2`, search icon, placeholder "Search people,
-  dates, screenshots…"; focus ring lime. Suggestion panel: `surface`, radius 20, group labels
-  in `label` text (`PEOPLE`, `CATEGORIES`, `DATES`, `ALBUMS`), round 32px avatars.
-- **Buttons:** primary `bg-signal text-signal-ink`, radius 14, 48px (phone) / 40px (desktop),
-  sans 600; secondary `surface-2` + `ink`; ghost transparent + `ink-muted` hover `surface-2`;
-  danger `danger/12` + `danger`. Press 0.97.
-- **Switch (tile switch):** track 46×28 radius 9; knob 22×22 **rounded square** radius 7.
-  Off: track `surface-3`, knob `ink-faint`. On: track `signal`, knob `signal-ink`. 200ms spring.
-- **Segmented control:** `surface-2` container radius 14, padding 4; active segment `surface`
-  (light) / `surface-3` (dark) with `ink` text, sliding; inactive `ink-muted`.
-- **Cards:** `surface`, radius 20, 1px `border/60` (dark) or `shadow-soft` (light), padding
-  16–20. **Bento tiles** (Settings library section, Albums categories): 2-column grid of square-
-  ish cards with a 36px icon tile (radius 10, tinted 14% background), title, mono value.
-- **List rows:** min 56px, 36px icon tile, title 15/500, description `small` `ink-muted`,
-  trailing value in mono or a chevron.
-- **Sheet:** top radius 28, `surface`, 36×4 grabber, title `h2`. **Dialog:** radius 24.
-  **Toast:** floats above the nav, `surface-3`, radius 16, action in `accent`.
-- **Empty states:** the 2×2 mark at 28px tiles (three `surface-3`, one dashed `signal`,
-  breathing), title `h2`, body `small` `ink-muted`, one primary action.
-- **Skeletons:** `surface-2` tiles with a slow shimmer; drop zones and placeholders use a dashed
-  `border-strong` tile outline.
-- **Selection bar:** floating, radius 20, `surface-3` (dark) / `ink` (light, inverted), count as
-  `label` (`3 SELECTED`), icon actions.
+- **NavBar (phone):** a floating glass capsule 64px tall, 12px above the safe area, with 4 tabs
+  (icon plus 11px label). The active tab gets an `accent-soft` pill behind its icon that slides
+  between tabs with the spring, and the active icon and label use accent-text. It hides on fast
+  downward scroll in Photos and comes back on upward scroll (transform only).
+- **NavBar (desktop, ≥1024px):** a left sidebar 248px wide on surface: the brand mark and
+  wordmark, then the tabs as rows with an accent-soft active pill and icon, then the repo chip at
+  the bottom.
+- **PageHeader:** a large title (large-title role) with an optional subtitle line (footnote,
+  ink-muted: "1,443 photos · 17.8 GB") and action buttons (round 40px glass icon buttons). After
+  24px of scroll it collapses into a compact glass bar with a centred 17px/600 title. Keep the
+  API, including `useScrolledPast`.
+- **Buttons:**
+  - primary: accent fill, accent-ink, 48px, pill, 15px/600;
+  - secondary: accent-soft fill with accent-text;
+  - tertiary: surface-2 with ink;
+  - ghost;
+  - destructive: danger fill.
+  - All have 44px minimum targets and a visible focus ring in accent.
+- **Switch:** iOS-style track 51×31 with a white knob, accent when on, spring knob.
+- **SegmentedControl:** a surface-2 track with a sliding raised thumb (surface plus soft shadow,
+  or surface-3 in dark).
+- **Chip:** a pill 34px tall with an optional icon or avatar and a count. Selected uses accent fill
+  and accent-ink. Removable search chips.
+- **Progress:** a thin rounded bar (6px, accent on surface-3) and a ring variant (for People and
+  backup). This replaces TileMeter (keep the export name as a thin wrapper if screens use it).
+- **StatusBadge / BackupStatusPill:** a small pill with a dot or tiny ring and sentence-case
+  text: "Backed up", "128 to go", "Waiting for Wi-Fi", "Paused · battery low", "Sign in", "Allow
+  access", "Offline". The accessible text is unchanged.
+- **Cards / SettingsBlocks:** grouped inset lists like iOS Settings. Rows are 52px with a
+  rounded-square 30px coloured icon badge, title, value and chevron, plus hairline separators
+  inset from the icon. Bento tiles become cards with an icon badge, a title and a value.
+- **Sheet:** a bottom sheet with a 28px radius, grabber, glass header, drag to dismiss and
+  backdrop 50% black.
+- **Toast:** a glass pill at the bottom above the nav, with an icon and an optional accent action.
+- **ConfirmDialog:** centred card 22px radius, title 17/600, primary and secondary buttons.
+- **EmptyState:** a soft illustration (stacked rounded photo cards with an accent glow, made in
+  SVG), a title and a one-line hint.
+- **SelectCheck:** a round 24px check: white ring when not selected, accent fill with a white
+  tick when selected, and a pop animation.
+- **Skeleton:** surface-2 blocks with a slow shimmer.
+- **BrandMark:** a rounded-square app icon with a deep blue gradient (from 22 96 235 to 10 40 120)
+  and a white glyph of two overlapping rounded photo frames. Regenerate the web and Android icons
+  and splash screens.
 
 ## Screens
 
-- **Photos.** Header: `Photos` (`h1`) + telemetry `12,431 ITEMS · 38.2 GB` (or `BACKING UP`
-  facts) in `label` `ink-faint`; right: status badge, view (Day/Month/Year) and Select icon
-  buttons. Below: search field, then filter chips. Collapses as above. Memories: section
-  `On this day` (`h2` 18px) + `3 MEMORIES` label; cards 148×208, radius 18, bottom gradient,
-  `3 years ago` (display 16px) + `13 OCT 2023` label. Date headers: **Day** — left `h3`
-  ("Today", "Saturday, 11 October"), right label `SUN 12 OCT · 14` (`ink-faint`, count last);
-  **Month** — `October` display 22px + label `2026 · 312`; **Year** — `2024` (`display`) +
-  label `1,204 ITEMS`. Tiles: radius 3, gaps above; video badge `label`-style duration on
-  `black/55`; favourite heart; selection per Motion. Scrubber: rounded-square handle 30×40
-  (radius 10, `surface-3`, two chevrons), lime bubble with `OCT 2024` in mono, year markers in
-  mono. Empty state: missing tile.
-- **Settings.** `Settings` (`h1`) + label `@LOGIN · OWNER/REPO`.
-  1. **Repo card** (hero): label `REPO · OWNER/REPO`; size in display 44 with the unit smaller
-     (repo size from `GET /repos/{owner}/{repo}` → `size` in KB, cached ~1 h; fall back to the
-     library's byte total); label line `2,481 PHOTOS · 112 VIDEOS · LAST COMMIT 3F9C2E1` (head
-     sha the library already knows); actions Change / Open on GitHub as ghost buttons.
-  2. **Backup card**: title + tile switch; status badge + headline sentence; tile meter for the
-     current run / backlog; stats as a 2×2 mono grid (`BACKED UP`, `WAITING`, `ALREADY IN
-     LIBRARY`, `FAILED`); Wi-Fi/mobile data segmented; charging switch; folders segmented;
-     battery-optimisation callout.
-  3. **People card**: avatar stack of the top people, `Finding people` + tile meter
-     `1,240 / 8,000`, pause/resume, background-while-charging switch (when the app supports
-     it), privacy note.
-  4. **Library bento** (2 columns): Duplicates, Trash (counts), Theme (Dark / Light / System
-     segmented with tiny tile previews), Install (browser only).
-  5. **Account row**: avatar, `@login`, Sign out (danger ghost).
-  6. Footer label: `404GB · YOUR PHONE IS FULL. YOUR REPO ISN'T.`
-  Section labels between groups use `label` text (`BACKUP`, `PEOPLE`, `LIBRARY`, `ACCOUNT`).
-- **Albums.** `Albums` (`h1`). People row: 64px round avatars with names, `accent-2` ring on
-  focus. `Categories` (`h2`): bento grid, cover photo full-bleed radius 18, bottom gradient,
-  name 15/600 + mono count; the largest category may span 2 columns. `Your albums` same cards;
-  Trash row with count.
-- **People / person.** Person header: 96px round avatar, name in display 24, label count;
-  grid as Photos.
-- **Sign-in.** Brand hero: the mark at 96px with the missing tile filling in on load, `404GB`
-  in `display`, tagline; the device code in mono 28px with **each character in its own tile**;
-  primary button.
-- **Repo picker.** List rows with repo names in mono; new-repo field.
-- **Upload.** Drop zone as a big dashed tile; queue rows with mono progress and tile meters.
-- **Viewer / editor chrome.** Keep the dark gradient bars; round 44px icon buttons; the
-  Original chip becomes a `label` badge (`ORIGINAL ✓` in signal when shown, neutral while
-  loading with a percentage).
-- **Desktop.** Same tokens; top bar; Photos header stays expanded until scrolled; Settings in a
-  centred column (max 720px) with the bento as 3 columns.
-- **App icon / brand mark.** Ink background `#0A0A0B`, three lime tiles (`#C8F542`) and the
-  dashed lime missing tile; regenerate web icons (favicon, 192/512, apple-touch) and the
-  Android launcher/splash assets from the new mark.
+- **Photos:** see "Photos — new experiences" below.
+- **Viewer:** see below.
+- **Albums:**
+  - the large title "Albums";
+  - a People rail with round 64px avatars and names, plus "See all";
+  - smart categories as a 2-column grid of photo-cover cards (cover image, gradient scrim, title
+    and count in white);
+  - "Your albums" as a cover grid;
+  - Trash and Duplicates as list rows at the end.
+- **People:** a grid of round avatars (3 columns on phone) with names and counts, and a scan
+  progress card at the top while scanning. The person page has a large avatar header, the name
+  (tap to rename), the count, and the grid.
+- **Settings:** grouped inset lists:
+  1. **account / repo card** at the top: the avatar, `@login`, owner/repo, repo size and the last
+     backup, with Change and Open on GitHub actions;
+  2. **Backup:** status with progress, the on/off switch, Wi-Fi only / mobile data (segmented),
+     charging only, and stats;
+  3. **People:** progress ring, "Find people in the background", "Only while charging",
+     re-scan and pause;
+  4. **Appearance:** theme (System/Light/Dark segmented), Pure black switch, Accent (a row of 8
+     round colour swatches with a check on the active one, live preview), Font (cards showing
+     "Aa" and the font name in that font, live preview);
+  5. **Library:** duplicates, Trash, install app;
+  6. **About and sign out.**
+- **Sign-in:**
+  - a full-screen aurora with a large brand mark;
+  - "Your photos. Your GitHub." as the title, with a one-line subtitle;
+  - a primary "Sign in with GitHub" button;
+  - the device code in a large monospace card with copy;
+  - "Use a token instead" as a link.
+- **Repo picker:** a search field and a list of repo rows with lock icons and a "Create new
+  library" card.
+- **Upload:** a large rounded dashed drop area with an icon and helper text, and queue rows with
+  thin progress bars.
+
+## Photos — new experiences (the signature screen)
+
+1. **Spotlight hero:** a swipeable carousel at the top of the Photos timeline.
+   - **Cards:** full-bleed, 26px radius, about 0.8 aspect on phone and 21:9 on desktop.
+   - **Content:** the memories ("On this day · 3 years ago", "This week", "Recent highlights",
+     "With <person>"). Each card shows a cover photo with a slow Ken Burns drift (a transform
+     only, on the visible card only, 12s), a bottom gradient scrim, the title (title role, white),
+     a subtitle and a small play glyph.
+   - **Navigation:** page dots below the cards.
+   - The hero scrolls away with the timeline. When there are no memories it's a single "Recent"
+     card, and it's hidden when the library is empty.
+2. **Story player:** tapping a spotlight card opens a full-screen story of its photos.
+   - **Playback:** 5s per photo (a video plays through, muted by default with an unmute
+     button), with segmented progress bars at the top.
+   - **Controls:** tap the right or left third to go forward or back, press and hold to pause,
+     swipe down to close back into the card (shared-element shrink), and swipe up or tap "Open"
+     to jump to that photo in the viewer.
+   - **Effects:** each photo crossfades in with a gentle zoom, and the title and date sit at the
+     top left. Prefetch the next two images.
+3. **Quick collections rail:** under the hero (and pinned under the compact header while
+   searching), a horizontal row of pills:
+   - Favorites, Videos, Screenshots, Selfies (if categorised), Recently added;
+   - a People pill with a 3-avatar stack and, while scanning, a tiny progress ring.
+
+   Tapping one filters the timeline inline, using the existing filter state, and the selected
+   pill uses the accent fill.
+4. **Timeline headers that tell a story:**
+   - **Day headers:** "Today", "Yesterday", or "Sat, 11 Oct" (year added when it isn't this
+     year), plus a footnote such as "24 photos · 3 videos". When face data is known, add a 2–3
+     avatar stack of the people in that day's photos.
+   - **Month headers** in Month view are large (title role) with the year in ink-muted.
+   - **Select:** a round check at the end of the header selects that day.
+5. **Drag to select:** a long press on a tile selects it (with a select haptic), and dragging
+   then selects or deselects the range under the finger, as in Google Photos.
+   - It auto-scrolls near the top and bottom edges, gives a tick haptic per change, and selected
+     tiles shrink to 0.9 with an accent ring and check.
+   - Desktop: shift-click selects a range.
+6. **Shared-element open:**
+   - Tapping a tile opens the viewer with the photo zooming from the tile's rectangle to full
+     screen (FLIP: transform plus opacity on a single overlay image), while the backdrop fades
+     to black.
+   - Closing (the back button or swipe down) shrinks the photo back into its tile, scrolling the
+     grid if needed so the tile is on screen.
+   - Swipe-down to dismiss follows the finger with scale and backdrop fade.
+   - Reduced motion: a crossfade instead of the zoom.
+7. **Pinch to zoom the grid** (it exists): animate the column change smoothly (scale the grid
+   from the pinch focal point, then settle) instead of jumping.
+8. **Fast scrubber:** a thin handle on the right edge appears while scrolling. Dragging it shows a
+   glass date pill ("Oct 2026") and gives a tick haptic per month.
+9. **Glass header:** the large "Photos" title, the subtitle "1,443 items · 17.8 GB", the backup
+   status pill, and round glass buttons for search and select. The search opens a full-width
+   glass search field with suggestion groups (people avatars, places/categories, dates,
+   recent searches).
+
+Performance budget:
+- 60fps scrolling with 10k items, and no layout thrash.
+- Ken Burns and story animations use the compositor only.
+- The grid tiles have no box-shadow, no filters and no blur.
+- Hero images use the 800px thumbnails, and the grid keeps its current thumbnail sizes.
+
+## Viewer
+
+- **Ambient background:** behind the photo, the same photo's thumbnail scaled to cover, blurred
+  (a CSS filter on that one fixed element, rendered once at small size and scaled up), darkened
+  to 55%. It is the only blur outside the chrome. Turn it off with reduced motion only if it
+  costs frames.
+- **Glass chrome:**
+  - top bar: back, the date and time (headline plus footnote), and an overflow menu;
+  - bottom bar: share, favourite (heart that pops), edit, info, delete.
+  - Tapping the photo toggles the chrome with a fade.
+- **Original badge:** a small glass pill that says "Original" with a check once loaded, or
+  "Loading original 42%" while loading.
+- **Info sheet:** the date, the file, size and dimensions, the people in this photo (avatars,
+  tap to open the person), the album/category, and the commit/GitHub link.
+- **Swipe:** left/right moves between photos (it exists); swipe down closes (shared-element).
 
 ## Implementation notes
 
-- Keep every user-facing string and accessible name used by the end-to-end tests unless a
-  change is intentional; list intentional changes.
-- Foundation first (fonts, tokens, Tailwind keys, shared components, nav, header, badges,
-  meters, empty states, sign-in); screens build on it without redefining primitives.
-- Respect safe areas, `prefers-reduced-motion`, 44px touch targets, both themes and desktop.
+- Keep component APIs and every accessible name the e2e tests use. List intentional visible
+  string changes in your report.
+- Settings › Appearance writes `404gb-theme`, `404gb-accent`, `404gb-font` and `404gb-black`. The
+  head script in app/layout.tsx applies all of them before first paint. Bump the service worker
+  version when public assets change.
+- Fonts are OFL only and live in app/fonts with their licences. Get them from npm packages (`npm
+  pack geist`, `@fontsource-variable/inter`, `@fontsource-variable/plus-jakarta-sans`,
+  `@fontsource-variable/manrope`) using a scratch folder; never add them as app dependencies just
+  for the files.

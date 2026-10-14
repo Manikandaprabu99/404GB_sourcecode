@@ -1,11 +1,8 @@
-// Background People matching on the phone (docs/FACES.md "Background") as the app sees it:
-// whether this app build has it, the user's switch and how the last run went, from the Backup
-// plugin. Read when something starts watching and whenever the app comes back to the
-// foreground — opening the app stops a run, which then takes a few seconds to commit what it
-// found — and every couple of seconds while a run is going. Small enough for the main bundle.
+// The phone's background People matching as the app sees it (docs/FACES.md "Background"): support,
+// switches and runs, read on subscribe, on returning to the foreground and every 2 s while running.
 
 import { useSyncExternalStore } from "react";
-import { Backup, type FaceScanStatus } from "@/lib/native/backup";
+import { Backup, type FaceScanReason, type FaceScanStatus } from "@/lib/native/backup";
 import { hasNativePlugin } from "@/lib/native/platform";
 
 export interface BackgroundFaceScan {
@@ -29,10 +26,14 @@ function same(a: FaceScanStatus | null, b: FaceScanStatus | null): boolean {
   if (!a || !b) return a === b;
   return (
     a.enabled === b.enabled &&
+    a.chargingOnly === b.chargingOnly &&
     a.running === b.running &&
+    a.checkedNow === b.checkedNow &&
+    a.pending === b.pending &&
     a.lastRunAt === b.lastRunAt &&
     a.lastChecked === b.lastChecked &&
-    a.lastError === b.lastError
+    a.lastError === b.lastError &&
+    a.lastReason === b.lastReason
   );
 }
 
@@ -46,18 +47,26 @@ function count(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
+const REASONS: readonly FaceScanReason[] = ["done", "deadline", "stopped", "error", "battery-low", "power-save", "not-charging"];
+
 function toStatus(raw: unknown): FaceScanStatus | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.enabled !== "boolean") return null;
+  const reason = REASONS.find((known) => known === r.lastReason) ?? null;
   return {
     enabled: r.enabled,
+    chargingOnly: r.chargingOnly === true,
     running: r.running === true,
+    checkedNow: count(r.checkedNow),
+    pending: r.pending === true,
     lastRunAt: count(r.lastRunAt) || null,
     lastChecked: count(r.lastChecked),
     lastError: typeof r.lastError === "string" && r.lastError ? r.lastError : null,
+    lastReason: reason,
   };
 }
+
 
 function schedulePoll() {
   window.clearTimeout(pollTimer);
@@ -89,12 +98,12 @@ export function refreshBackgroundFaceScan(): Promise<void> {
   return inflight;
 }
 
-/** Turns background matching on or off; the switch flips at once and goes back if that fails. */
-export async function setBackgroundFaceScan(enabled: boolean): Promise<void> {
+/** Changes the switches; they flip at once and go back if that fails. */
+export async function setBackgroundFaceScan(change: { enabled?: boolean; chargingOnly?: boolean }): Promise<void> {
   const before = snapshot;
-  if (before.status) emit({ support: "yes", status: { ...before.status, enabled } });
+  if (before.status) emit({ support: "yes", status: { ...before.status, ...change } });
   try {
-    const status = toStatus(await Backup.setFaceScan({ enabled }));
+    const status = toStatus(await Backup.setFaceScan(change));
     if (status) emit({ support: "yes", status });
   } catch (err) {
     emit(before);

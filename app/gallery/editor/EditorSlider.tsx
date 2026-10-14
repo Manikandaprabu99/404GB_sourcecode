@@ -129,37 +129,26 @@ export default function EditorSlider({
         onPointerCancel={stop}
         onLostPointerCapture={stop}
         onKeyDown={onKeyDown}
-        className="group relative h-11 flex-1 cursor-pointer touch-none select-none rounded-tile outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+        className="group relative h-11 flex-1 cursor-pointer touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
-        {/* A 4px track filling with the signal colour, the knob a rounded square (the app's
-         * tile knob), the value in a lime bubble while dragging. */}
-        <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-[2px] bg-ink/15" />
+        {/* iOS-like: a hairline track with the accent fill from the origin, a big white knob,
+         * the value in a white bubble while dragging. */}
+        <div className="lv-ed-track" />
         {bipolar && (
           <div
-            className="absolute top-1/2 h-3 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-[1px] bg-ink/40"
+            className="absolute top-1/2 h-2.5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/45"
             style={{ left: `${originPercent}%` }}
           />
         )}
-        <div
-          className="absolute top-1/2 h-1 -translate-y-1/2 rounded-[2px] bg-signal"
-          style={{ left: `${fillLeft}%`, width: `${fillWidth}%` }}
-        />
-        <div
-          className={`absolute top-1/2 h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 rounded-[7px] bg-ink shadow-elevated transition-transform duration-120 ease-out-expo ${
-            dragging ? "scale-110" : "group-hover:scale-105"
-          }`}
-          style={{ left: `${percent}%` }}
-        />
+        <div className="lv-ed-fill" style={{ left: `${fillLeft}%`, width: `${fillWidth}%` }} />
+        <div className="lv-ed-knob" data-dragging={dragging ? "true" : undefined} style={{ left: `${percent}%` }} />
         {dragging && (
-          <div
-            className="pointer-events-none absolute bottom-full mb-1 flex h-6 -translate-x-1/2 items-center rounded-tile-sm bg-signal px-2 font-mono text-[12px] tabular-nums text-signal-ink shadow-soft animate-scale-in"
-            style={{ left: `${percent}%` }}
-          >
+          <div className="lv-ed-bubble pointer-events-none" style={{ left: `${percent}%` }}>
             {display}
           </div>
         )}
       </div>
-      <span className="w-10 shrink-0 text-right font-mono text-small tabular-nums text-ink-muted">{display}</span>
+      <span className="w-10 shrink-0 text-right text-[13px] font-medium tabular-nums text-white/70">{display}</span>
     </div>
   );
 }

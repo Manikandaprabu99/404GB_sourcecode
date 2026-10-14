@@ -7,10 +7,11 @@ export interface DateGroup {
   key: string;
   /** The section's accessible name ("Today", "Sat, Oct 11", "October 2026"). */
   label: string;
-  /** What the header shows when it differs from `label` ("Saturday, October 11", "October"). */
+  /** What the header shows when it differs from `label` ("October"). */
   title?: string;
-  /** The header's telemetry line, shown uppercase ("Sun 12 Oct · 14", "2026 · 312"); the item
-   * count when left out. */
+  /** Shown after the title in ink-muted (Month view: the year). */
+  titleSuffix?: string;
+  /** The header's footnote ("24 photos · 3 videos"); the item count when left out. */
   meta?: string;
   /** Gallery date of the group's newest item (epoch ms); 0 when unknown. */
   time: number;
@@ -58,12 +59,29 @@ export function dayLabel(date: Date, now: Date): string {
   });
 }
 
-/** A day header: Today / Yesterday / weekday within the past week, else "Saturday, October 11"
- * (the year is in the telemetry line). */
+/** A day header: "Today", "Yesterday", else "Sat, Oct 11" in the reader's order (the year
+ * added when it isn't this year). docs/DESIGN.md "Photos — new experiences" 4. */
 export function dayTitle(date: Date, now: Date): string {
   const days = daysAgo(date, now);
-  if (days >= 0 && days < 7) return dayLabel(date, now);
-  return format(date, { weekday: "long", month: "long", day: "numeric" });
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return format(date, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+  });
+}
+
+/** "24 photos · 3 videos" (just the one kind when the other is absent). */
+export function mediaCounts(items: readonly MediaIndexEntry[]): string {
+  let videos = 0;
+  for (const item of items) if (item.mimeType?.startsWith("video/")) videos += 1;
+  const photos = items.length - videos;
+  const parts: string[] = [];
+  if (photos > 0) parts.push(photos === 1 ? "1 photo" : `${photos.toLocaleString()} photos`);
+  if (videos > 0) parts.push(videos === 1 ? "1 video" : `${videos.toLocaleString()} videos`);
+  return parts.join(" · ") || itemCount(items.length);
 }
 
 /** "Sun 12 Oct" (+ the year when it isn't this year), for telemetry lines (shown uppercase). */
@@ -93,26 +111,23 @@ interface Grouping {
   key: (date: Date) => string;
   label: (date: Date, now: Date) => string;
   title?: (date: Date, now: Date) => string;
-  meta: (date: Date, count: number, now: Date) => string;
+  titleSuffix?: (date: Date) => string;
 }
 
 const GROUPINGS: Record<ZoomLevel, Grouping> = {
   day: {
     key: (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
-    label: dayLabel,
-    title: dayTitle,
-    meta: (date, count, now) => `${shortDate(date, now)} · ${count.toLocaleString()}`,
+    label: dayTitle,
   },
   month: {
     key: (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}`,
     label: (date) => monthLabel(date),
     title: (date) => format(date, { month: "long" }),
-    meta: (date, count) => `${date.getFullYear()} · ${count.toLocaleString()}`,
+    titleSuffix: (date) => String(date.getFullYear()),
   },
   year: {
     key: (date) => String(date.getFullYear()),
     label: (date) => String(date.getFullYear()),
-    meta: (_date, count) => itemCount(count),
   },
 };
 
@@ -132,16 +147,21 @@ export function groupMedia(
     if (!current || current.key !== key) {
       current =
         time > 0
-          ? { key, label: grouping.label(date, now), title: grouping.title?.(date, now), time, items: [] }
+          ? {
+              key,
+              label: grouping.label(date, now),
+              title: grouping.title?.(date, now),
+              titleSuffix: grouping.titleSuffix?.(date),
+              time,
+              items: [],
+            }
           : { key, label: "Unknown date", time, items: [] };
       groups.push(current);
     }
     current.items.push(item);
   }
   // Counts are known once every item is in.
-  for (const group of groups) {
-    if (group.time > 0) group.meta = grouping.meta(new Date(group.time), group.items.length, now);
-  }
+  for (const group of groups) group.meta = mediaCounts(group.items);
   return groups;
 }
 

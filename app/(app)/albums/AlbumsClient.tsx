@@ -20,10 +20,12 @@ import EmptyState, { primaryButtonClass } from "@/app/components/library/EmptySt
 import Notice, { noticeActionClass } from "@/app/components/library/Notice";
 import PageHeader from "@/app/components/library/PageHeader";
 import ScrollArea from "@/app/components/library/ScrollArea";
-import { IconTile, cardClass } from "@/app/components/library/SettingsBlocks";
+import { SettingsCard, SettingsRow } from "@/app/components/library/SettingsBlocks";
+import DuplicateCleanup from "@/app/components/library/DuplicateCleanup";
+import Sheet from "@/app/components/ui/Sheet";
 import { Telemetry } from "@/app/components/ui/SectionLabel";
 import { iconButtonClass } from "@/app/components/ui/IconButton";
-import { AlbumsIcon, ChevronRightIcon, FolderIcon, PlusIcon, RefreshIcon, TrashIcon } from "@/app/components/library/icons";
+import { AlbumsIcon, DuplicateIcon, FolderIcon, PlusIcon, RefreshIcon, TrashIcon } from "@/app/components/library/icons";
 
 interface AlbumsClientProps {
   repoOwner: string;
@@ -39,7 +41,7 @@ function stagger(index: number): { animationDelay: string } {
   return { animationDelay: `${Math.min(index, 12) * 25}ms` };
 }
 
-/** A section of the screen: a display title, an optional telemetry count and an action. */
+/** A section of the screen: a title, an optional count and an action. */
 function Section({
   title,
   meta,
@@ -55,8 +57,8 @@ function Section({
     <section className="flex flex-col gap-3.5">
       <div className="flex min-h-9 items-end justify-between gap-3">
         <div className="flex min-w-0 items-baseline gap-2.5">
-          <h2 className="truncate font-display text-h2 text-ink">{title}</h2>
-          {meta !== undefined && <span className="telemetry shrink-0 text-ink-muted">{meta}</span>}
+          <h2 className="truncate text-title text-ink">{title}</h2>
+          {meta !== undefined && <span className="shrink-0 text-footnote tabular-nums text-ink-muted">{meta}</span>}
         </div>
         {action}
       </div>
@@ -66,32 +68,20 @@ function Section({
 }
 
 const coverLinkClass =
-  "group relative isolate block aspect-square overflow-hidden rounded-[18px] bg-surface-2 transition-transform duration-250 ease-out-expo active:scale-[0.97]";
+  "pressable group relative isolate block overflow-hidden rounded-[20px] bg-surface-2";
 const coverImageClass =
-  "absolute inset-0 h-full w-full object-cover transition-transform duration-320 ease-out-expo group-hover:scale-[1.04]";
+  "absolute inset-0 h-full w-full object-cover transition-transform duration-380 ease-lumen group-hover:scale-[1.04]";
 
-/**
- * A cover card (docs/DESIGN.md › Screens › Albums): the cover photo full-bleed, a bottom
- * gradient, the name and a mono count over it. Without a cover, the name sits on the tile.
- */
-function CoverCaption({ name, count, onPhoto, large }: { name: string; count: string; onPhoto: boolean; large?: boolean }) {
+/** A cover card's caption: name and count in white over a bottom scrim (or on the tile). */
+function CoverCaption({ name, count, onPhoto }: { name: string; count: string; onPhoto: boolean }) {
   return (
     <>
       {onPhoto && (
-        <span
-          aria-hidden="true"
-          className="absolute inset-x-0 bottom-0 h-3/4 bg-gradient-to-t from-black/75 via-black/30 to-transparent"
-        />
+        <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/70 via-black/25 to-transparent" />
       )}
-      <div className={`absolute inset-x-0 bottom-0 flex flex-col gap-1 ${large ? "p-4" : "p-2.5 sm:p-3"}`}>
-        <p
-          className={`line-clamp-2 break-words font-semibold leading-tight ${large ? "text-h3" : "text-[15px]"} ${
-            onPhoto ? "text-white" : "text-ink"
-          }`}
-        >
-          {name}
-        </p>
-        <p className={`telemetry ${onPhoto ? "text-white/80" : "text-ink-muted"}`}>{count}</p>
+      <div className="absolute inset-x-0 bottom-0 flex flex-col gap-0.5 p-3 sm:p-3.5">
+        <p className={`line-clamp-2 break-words text-headline ${onPhoto ? "text-white" : "text-ink"}`}>{name}</p>
+        <p className={`text-footnote font-medium tabular-nums ${onPhoto ? "text-white/80" : "text-ink-muted"}`}>{count}</p>
       </div>
     </>
   );
@@ -111,7 +101,7 @@ function AlbumCard({
   count: number;
 }) {
   return (
-    <Link href={albumHref(album.id)} onClick={() => rememberAlbumListOrigin(album.id)} className={coverLinkClass}>
+    <Link href={albumHref(album.id)} onClick={() => rememberAlbumListOrigin(album.id)} className={`${coverLinkClass} aspect-square`}>
       {coverId ? (
         <GalleryThumb
           repoKey={repoKey}
@@ -132,20 +122,20 @@ function AlbumCard({
   );
 }
 
-function CategoryCard({ category, repoKey, hero }: { category: Category; repoKey: string; hero: boolean }) {
+function CategoryCard({ category, repoKey }: { category: Category; repoKey: string }) {
   const cover = categoryCover(category.items);
   return (
     <Link
       href={categoryHref(category.id)}
       onClick={() => rememberAlbumListOrigin(`category:${category.id}`)}
-      className={coverLinkClass}
+      className={`${coverLinkClass} aspect-[5/4]`}
     >
       {cover ? (
         <GalleryThumb
           repoKey={repoKey}
           mediaId={cover.id}
           alt=""
-          size={hero ? 800 : 320}
+          size={800}
           hasThumbnail={Boolean(cover.thumb)}
           isVideo={cover.mimeType.startsWith("video/")}
           className={coverImageClass}
@@ -155,17 +145,13 @@ function CategoryCard({ category, repoKey, hero }: { category: Category; repoKey
           <FolderIcon size={26} />
         </span>
       )}
-      <CoverCaption name={category.name} count={category.items.length.toLocaleString()} onPhoto={Boolean(cover)} large={hero} />
+      <CoverCaption name={category.name} count={category.items.length.toLocaleString()} onPhoto={Boolean(cover)} />
     </Link>
   );
 }
 
-// A bento of shortcuts into the library (the first one, usually the camera, twice the size);
-// denser than albums, which are collections the user made.
-const CATEGORY_GRID = "grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 md:grid-cols-5 lg:grid-cols-6";
+const CATEGORY_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4";
 const ALBUM_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5";
-/** From this many categories the first one gets the 2×2 spot. */
-const HERO_MIN = 4;
 
 /** Library: People, automatic categories, the user's albums, and Trash. */
 export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps) {
@@ -174,6 +160,7 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
   const library = useLibrary(repoKey);
   const albumsState = useAlbums(repoKey);
   const [creating, setCreating] = useState(false);
+  const [duplicatesOpen, setDuplicatesOpen] = useState(false);
 
   useEffect(() => {
     const action = signedOutAction(albumsState.error, library.error);
@@ -205,7 +192,7 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
     albumsContent = (
       <ul aria-busy="true" className={ALBUM_GRID}>
         {Array.from({ length: 4 }, (_, i) => (
-          <li key={i} className="skeleton aspect-square rounded-[18px]" />
+          <li key={i} className="skeleton aspect-square rounded-[20px]" />
         ))}
       </ul>
     );
@@ -222,20 +209,19 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
     albumsContent = (
       <ul className={ALBUM_GRID}>
         <li className="animate-fade-in">
-          {/* The missing tile: a dashed square waiting to be filled with an album. */}
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="group relative block aspect-square w-full rounded-[18px] border-2 border-dashed border-border-strong text-left transition-[border-color,background-color,transform] duration-250 ease-out-expo hover:border-accent hover:bg-accent/[0.06] active:scale-[0.97]"
+            className="pressable group relative block aspect-square w-full rounded-[20px] bg-accent-soft text-left"
           >
             <span className="absolute inset-0 flex items-center justify-center pb-10">
-              <span className="flex h-11 w-11 items-center justify-center rounded-tile bg-signal text-signal-ink transition-transform duration-250 ease-spring group-hover:scale-105">
+              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-ink shadow-glow-signal transition-transform duration-240 ease-spring group-hover:scale-105">
                 <PlusIcon size={22} strokeWidth={2.2} />
               </span>
             </span>
-            <span className="absolute inset-x-0 bottom-0 flex flex-col gap-1 p-2.5 sm:p-3">
-              <span className="text-[15px] font-semibold leading-tight text-ink">New album</span>
-              <span className="telemetry text-ink-muted">{albums.length === 0 ? "Group photos" : "Add one"}</span>
+            <span className="absolute inset-x-0 bottom-0 flex flex-col gap-0.5 p-3 sm:p-3.5">
+              <span className="text-headline text-ink">New album</span>
+              <span className="text-footnote text-accent-text">{albums.length === 0 ? "Group photos" : "Add one"}</span>
             </span>
           </button>
         </li>
@@ -259,16 +245,11 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
 
   let categoriesContent: JSX.Element | null;
   if (categories.length > 0) {
-    const hero = categories.length >= HERO_MIN;
     categoriesContent = (
       <ul className={CATEGORY_GRID}>
         {categories.map((category, i) => (
-          <li
-            key={category.id}
-            className={`animate-fade-in ${hero && i === 0 ? "col-span-2 row-span-2" : ""}`}
-            style={stagger(i)}
-          >
-            <CategoryCard category={category} repoKey={repoKey} hero={hero && i === 0} />
+          <li key={category.id} className="animate-fade-in" style={stagger(i)}>
+            <CategoryCard category={category} repoKey={repoKey} />
           </li>
         ))}
       </ul>
@@ -276,8 +257,8 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
   } else if (libraryLoading) {
     categoriesContent = (
       <ul aria-busy="true" className={CATEGORY_GRID}>
-        {Array.from({ length: 7 }, (_, i) => (
-          <li key={i} className={`skeleton aspect-square rounded-[18px] ${i === 0 ? "col-span-2 row-span-2" : ""}`} />
+        {Array.from({ length: 4 }, (_, i) => (
+          <li key={i} className="skeleton aspect-[5/4] rounded-[20px]" />
         ))}
       </ul>
     );
@@ -299,17 +280,17 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
       <ScrollArea scrollKey="albums">
         <PageHeader
           title="Albums"
-          telemetry={facts ? <Telemetry items={facts} /> : <span className="skeleton block h-2.5 w-32 rounded-[3px]" />}
+          telemetry={facts ? <Telemetry items={facts} /> : <span className="skeleton block h-3 w-32 rounded-full" />}
           actions={
             <button
               type="button"
               onClick={() => setCreating(true)}
               aria-label="New album"
               title="New album"
-              className={`${iconButtonClass({ variant: "tile", size: 40 })} sm:w-auto sm:gap-2 sm:px-3`}
+              className={`${iconButtonClass({ variant: "tile", size: 40 })} sm:w-auto sm:gap-2 sm:px-4`}
             >
               <PlusIcon size={18} />
-              <span className="hidden text-small font-medium sm:inline">New album</span>
+              <span className="hidden text-callout font-semibold sm:inline">New album</span>
             </button>
           }
         />
@@ -327,7 +308,7 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
               : albumsState.error.message}
           </Notice>
         )}
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-9 px-4 pb-4 pt-3 sm:px-6">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-9 px-4 pb-4 pt-3 sm:px-6 lg:px-8">
           <PeopleRow repoKey={repoKey} />
 
           {categoriesContent && (
@@ -340,29 +321,33 @@ export default function AlbumsClient({ repoOwner, repoName }: AlbumsClientProps)
             {albumsContent}
           </Section>
 
-          <Link
-            href="/albums/trash"
-            onClick={() => rememberAlbumListOrigin("trash")}
-            className={`group flex min-h-[64px] animate-fade-in items-center gap-3.5 px-4 py-3 transition-[background-color,transform] duration-180 ease-out-expo hover:bg-surface-2 active:scale-[0.99] ${cardClass}`}
-          >
-            <IconTile>
-              <TrashIcon size={18} />
-            </IconTile>
-            <span className="min-w-0 flex-1">
-              <span className="block text-body font-medium text-ink">Trash</span>
-              <span className="block truncate text-small text-ink-muted">
-                {trashCount > 0
+          <SettingsCard className="animate-fade-in">
+            <SettingsRow
+              href="/albums/trash"
+              onClick={() => rememberAlbumListOrigin("trash")}
+              icon={<TrashIcon size={18} />}
+              iconTone="danger"
+              title="Trash"
+              description={
+                trashCount > 0
                   ? `${countLabel(trashCount)} · kept for ${TRASH_RETENTION_DAYS} days`
-                  : `Deleted items stay here for ${TRASH_RETENTION_DAYS} days`}
-              </span>
-            </span>
-            <ChevronRightIcon
-              size={18}
-              className="shrink-0 text-ink-muted transition-transform duration-180 group-hover:translate-x-0.5"
+                  : `Deleted items stay here for ${TRASH_RETENTION_DAYS} days`
+              }
             />
-          </Link>
+            <SettingsRow
+              onClick={() => setDuplicatesOpen(true)}
+              icon={<DuplicateIcon size={18} />}
+              iconTone="orange"
+              title="Duplicates"
+              description="Extra copies of the same photo or video"
+            />
+          </SettingsCard>
         </div>
       </ScrollArea>
+
+      <Sheet open={duplicatesOpen} onClose={() => setDuplicatesOpen(false)} title="Duplicates">
+        <DuplicateCleanup repoKey={repoKey} />
+      </Sheet>
 
       <AlbumNameSheet
         open={creating}

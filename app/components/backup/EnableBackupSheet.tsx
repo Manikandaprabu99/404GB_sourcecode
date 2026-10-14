@@ -17,7 +17,7 @@ interface EnableBackupSheetProps {
   onClose: () => void;
 }
 
-/** One answer of a radio group: a card with the square check (docs/DESIGN.md › Tiles, not circles). */
+/** One answer of a radio group: a card with the round check. */
 function Choice({
   checked,
   title,
@@ -36,13 +36,13 @@ function Choice({
       aria-checked={checked}
       onClick={onSelect}
       className={`flex w-full items-start gap-3 rounded-control border px-3.5 py-3 text-left transition-[background-color,border-color,transform] duration-180 ease-out-expo active:scale-[0.99] ${
-        checked ? "border-accent bg-accent/[0.08]" : "border-border hover:bg-surface-2"
+        checked ? "border-accent bg-accent-soft" : "border-border hover:bg-surface-2"
       }`}
     >
       <SelectCheck selected={checked} variant="surface" className="mt-0.5" />
       <span className="min-w-0">
         <span className="block text-body font-medium text-ink">{title}</span>
-        <span className="block text-small text-ink-muted">{description}</span>
+        <span className="block text-footnote text-ink-muted">{description}</span>
       </span>
     </button>
   );
@@ -66,7 +66,7 @@ export default function EnableBackupSheet({ open, defaults, busy, onConfirm, onC
   return (
     <Sheet open={open} onClose={onClose} title="Turn on backup">
       <div className="flex flex-col gap-6">
-        <p className="text-small text-ink-muted">
+        <p className="text-callout font-normal text-ink-muted">
           Photos and videos upload to your GitHub repo in original quality, even when the app is closed. Anything
           already in your library is skipped, so nothing is uploaded twice.
         </p>

@@ -2,46 +2,36 @@ import type { ReactNode } from "react";
 
 export type StatusBadgeTone = "live" | "neutral" | "attention";
 
-/**
- * The 2×2 glyph in front of a status: `busy` fills its tiles in turn (uploading), `done` is
- * the complete grid, `waiting` keeps the brand's missing (outlined) tile.
- */
+/** The mark before a status: `busy` a tiny spinning ring, `done` a dot, `waiting` a hollow dot. */
 export type TileGlyphState = "busy" | "done" | "waiting";
 
-// Grid order (TL, TR, BL, BR), lit clockwise 400ms apart; negative delays start every tile
-// mid-cycle so the first frame already looks like the loop.
-const STEP_DELAYS = ["0ms", "-1200ms", "-400ms", "-800ms"];
-
 export function TileGlyph({ state, className }: { state: TileGlyphState; className?: string }) {
+  if (state === "busy") {
+    return (
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" className={`shrink-0 animate-spin [animation-duration:1.1s] ${className ?? ""}`}>
+        <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1.8" />
+        <path d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
   return (
-    <span aria-hidden="true" className={`grid shrink-0 grid-cols-2 gap-[1.5px] ${className ?? ""}`}>
-      {STEP_DELAYS.map((delay, i) => {
-        const missing = state === "waiting" && i === 1;
-        return (
-          <span
-            key={i}
-            className={`h-[5px] w-[5px] rounded-[1px] ${
-              missing ? "shadow-[inset_0_0_0_1px_currentColor]" : "bg-current"
-            } ${state === "busy" ? "animate-tile-step" : ""}`}
-            style={state === "busy" ? { animationDelay: delay } : undefined}
-          />
-        );
-      })}
-    </span>
+    <span
+      aria-hidden="true"
+      className={`h-[7px] w-[7px] shrink-0 rounded-full ${state === "done" ? "bg-current" : "shadow-[inset_0_0_0_1.5px_currentColor]"} ${className ?? ""}`}
+    />
   );
 }
 
 const TONES: Record<StatusBadgeTone, string> = {
-  live: "bg-signal text-signal-ink",
-  neutral: "bg-surface-3 text-ink-muted",
-  // Warning text on its own tint is under 4.5:1 on paper, so the light theme keeps the
-  // tint and the glyph in warning and sets the text in ink.
+  live: "bg-accent-soft text-accent-text",
+  neutral: "bg-ink/[0.06] text-ink-muted dark:bg-white/[0.08]",
+  // Warning text on its tint fails AA in light, so light uses ink text.
   attention: "bg-warning/15 text-ink dark:text-warning",
 };
 
 export interface StatusBadgeProps {
   tone: StatusBadgeTone;
-  /** Shown uppercase in the telemetry face; keep it short ("128 to go", "Waiting · Wi-Fi"). */
+  /** Short and sentence case ("128 to go", "Waiting for Wi-Fi"). */
   children: ReactNode;
   glyph?: TileGlyphState | null;
   /** Read instead of the short text by screen readers (and kept in the page's text). */
@@ -49,20 +39,17 @@ export interface StatusBadgeProps {
   className?: string;
 }
 
-/**
- * Status badge (docs/DESIGN.md › Status badge): 24px, radius 8, telemetry text. `live` for
- * running/OK states, `neutral` for waiting/paused, `attention` when the user has to act.
- */
+/** A small status pill: `live` running/OK, `neutral` waiting/paused, `attention` needs action. */
 export default function StatusBadge({ tone, children, glyph, srLabel, className }: StatusBadgeProps) {
   return (
     <span
-      className={`telemetry inline-flex h-6 max-w-full items-center gap-1.5 rounded-tile-sm px-2 transition-colors duration-180 ${TONES[tone]} ${className ?? ""}`}
+      className={`inline-flex h-7 max-w-full items-center gap-1.5 rounded-full px-2.5 text-footnote font-semibold tabular-nums transition-colors duration-180 ${TONES[tone]} ${className ?? ""}`}
     >
       {glyph && <TileGlyph state={glyph} className={tone === "attention" ? "text-warning" : undefined} />}
       <span aria-hidden={srLabel ? true : undefined} className="truncate">
         {children}
       </span>
-      {srLabel && <span className="sr-only normal-case">{srLabel}</span>}
+      {srLabel && <span className="sr-only">{srLabel}</span>}
     </span>
   );
 }

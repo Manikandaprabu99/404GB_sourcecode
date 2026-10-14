@@ -1,12 +1,11 @@
 import { buttonClass } from "@/app/components/ui/Button";
 
-// The sign-in screen's buttons, from the design system's (docs/DESIGN.md › Buttons): full
-// width, and 48px tall on every screen size (the one place a big target beats density).
+// The sign-in screen's buttons: full width and 48px tall on every screen size.
 export const primaryAuthButtonClass = `group ${buttonClass({ variant: "primary", block: true })} sm:!min-h-[48px] sm:!px-5 sm:!text-body`;
 
-export const secondaryAuthButtonClass = `${buttonClass({ variant: "secondary", block: true })} sm:!min-h-[48px] sm:!px-5 sm:!text-body`;
+export const secondaryAuthButtonClass = `${buttonClass({ variant: "tertiary", block: true })} sm:!min-h-[48px] sm:!px-5 sm:!text-body`;
 
-export const textAuthButtonClass = buttonClass({ variant: "ghost", size: "sm" });
+export const textAuthButtonClass = `${buttonClass({ variant: "ghost", size: "sm" })} !text-accent-text`;
 
 export function AuthSpinner({ size = 18 }: { size?: number }) {
   return (

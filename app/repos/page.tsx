@@ -23,7 +23,6 @@ interface PageError {
 }
 
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
-const FILTER_THRESHOLD = 6;
 
 function describeError(err: unknown, action: "load" | "create" | "use"): PageError {
   if (err instanceof ApiError) {
@@ -187,18 +186,21 @@ function RepoPicker({ login, currentRepo }: { login: string | null; currentRepo:
 
   return (
     <>
+      <div className="fixed inset-0 flex flex-col bg-bg pl-safe pr-safe sm:flex-row">
       <NavBar />
-      <main className="mx-auto flex w-full max-w-xl flex-col gap-8 px-4 pb-tabbar-safe pt-safe-6 sm:px-6 sm:pb-12 sm:pt-12">
+      <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div aria-hidden="true" className="aurora pointer-events-none absolute inset-x-0 top-0 h-[380px]" />
+      <main className="relative mx-auto flex w-full max-w-xl flex-col gap-8 px-4 pb-tabbar-safe pt-safe-8 sm:px-6 sm:pb-12 sm:pt-12">
         <header className="flex flex-col gap-3 animate-fade-in-up">
-          <h1 className="font-display text-h1 text-ink">Choose a storage repo</h1>
+          <h1 className="text-large-title text-ink lg:text-large-title-desktop">Choose a storage repo</h1>
           <p className="text-body text-ink-muted">
             404GB keeps your photos and videos in a GitHub repository that you own. Create a new
             private one, or pick one you already have.
           </p>
           {login && (
-            <p className="flex flex-wrap items-center gap-x-2 text-small text-ink-muted">
+            <p className="flex flex-wrap items-center gap-x-2 text-footnote text-ink-muted">
               <span>
-                Signed in as <span className="font-mono text-ink">@{login}</span>
+                Signed in as <span className="font-semibold text-ink">@{login}</span>
               </span>
               <span aria-hidden className="text-ink-faint">
                 ·
@@ -206,7 +208,7 @@ function RepoPicker({ login, currentRepo }: { login: string | null; currentRepo:
               <button
                 type="button"
                 onClick={() => void onSwitchAccount()}
-                className={`${buttonClass({ variant: "ghost", size: "sm" })} -ml-2 !text-accent`}
+                className={`${buttonClass({ variant: "ghost", size: "sm" })} -ml-2 !text-accent-text`}
               >
                 Use another account
               </button>
@@ -217,7 +219,7 @@ function RepoPicker({ login, currentRepo }: { login: string | null; currentRepo:
         {error && (
           <div
             role="alert"
-            className="flex flex-wrap items-center justify-between gap-3 rounded-control bg-danger/10 py-2.5 pl-4 pr-2.5 text-small text-ink animate-fade-in dark:text-danger"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-control bg-danger/10 py-2.5 pl-4 pr-2.5 text-callout font-normal text-ink animate-fade-in dark:text-danger"
           >
             <span className="min-w-0 flex-1">{error.message}</span>
             {error.signedOut ? (
@@ -238,56 +240,18 @@ function RepoPicker({ login, currentRepo }: { login: string | null; currentRepo:
           </div>
         )}
 
-        <form onSubmit={onCreate} noValidate className={`flex flex-col gap-4 p-5 ${cardClass}`}>
-          <div className="flex items-center gap-3">
-            <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-tile border-[1.5px] border-dashed border-accent text-accent">
-              <PlusIcon size={16} strokeWidth={2.2} />
-            </span>
-            <h2 className="text-h3 text-ink">Create a new repo</h2>
-          </div>
-          <div className="flex flex-col gap-2">
-            <label htmlFor="repo-name" className="telemetry text-ink-muted">
-              Repository name
-            </label>
-            <input
-              id="repo-name"
-              name="repo-name"
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              value={newRepoName}
-              onChange={(e) => setNewRepoName(e.target.value)}
-              onBlur={() => setNameTouched(true)}
-              aria-invalid={nameTouched && nameError ? true : undefined}
-              aria-describedby="repo-name-hint"
-              className={`h-12 rounded-control border bg-surface-2 px-3.5 font-mono text-body text-ink transition-colors duration-180 ${
-                nameTouched && nameError ? "border-danger" : "border-transparent"
-              }`}
-            />
-            <p
-              id="repo-name-hint"
-              className={`text-small ${nameTouched && nameError ? "text-danger" : "text-ink-muted"}`}
-            >
-              {nameTouched && nameError ? nameError : "Created as a private repo in your GitHub account."}
-            </p>
-          </div>
-          <button type="submit" disabled={busy !== null} className={`${buttonClass({ variant: "primary" })} self-start`}>
-            {busy?.kind === "create" && <Spinner />}
-            {busy?.kind === "create" ? "Creating…" : "Create and continue"}
-          </button>
-        </form>
 
         <section aria-labelledby="existing-heading" className="flex flex-col gap-3.5">
           <div className="flex items-end justify-between gap-3 px-1">
-            <h2 id="existing-heading" className="font-display text-h2 text-ink">
-              Or use an existing repo
+            <h2 id="existing-heading" className="text-title text-ink">
+              Your repos
             </h2>
             {!loading && repos.length > 0 && (
-              <span className="telemetry shrink-0 pb-0.5 text-ink-muted">{repos.length} repos</span>
+              <span className="shrink-0 pb-0.5 text-footnote tabular-nums text-ink-muted">{repos.length} repos</span>
             )}
           </div>
 
-          {repos.length > FILTER_THRESHOLD && (
+          {repos.length > 0 && (
             <div className="relative">
               <label htmlFor="repo-filter" className="sr-only">
                 Filter repos
@@ -302,31 +266,31 @@ function RepoPicker({ login, currentRepo }: { login: string | null; currentRepo:
                 placeholder="Filter repos"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                className="h-[46px] w-full rounded-control bg-surface-2 pl-11 pr-4 text-body text-ink placeholder:text-ink-faint"
+                className="h-[46px] w-full rounded-full bg-surface-2 pl-11 pr-4 text-body text-ink placeholder:text-ink-faint dark:bg-ink/[0.07]"
               />
             </div>
           )}
 
           {loading ? (
-            <ul className={`divide-y divide-border/60 overflow-hidden ${cardClass}`} aria-busy="true" aria-label="Loading repos">
+            <ul className={`settings-card overflow-hidden ${cardClass}`} aria-busy="true" aria-label="Loading repos">
               {[0, 1, 2, 3].map((i) => (
                 <li key={i} className="flex min-h-[64px] items-center gap-3.5 px-4">
-                  <span className="skeleton h-9 w-9 shrink-0 rounded-tile" />
+                  <span className="skeleton h-[30px] w-[30px] shrink-0 rounded-[8px]" />
                   <span className="flex flex-1 flex-col gap-2">
-                    <span className="skeleton block h-3.5 w-32 rounded-[4px]" />
-                    <span className="skeleton block h-2.5 w-20 rounded-[3px]" />
+                    <span className="skeleton block h-3.5 w-32 rounded-full" />
+                    <span className="skeleton block h-3 w-20 rounded-full" />
                   </span>
                 </li>
               ))}
             </ul>
           ) : visibleRepos.length === 0 ? (
             !loadError && (
-              <p className="rounded-card border-2 border-dashed border-border-strong px-4 py-8 text-center text-body text-ink-muted">
+              <p className={`px-4 py-8 text-center text-body text-ink-muted ${cardClass}`}>
                 {repos.length === 0 ? "You don't have any repos yet. Create one above." : "No repos match that filter."}
               </p>
             )
           ) : (
-            <ul className={`divide-y divide-border/60 overflow-hidden ${cardClass}`}>
+            <ul className={`settings-card overflow-hidden ${cardClass}`}>
               {visibleRepos.map((r) => {
                 const usingThis = busy?.kind === "use" && busy.id === r.id;
                 const current = r.fullName.toLowerCase() === currentRepo?.toLowerCase();
@@ -334,22 +298,22 @@ function RepoPicker({ login, currentRepo }: { login: string | null; currentRepo:
                   <li key={r.id} className="flex min-h-[64px] items-center gap-3.5 px-4 py-3 animate-fade-in">
                     <span
                       aria-hidden="true"
-                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-tile ${
-                        r.private ? "bg-surface-2 text-ink-muted" : "bg-warning/[0.14] text-warning"
+                      className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[8px] text-white [&_svg]:h-4 [&_svg]:w-4 ${
+                        r.private ? "bg-[rgb(142_148_160)]" : "bg-[rgb(245_158_11)]"
                       }`}
                     >
                       {r.private ? <LockIcon /> : <GlobeIcon />}
                     </span>
                     <span className="flex min-w-0 flex-1 flex-col gap-1">
                       <span className="flex min-w-0 items-center gap-2">
-                        <span className="block min-w-0 truncate font-mono text-body text-ink">{r.name}</span>
+                        <span className="block min-w-0 truncate font-mono text-[15px] font-medium text-ink">{r.name}</span>
                         {current && (
                           <StatusBadge tone="live" glyph="done" className="shrink-0">
                             In use
                           </StatusBadge>
                         )}
                       </span>
-                      <span className="telemetry truncate text-ink-muted">
+                      <span className="truncate text-footnote text-ink-muted">
                         {r.owner} · {r.private ? "Private" : "Public"}
                       </span>
                     </span>
@@ -369,7 +333,51 @@ function RepoPicker({ login, currentRepo }: { login: string | null; currentRepo:
             </ul>
           )}
         </section>
+
+        <form onSubmit={onCreate} noValidate className={`flex flex-col gap-4 p-5 ${cardClass}`}>
+          <div className="flex items-center gap-3">
+            <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-ink shadow-glow-signal">
+              <PlusIcon size={18} strokeWidth={2.2} />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-headline text-ink">Create a new library</h2>
+              <p className="text-footnote text-ink-muted">A fresh private repo for your photos.</p>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="repo-name" className="text-footnote font-semibold text-ink-muted">
+              Repository name
+            </label>
+            <input
+              id="repo-name"
+              name="repo-name"
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={newRepoName}
+              onChange={(e) => setNewRepoName(e.target.value)}
+              onBlur={() => setNameTouched(true)}
+              aria-invalid={nameTouched && nameError ? true : undefined}
+              aria-describedby="repo-name-hint"
+              className={`h-12 rounded-control border bg-surface-2 px-3.5 font-mono text-body text-ink transition-colors duration-180 ${
+                nameTouched && nameError ? "border-danger" : "border-transparent"
+              }`}
+            />
+            <p
+              id="repo-name-hint"
+              className={`text-footnote ${nameTouched && nameError ? "text-danger" : "text-ink-muted"}`}
+            >
+              {nameTouched && nameError ? nameError : "Created as a private repo in your GitHub account."}
+            </p>
+          </div>
+          <button type="submit" disabled={busy !== null} className={`${buttonClass({ variant: "primary" })} self-start`}>
+            {busy?.kind === "create" && <Spinner />}
+            {busy?.kind === "create" ? "Creating…" : "Create and continue"}
+          </button>
+        </form>
       </main>
+      </div>
+      </div>
     </>
   );
 }

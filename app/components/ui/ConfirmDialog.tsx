@@ -94,7 +94,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       {children}
       {pending && (
         <div
-          className={`fixed inset-0 z-dialog flex items-end justify-center bg-black/55 sm:items-center sm:p-4 ${
+          className={`fixed inset-0 z-dialog flex items-center justify-center bg-black/50 p-6 ${
             closing ? "animate-fade-out" : "animate-fade-in"
           }`}
           onClick={() => settle(false)}
@@ -107,36 +107,35 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             aria-describedby={pending.message ? "confirm-message" : undefined}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => panelRef.current && trapTab(e, panelRef.current)}
-            className={`w-full rounded-t-sheet bg-surface px-5 pb-safe-5 pt-2 shadow-sheet dark:border-t dark:border-border/60 sm:max-w-sm sm:rounded-dialog sm:p-6 sm:shadow-elevated sm:dark:border ${
-              closing ? "animate-sheet-out sm:animate-scale-out" : "animate-sheet-in sm:animate-scale-in"
+            className={`card w-full max-w-[340px] rounded-dialog p-6 shadow-elevated ${
+              closing ? "animate-scale-out" : "animate-scale-in"
             }`}
           >
-            <div className="mx-auto mb-5 h-1 w-9 rounded-full bg-border-strong sm:hidden" aria-hidden="true" />
-            <div className="flex items-start gap-4">
+            <div className="flex flex-col items-center gap-3 text-center">
               {pending.destructive && (
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-tile bg-danger/15 text-danger" aria-hidden="true">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/15 text-danger" aria-hidden="true">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
                     <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-9 0 1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
                   </svg>
                 </span>
               )}
-              <div className="min-w-0 pt-1">
-                <h2 id="confirm-title" className="font-display text-h2 text-ink">
+              <div className="min-w-0">
+                <h2 id="confirm-title" className="text-headline text-ink">
                   {pending.title}
                 </h2>
                 {pending.message && (
-                  <p id="confirm-message" className="mt-2 text-body text-ink-muted">
+                  <p id="confirm-message" className="mt-1.5 text-callout font-normal text-ink-muted">
                     {pending.message}
                   </p>
                 )}
               </div>
             </div>
-            <div className="mt-6 flex gap-3 sm:justify-end">
+            <div className="mt-6 flex gap-2.5">
               <button
                 ref={cancelRef}
                 type="button"
                 onClick={() => settle(false)}
-                className={`flex-1 sm:flex-none ${buttonClass({ variant: "secondary" })}`}
+                className={`flex-1 ${buttonClass({ variant: "tertiary" })}`}
               >
                 {pending.cancelLabel ?? "Cancel"}
               </button>
@@ -144,7 +143,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 ref={confirmRef}
                 type="button"
                 onClick={() => settle(true)}
-                className={`flex-1 sm:flex-none ${buttonClass({ variant: pending.destructive ? "danger" : "primary" })}`}
+                className={`flex-1 ${buttonClass({ variant: pending.destructive ? "danger" : "primary" })}`}
               >
                 {pending.confirmLabel ?? "OK"}
               </button>

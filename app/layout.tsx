@@ -6,31 +6,45 @@ import ServiceWorkerRegister from "./components/ServiceWorkerRegister";
 import SystemBarsSync from "./components/SystemBarsSync";
 import { ToastProvider } from "./components/ui/Toast";
 import { ConfirmProvider } from "./components/ui/ConfirmDialog";
+import { APPEARANCE_INIT_SCRIPT } from "@/lib/ui/appearance";
 
-// Self-hosted as static files checked into app/fonts/ (latin subset, variable-weight
-// woff2, SIL OFL — licences next to them) rather than next/font/google: this needs zero
-// network access at build time (some CI/sandboxed build environments can't reach
-// fonts.googleapis.com, e.g. behind a TLS-intercepting proxy) and, being served from this
-// app's own origin either way, keeps working offline as an installed PWA. Exposed as CSS
-// variables so tailwind.config.js can offer `font-display` / `font-sans` / `font-mono`
-// (docs/DESIGN.md › Typography).
-const unbounded = localFont({
-  src: "./fonts/unbounded-latin-var.woff2",
-  variable: "--font-display",
-  weight: "200 900",
+// OFL variable fonts in app/fonts (no network at build time); globals.css maps
+// html[data-font] to --font-sans, so only the chosen face is downloaded.
+const geist = localFont({
+  src: "./fonts/geist-var.woff2",
+  variable: "--font-geist",
+  weight: "100 900",
   display: "swap",
 });
-const hostGrotesk = localFont({
-  src: "./fonts/hostgrotesk-latin-var.woff2",
-  variable: "--font-sans",
-  weight: "300 800",
+const inter = localFont({
+  // Has the optical-size axis, so titles get Inter Display automatically.
+  src: "./fonts/inter-latin-var.woff2",
+  variable: "--font-inter",
+  weight: "100 900",
   display: "swap",
+  preload: false,
 });
-const kodeMono = localFont({
-  src: "./fonts/kodemono-latin-var.woff2",
-  variable: "--font-mono",
-  weight: "400 700",
+const jakarta = localFont({
+  src: "./fonts/plusjakartasans-latin-var.woff2",
+  variable: "--font-jakarta",
+  weight: "200 800",
   display: "swap",
+  preload: false,
+});
+const manrope = localFont({
+  src: "./fonts/manrope-latin-var.woff2",
+  variable: "--font-manrope",
+  weight: "200 800",
+  display: "swap",
+  preload: false,
+});
+// Only for code-like values (the device code, a commit sha).
+const geistMono = localFont({
+  src: "./fonts/geistmono-var.woff2",
+  variable: "--font-geist-mono",
+  weight: "100 900",
+  display: "swap",
+  preload: false,
   // An Arial-shaped fallback would be the wrong width for a monospace face.
   adjustFontFallback: false,
   fallback: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
@@ -54,22 +68,18 @@ export const metadata: Metadata = {
   formatDetection: { telephone: false },
 };
 
-// theme-color follows the OS here; SystemBarsSync rewrites it when the user
-// picks a theme in the app, and while the photo viewer is open.
+// The OS default; the head script and SystemBarsSync set it to the actual page background.
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
   colorScheme: "dark light",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f3f2ed" },
-    { media: "(prefers-color-scheme: dark)", color: "#0a0a0b" },
+    { media: "(prefers-color-scheme: light)", color: "#f6f7f9" },
+    { media: "(prefers-color-scheme: dark)", color: "#07080b" },
   ],
 };
 
-// Inline in <head> so it runs before the first paint (no light/dark flash).
-// Mirrors ThemeToggle's storage key and values.
-const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem("404gb-theme");if(t!=="light"&&t!=="dark"){t=window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark"}document.documentElement.setAttribute("data-theme",t)}catch(e){}})();`;
 
 // The browser fires beforeinstallprompt once, often before hydration; keep it for
 // InstallPrompt (window.__404gbInstallPrompt + a "404gb:installprompt" event).
@@ -79,11 +89,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${unbounded.variable} ${hostGrotesk.variable} ${kodeMono.variable}`}
+      className={`${geist.variable} ${inter.variable} ${jakarta.variable} ${manrope.variable} ${geistMono.variable}`}
       suppressHydrationWarning
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        {/* Before the first paint: theme, accent, font and Pure black (no flash). */}
+        <script dangerouslySetInnerHTML={{ __html: APPEARANCE_INIT_SCRIPT }} />
         <script dangerouslySetInnerHTML={{ __html: INSTALL_CAPTURE_SCRIPT }} />
       </head>
       <body className="min-h-screen font-sans">

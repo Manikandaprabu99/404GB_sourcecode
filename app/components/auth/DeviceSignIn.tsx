@@ -94,7 +94,7 @@ export default function DeviceSignIn({ onCancel, onUseToken }: { onCancel: () =>
   if (phase.kind === "error") {
     return (
       <div className="flex flex-col items-center gap-4 text-center animate-fade-in">
-        <p role="alert" className="w-full rounded-control bg-danger/10 px-4 py-3 text-small text-ink dark:text-danger">
+        <p role="alert" className="w-full rounded-control bg-danger/10 px-4 py-3 text-callout font-normal text-ink dark:text-danger">
           {phase.message}
         </p>
         {!phase.disabled && (
@@ -103,7 +103,7 @@ export default function DeviceSignIn({ onCancel, onUseToken }: { onCancel: () =>
           </button>
         )}
         <button type="button" onClick={onUseToken} className={phase.disabled ? primaryAuthButtonClass : secondaryAuthButtonClass}>
-          Use a personal access token
+          Use a token instead
         </button>
         <button type="button" onClick={onCancel} className={textAuthButtonClass}>
           Back
@@ -114,7 +114,7 @@ export default function DeviceSignIn({ onCancel, onUseToken }: { onCancel: () =>
 
   if (phase.kind !== "waiting") {
     return (
-      <div role="status" className="flex flex-col items-center gap-3 py-6 text-small text-ink-muted animate-fade-in">
+      <div role="status" className="flex flex-col items-center gap-3 py-6 text-callout font-normal text-ink-muted animate-fade-in">
         <AuthSpinner size={22} />
         {phase.kind === "requesting" ? "Getting a sign-in code…" : "Signing you in…"}
       </div>
@@ -128,31 +128,20 @@ export default function DeviceSignIn({ onCancel, onUseToken }: { onCancel: () =>
 
   return (
     <div className="flex flex-col items-center gap-4 text-center animate-fade-in-up">
-      <p className="telemetry text-ink-muted">Enter this code on GitHub</p>
-      {/* docs/DESIGN.md › Sign-in: each character in its own tile, filling in one by one. */}
+      <p className="text-footnote font-semibold text-ink-muted">Enter this code on GitHub</p>
+      {/* The code in a large monospace card; tap to copy. */}
       <button
         type="button"
         onClick={() => void copyText(code.userCode).then(setCopied)}
         aria-label={`Sign-in code ${code.userCode.split("").join(" ")}. Tap to copy.`}
-        className="flex items-center gap-1 rounded-control p-1 transition-transform duration-180 ease-out-expo active:scale-[0.97]"
+        className="pressable flex w-full items-center justify-center gap-3 rounded-[18px] bg-surface-2 px-4 py-5 shadow-inset-hairline dark:bg-ink/[0.06]"
       >
-        {code.userCode.split("").map((char, i) =>
-          char === "-" ? (
-            <span key={i} aria-hidden="true" className="w-2.5 text-center font-mono text-[1.75rem] leading-none text-ink-muted">
-              -
-            </span>
-          ) : (
-            <span
-              key={i}
-              className="flex h-12 w-8 animate-fade-in-up items-center justify-center rounded-tile bg-surface-2 font-mono text-[1.75rem] font-semibold leading-none text-ink shadow-inset-hairline dark:bg-surface-3"
-              style={{ animationDelay: `${i * 35}ms` }}
-            >
-              {char}
-            </span>
-          )
-        )}
+        <span className="font-mono text-[2rem] font-semibold leading-none tracking-[0.12em] text-ink">{code.userCode}</span>
+        <span aria-hidden="true" className={`flex h-8 w-8 items-center justify-center rounded-full ${copied ? "bg-success/15 text-success" : "bg-accent-soft text-accent-text"}`}>
+          {copied ? <CheckIcon size={16} strokeWidth={2.6} /> : <CopyGlyph />}
+        </span>
       </button>
-      <p className={`flex items-center gap-1.5 text-small ${copied ? "text-success" : "text-ink-muted"}`}>
+      <p className={`flex items-center gap-1.5 text-footnote ${copied ? "text-success" : "text-ink-muted"}`}>
         {copied && <CheckIcon size={14} />}
         {copied ? "Copied to the clipboard" : "Tap the code to copy it"}
       </p>
@@ -160,13 +149,22 @@ export default function DeviceSignIn({ onCancel, onUseToken }: { onCancel: () =>
         Open GitHub
         <ExternalIcon size={16} />
       </button>
-      <p role="status" className="flex items-center gap-2 text-small text-ink-muted">
-        <TileGlyph state="busy" className="text-accent" />
+      <p role="status" className="flex items-center gap-2 text-footnote text-ink-muted">
+        <TileGlyph state="busy" className="text-accent-text" />
         Waiting for you to approve on GitHub…
       </p>
       <button type="button" onClick={onCancel} className={textAuthButtonClass}>
         Cancel
       </button>
     </div>
+  );
+}
+
+function CopyGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="8" y="8" width="12" height="12" rx="3" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+    </svg>
   );
 }

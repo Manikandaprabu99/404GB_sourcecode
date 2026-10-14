@@ -11,12 +11,16 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import type { MediaIndexEntry } from "@/lib/media";
+import type { FaceBox } from "@/lib/faces/people";
 import { useIsomorphicLayoutEffect } from "@/lib/library/hooks";
 import { getGridWidth, setGridWidth } from "@/lib/library/viewState";
 import type { ZoomLevel } from "@/lib/library/zoom";
-import SelectCheck from "@/app/components/ui/SelectCheck";
+import { select as hapticSelect, tick as hapticTick } from "@/lib/ui/haptics";
+import { registerGridScroller } from "@/lib/ui/sharedElement";
+import FaceAvatar from "@/app/components/search/FaceAvatar";
+import { CheckIcon } from "@/app/components/library/icons";
 import { itemCount, type DateGroup } from "./dateGroups";
 import GalleryThumb from "./GalleryThumb";
 import { offsetWithin } from "./layoutMath";
@@ -36,31 +40,32 @@ export function gapForWidth(width: number): number {
 
 /** Denser grids for the month and year views, like zooming out in Google Photos. */
 const DENSITY: Record<ZoomLevel, { columns: (width: number) => number; gap: (width: number) => number; header: number }> = {
-  day: { columns: columnsForWidth, gap: gapForWidth, header: 48 },
+  day: { columns: columnsForWidth, gap: gapForWidth, header: 58 },
   month: {
     columns: (w) => (w >= 1200 ? 10 : w >= 900 ? 8 : w >= 640 ? 7 : 5),
     gap: (w) => (w >= 640 ? 3 : 2),
-    header: 58,
+    header: 66,
   },
   year: {
     columns: (w) => (w >= 1200 ? 15 : w >= 900 ? 12 : w >= 640 ? 10 : 7),
     gap: (w) => (w >= 640 ? 2 : 1),
-    header: 72,
+    header: 76,
   },
 };
 
-// docs/DESIGN.md › Screens › Photos: Day is an h3 title, Month the month in display 22px, Year
-// the year in the display role; each with a telemetry line on the right.
-const HEADER_ROW: Record<ZoomLevel, string> = {
-  day: "items-center",
-  month: "items-baseline pb-2",
-  year: "items-baseline pb-2.5",
-};
+// Day: headline over a "24 photos · 3 videos" footnote; Month: title role; Year: large title.
 const HEADER_TITLE: Record<ZoomLevel, string> = {
-  day: "text-h3",
-  month: "font-display text-[22px] font-semibold leading-tight tracking-[-0.01em]",
-  year: "font-display text-display tabular-nums",
+  day: "text-[17px] font-semibold leading-[22px] tracking-[-0.01em]",
+  month: "text-[22px] font-[650] leading-[28px] tracking-[-0.015em]",
+  year: "text-[32px] font-bold leading-[38px] tracking-[-0.025em] tabular-nums",
 };
+
+/** A person in a day's photos, for the header's avatar stack. */
+export interface GroupPerson {
+  id: string;
+  cover: { mediaId: string; box: FaceBox } | null;
+  entry?: MediaIndexEntry;
+}
 
 export const GROUP_HEADER_HEIGHT = DENSITY.day.header;
 
@@ -79,6 +84,14 @@ const OVERSCAN_PX = 900;
 const WINDOW_STEP_PX = 240;
 const LONG_PRESS_MS = 420;
 const LONG_PRESS_SLOP_PX = 10;
+/** Drag-select scrolls when the finger is this close to the top or bottom of the grid's view. */
+const EDGE_ZONE_PX = 72;
+const EDGE_MAX_SPEED = 22;
+/** Room the floating nav and selection bar take at the bottom of the scroller. */
+const BOTTOM_CHROME_PX = 150;
+/** Pinch: how far the live scale follows the fingers before the view switches. */
+const PINCH_LIVE_MIN = 0.8;
+const PINCH_LIVE_MAX = 1.22;
 /** First paint: rows fade in this far apart (at most INTRO_ROWS of them). */
 const INTRO_STAGGER_MS = 32;
 const INTRO_ROWS = 10;
@@ -158,10 +171,10 @@ interface TileProps {
   badge: string | null;
 }
 
-// Tile badges: telemetry text on a dark scrim. No blur or shadow on anything in a tile, which
+// Tile badges: small text on a dark scrim. No blur or shadow on anything in a tile, which
 // would be painted again for every tile on every frame of a scroll.
 const TILE_BADGE =
-  "telemetry pointer-events-none absolute flex h-[18px] items-center gap-1 rounded-[4px] bg-black/55 px-[5px] text-[10px] leading-none text-white";
+  "pointer-events-none absolute flex h-[18px] items-center gap-1 rounded-[5px] bg-black/55 px-[5px] text-[10.5px] font-semibold leading-none text-white tabular-nums";
 
 /** The favourite mark: a white heart with a thin dark edge, readable on light photos. */
 function TileHeart({ size }: { size: number }) {
@@ -181,6 +194,26 @@ function TileHeart({ size }: { size: number }) {
         strokeLinejoin="round"
       />
     </svg>
+  );
+}
+
+/** The round 24px selection check (docs/DESIGN.md › SelectCheck): a white ring on photos, a
+ * border-strong ring on the background; accent with a white tick when selected. */
+export function RoundCheck({ selected, onPhoto = true, size = 24 }: { selected: boolean; onPhoto?: boolean; size?: number }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`relative flex shrink-0 items-center justify-center rounded-full ${
+        selected ? "" : onPhoto ? "border-2 border-white/95 bg-black/15" : "border-2 border-border-strong"
+      }`}
+      style={{ width: size, height: size }}
+    >
+      {selected && (
+        <span className="lp-check-pop absolute inset-0 flex items-center justify-center rounded-full bg-accent text-accent-ink">
+          <CheckIcon size={Math.round(size * 0.56)} strokeWidth={3.2} />
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -204,17 +237,13 @@ const Tile = memo(function Tile({
       data-media-id={item.id}
       aria-label={`${isVideo ? "Video" : "Photo"} ${item.filename}`}
       aria-pressed={selectMode ? selected : undefined}
-      className={`group absolute left-0 top-0 overflow-hidden rounded-thumb outline-none transition-[transform,background-color] duration-320 ease-out-expo [-webkit-touch-callout:none] focus-visible:z-[5] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
-        selected ? "bg-signal/25" : "bg-surface-2"
+      className={`lp-tile group absolute left-0 top-0 overflow-hidden rounded-thumb outline-none [-webkit-touch-callout:none] focus-visible:z-[5] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
+        selected ? "lp-accent-soft" : "bg-surface-2"
       }`}
       style={{ width, height, transform: `translate3d(${x}px, ${y}px, 0)` }}
     >
-      {/* Picked: the picture shrinks to 0.88 with rounder corners over the signal tint. */}
-      <span
-        className={`block h-full w-full overflow-hidden transition-[transform,border-radius] duration-180 ease-out-expo ${
-          selected ? "scale-[0.88] rounded-[12px]" : "rounded-thumb"
-        }`}
-      >
+      {/* Picked: the picture shrinks to 0.9 inside an accent ring (gallery.css). */}
+      <span className="lp-tile-pic block h-full w-full overflow-hidden rounded-thumb">
         <GalleryThumb
           repoKey={repoKey}
           mediaId={item.id}
@@ -224,6 +253,7 @@ const Tile = memo(function Tile({
           className="h-full w-full object-cover"
         />
       </span>
+      {selectMode && <span className="lp-tile-ring pointer-events-none absolute inset-0 rounded-[10px] border-[2.5px] border-accent" />}
 
       {isVideo && (
         <span className={`${TILE_BADGE} bottom-1 right-1 ${dense ? "!px-1" : ""}`}>
@@ -238,18 +268,17 @@ const Tile = memo(function Tile({
           {badge}
         </span>
       )}
-      {item.favorite && <TileHeart size={dense ? 11 : 15} />}
+      {item.favorite && !selected && <TileHeart size={dense ? 11 : 15} />}
 
       <span
         data-select-handle=""
-        className={`absolute left-1.5 top-1.5 flex transition-opacity duration-180 ease-out-expo ${
+        className={`absolute flex transition-opacity duration-160 ease-out ${dense ? "left-1 top-1" : "left-1.5 top-1.5"} ${
           selectMode
             ? "pointer-events-none opacity-100"
             : "pointer-events-none opacity-0 group-hover:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:pointer-events-auto"
         }`}
       >
-        {/* A hairline outline instead of the check's soft shadow (see TILE_BADGE). */}
-        <SelectCheck selected={selected} className="!shadow-none outline outline-1 outline-black/20 [&>span]:!shadow-none" />
+        <RoundCheck selected={selected} size={dense ? 18 : 24} />
       </span>
       <span className="pointer-events-none absolute inset-0 bg-black/0 transition-colors duration-120 group-active:bg-black/10" />
     </button>
@@ -260,8 +289,8 @@ export interface VirtualGridProps {
   groups: DateGroup[];
   /** Day, month or year view: tile density and header style. */
   zoom: ZoomLevel;
-  /** Pinch or Ctrl+wheel: +1 = zoom out (denser), -1 = zoom in. */
-  onZoomStep?: (direction: 1 | -1) => void;
+  /** Pinch or Ctrl+wheel: +1 = zoom out (denser), -1 = zoom in; false when already at that end. */
+  onZoomStep?: (direction: 1 | -1) => boolean | void;
   /** Where to render the timeline scrubber (an overlay outside the scroller). */
   scrubberHost?: HTMLElement | null;
   repoKey: string;
@@ -279,8 +308,13 @@ export interface VirtualGridProps {
   /** Long-press (touch) or the hover check mark (mouse) outside selection mode. */
   onStartSelect: (id: string) => void;
   onToggleGroup?: (groupKey: string) => void;
+  /** Drag-select: sets these items' selection (after a long press, as the finger moves). */
+  onSetMany?: (ids: readonly string[], selected: boolean) => void;
   /** A corner label per tile (null for none). */
   badgeFor?: (item: MediaIndexEntry) => string | null;
+  /** The people in a day's photos, for the Day header's avatar stack (called for mounted
+   * headers only; memoise it). */
+  groupPeople?: (group: DateGroup) => GroupPerson[];
 }
 
 /**
@@ -304,7 +338,9 @@ export default function VirtualGrid({
   onToggleSelect,
   onStartSelect,
   onToggleGroup,
+  onSetMany,
   badgeFor,
+  groupPeople,
 }: VirtualGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => getGridWidth());
@@ -319,6 +355,10 @@ export default function VirtualGrid({
   const prevLayoutRef = useRef<{ zoom: ZoomLevel; layouts: GroupLayout[]; metrics: Metrics } | null>(null);
   const onZoomStepRef = useRef(onZoomStep);
   onZoomStepRef.current = onZoomStep;
+  /** Set by a pinch that switched the view: where the fingers were and how far it had scaled. */
+  const pinchHandoffRef = useRef<{ clientX: number; clientY: number; scale: number } | null>(null);
+  /** Cancels a pending long press (a second finger means a pinch). */
+  const cancelPressRef = useRef<() => void>(() => {});
 
   const metrics = useMemo(() => computeMetrics(width > 0 ? width : 360, zoom), [width, zoom]);
   const { layouts, total } = useMemo(() => layoutGroups(groups, metrics), [groups, metrics]);
@@ -425,16 +465,30 @@ export default function VirtualGrid({
     lastScrollTopRef.current = scroller.scrollTop;
     updateWindow();
 
+    // A pinch hands over its focal point and live scale so the new grid settles from there.
+    const pinch = pinchHandoffRef.current;
+    pinchHandoffRef.current = null;
+    grid.style.transform = "";
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!reduceMotion && typeof grid.animate === "function") {
       const zoomingOut = ["day", "month", "year"].indexOf(zoom) > ["day", "month", "year"].indexOf(prev.zoom);
-      grid.style.transformOrigin = `50% ${Math.round(viewTop + scroller.clientHeight / 3)}px`;
+      let from = zoomingOut ? 1.08 : 0.92;
+      if (pinch) {
+        const gridRect = grid.getBoundingClientRect();
+        const scrollerTop = scroller.getBoundingClientRect().top;
+        const focalY = scroller.scrollTop - gridOffset + (pinch.clientY - scrollerTop);
+        grid.style.transformOrigin = `${Math.round(pinch.clientX - gridRect.left)}px ${Math.round(focalY)}px`;
+        const ratio = (prev.metrics.rowHeight * pinch.scale) / Math.max(1, metrics.rowHeight);
+        from = zoomingOut ? Math.min(1.35, Math.max(1.04, ratio)) : Math.max(0.74, Math.min(0.96, ratio));
+      } else {
+        grid.style.transformOrigin = `50% ${Math.round(viewTop + scroller.clientHeight / 3)}px`;
+      }
       const animation = grid.animate(
         [
-          { opacity: 0.25, transform: `scale(${zoomingOut ? 1.08 : 0.92})` },
+          { opacity: pinch ? 0.55 : 0.25, transform: `scale(${from})` },
           { opacity: 1, transform: "scale(1)" },
         ],
-        { duration: 280, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }
+        { duration: pinch ? 340 : 280, easing: "cubic-bezier(0.32, 0.72, 0, 1)" }
       );
       animation.onfinish = () => updateWindow();
     }
@@ -466,7 +520,8 @@ export default function VirtualGrid({
     }
   }, [width, layouts, metrics.rowHeight, scrollRef]);
 
-  // Pinch (two fingers) and Ctrl+wheel / trackpad pinch switch between views.
+  // Pinch and Ctrl+wheel switch views. The grid follows the fingers a little (transform from the
+  // focal point); past the threshold the view switches once and the zoom effect settles it.
   useEffect(() => {
     const scroller = scrollRef.current;
     if (!scroller) return;
@@ -474,27 +529,68 @@ export default function VirtualGrid({
     let fired = false;
     let wheelDelta = 0;
     let wheelBlockedUntil = 0;
+    let liveScale = 1;
+    let focal = { x: 0, y: 0 };
+    let frame = 0;
     const distance = (touches: TouchList) =>
       Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+    const midpoint = (touches: TouchList) => ({
+      x: (touches[0].clientX + touches[1].clientX) / 2,
+      y: (touches[0].clientY + touches[1].clientY) / 2,
+    });
+    const reduce = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const applyLive = () => {
+      frame = 0;
+      const grid = gridRef.current;
+      if (!grid || fired) return;
+      const rect = grid.getBoundingClientRect();
+      grid.style.transformOrigin = `${Math.round(focal.x - rect.left)}px ${Math.round(focal.y - rect.top)}px`;
+      grid.style.transform = liveScale === 1 ? "" : `scale(${liveScale})`;
+    };
+    const settleBack = () => {
+      const grid = gridRef.current;
+      if (!grid || liveScale === 1) return;
+      const from = liveScale;
+      liveScale = 1;
+      grid.style.transform = "";
+      if (!reduce() && typeof grid.animate === "function") {
+        grid.animate([{ transform: `scale(${from})` }, { transform: "scale(1)" }], { duration: 300, easing: "cubic-bezier(0.32, 0.72, 0, 1)" });
+      }
+    };
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
+        cancelPressRef.current();
         startDistance = distance(e.touches);
+        focal = midpoint(e.touches);
         fired = false;
+        liveScale = 1;
       }
     };
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 2 || startDistance <= 0 || fired) return;
       const ratio = distance(e.touches) / startDistance;
-      if (ratio >= PINCH_OUT_RATIO) {
+      focal = midpoint(e.touches);
+      if (ratio >= PINCH_OUT_RATIO || ratio <= PINCH_IN_RATIO) {
         fired = true;
-        onZoomStepRef.current?.(-1);
-      } else if (ratio <= PINCH_IN_RATIO) {
-        fired = true;
-        onZoomStepRef.current?.(1);
+        const direction = ratio >= PINCH_OUT_RATIO ? -1 : 1;
+        pinchHandoffRef.current = { clientX: focal.x, clientY: focal.y, scale: liveScale };
+        const moved = onZoomStepRef.current?.(direction);
+        if (moved === false) {
+          pinchHandoffRef.current = null;
+          settleBack();
+        }
+        return;
       }
+      if (reduce()) return;
+      // Follows the fingers with some resistance, within a small range.
+      liveScale = Math.min(PINCH_LIVE_MAX, Math.max(PINCH_LIVE_MIN, 1 + (ratio - 1) * 0.6));
+      if (!frame) frame = requestAnimationFrame(applyLive);
     };
     const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) startDistance = 0;
+      if (e.touches.length < 2) {
+        if (startDistance > 0 && !fired) settleBack();
+        startDistance = 0;
+      }
     };
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey || !onZoomStepRef.current) return;
@@ -503,7 +599,8 @@ export default function VirtualGrid({
       if (now < wheelBlockedUntil) return;
       wheelDelta += e.deltaY;
       if (Math.abs(wheelDelta) >= WHEEL_STEP) {
-        onZoomStepRef.current(wheelDelta > 0 ? 1 : -1);
+        pinchHandoffRef.current = { clientX: e.clientX, clientY: e.clientY, scale: 1 };
+        if (onZoomStepRef.current(wheelDelta > 0 ? 1 : -1) === false) pinchHandoffRef.current = null;
         wheelDelta = 0;
         wheelBlockedUntil = now + WHEEL_COOLDOWN_MS;
       }
@@ -519,8 +616,45 @@ export default function VirtualGrid({
       scroller.removeEventListener("touchend", onTouchEnd);
       scroller.removeEventListener("touchcancel", onTouchEnd);
       scroller.removeEventListener("wheel", onWheel);
+      if (frame) cancelAnimationFrame(frame);
     };
   }, [scrollRef]);
+
+  // Shared-element close: scroll a photo's tile into view and mount it right away.
+  const layoutRef = useRef({ layouts, metrics, stickyTop });
+  layoutRef.current = { layouts, metrics, stickyTop };
+  useEffect(
+    () =>
+      registerGridScroller((mediaId) => {
+        const scroller = scrollRef.current;
+        const grid = gridRef.current;
+        if (!scroller || !grid) return false;
+        const { layouts: current, metrics: m, stickyTop: top } = layoutRef.current;
+        const stride = m.rowHeight + m.gap;
+        for (const layout of current) {
+          const at = layout.group.items.findIndex((item) => item.id === mediaId);
+          if (at < 0) continue;
+          const y = layout.top + m.header + Math.floor(at / m.columns) * stride;
+          const gridOffset = offsetWithin(grid, scroller);
+          const viewTop = scroller.scrollTop - gridOffset + top + m.header;
+          const viewBottom = scroller.scrollTop - gridOffset + scroller.clientHeight - BOTTOM_CHROME_PX;
+          if (y < viewTop || y + m.rowHeight > viewBottom) {
+            const room = Math.max(m.rowHeight, viewBottom - viewTop);
+            const target = gridOffset + y - top - m.header - (room - m.rowHeight) / 2;
+            scroller.scrollTop = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, target));
+            lastScrollTopRef.current = scroller.scrollTop;
+          }
+          try {
+            flushSync(() => updateWindow());
+          } catch {
+            updateWindow();
+          }
+          return true;
+        }
+        return false;
+      }),
+    [scrollRef, updateWindow]
+  );
 
   const visible = useMemo(() => {
     const out: { layout: GroupLayout; rowStart: number; rowEnd: number }[] = [];
@@ -549,19 +683,109 @@ export default function VirtualGrid({
   }, [layouts, win, metrics]);
 
   // Latest callbacks for the delegated handlers below, without re-binding them.
-  const handlers = useRef({ onOpen, onToggleSelect, onStartSelect, onToggleGroup, selectMode });
-  handlers.current = { onOpen, onToggleSelect, onStartSelect, onToggleGroup, selectMode };
+  const handlers = useRef({ onOpen, onToggleSelect, onStartSelect, onToggleGroup, onSetMany, selectMode, selectedIds });
+  handlers.current = { onOpen, onToggleSelect, onStartSelect, onToggleGroup, onSetMany, selectMode, selectedIds };
+
+  // Display order of every item, for drag-select ranges.
+  const order = useMemo(() => {
+    const ids: string[] = [];
+    for (const group of groups) for (const item of group.items) ids.push(item.id);
+    return { ids, index: new Map(ids.map((id, i) => [id, i])) };
+  }, [groups]);
+  const orderRef = useRef(order);
+  orderRef.current = order;
 
   const pressRef = useRef<{ id: string; x: number; y: number; timer: number; fired: boolean } | null>(
     null
   );
+  /** Drag-select after a long press (docs/DESIGN.md "Photos — new experiences" 5). */
+  const dragRef = useRef<{
+    pointerId: number;
+    anchor: number;
+    last: number;
+    selecting: boolean;
+    /** Selection before the drag: items that leave the range go back to it. */
+    before: ReadonlySet<string>;
+    x: number;
+    y: number;
+    frame: number;
+  } | null>(null);
+
+  const endDrag = useCallback(() => {
+    const drag = dragRef.current;
+    if (drag?.frame) cancelAnimationFrame(drag.frame);
+    dragRef.current = null;
+  }, []);
 
   const clearPress = useCallback(() => {
     if (pressRef.current) window.clearTimeout(pressRef.current.timer);
     pressRef.current = null;
-  }, []);
+    endDrag();
+  }, [endDrag]);
+  cancelPressRef.current = clearPress;
 
   useEffect(() => clearPress, [clearPress]);
+
+  /** Selects (or deselects) the range from the anchor to the tile under the finger. */
+  const dragTo = useCallback((clientX: number, clientY: number) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const el = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-media-id]");
+    const at = el?.dataset.mediaId ? orderRef.current.index.get(el.dataset.mediaId) : undefined;
+    if (at === undefined || at === drag.last) return;
+    const { ids } = orderRef.current;
+    const span = (a: number, b: number): [number, number] => (a < b ? [a, b] : [b, a]);
+    const [oldLo, oldHi] = span(drag.anchor, drag.last);
+    const [newLo, newHi] = span(drag.anchor, at);
+    const restoreOn: string[] = [];
+    const restoreOff: string[] = [];
+    for (let i = oldLo; i <= oldHi; i++) {
+      if (i >= newLo && i <= newHi) continue;
+      (drag.before.has(ids[i]) ? restoreOn : restoreOff).push(ids[i]);
+    }
+    const entering: string[] = [];
+    for (let i = newLo; i <= newHi; i++) if (i < oldLo || i > oldHi) entering.push(ids[i]);
+    const set = handlers.current.onSetMany;
+    if (set) {
+      if (restoreOn.length) set(restoreOn, true);
+      if (restoreOff.length) set(restoreOff, false);
+      if (entering.length) set(entering, drag.selecting);
+    }
+    drag.last = at;
+    hapticTick();
+  }, []);
+
+  // While dragging near the top or bottom of the view, the grid scrolls under the finger.
+  const autoScroll = useCallback(() => {
+    const drag = dragRef.current;
+    const scroller = scrollRef.current;
+    if (!drag || !scroller) return;
+    drag.frame = 0;
+    const rect = scroller.getBoundingClientRect();
+    const top = rect.top + layoutRef.current.stickyTop + layoutRef.current.metrics.header;
+    const bottom = rect.bottom - BOTTOM_CHROME_PX;
+    let speed = 0;
+    if (drag.y < top + EDGE_ZONE_PX) speed = -EDGE_MAX_SPEED * Math.min(1, (top + EDGE_ZONE_PX - drag.y) / EDGE_ZONE_PX);
+    else if (drag.y > bottom - EDGE_ZONE_PX) speed = EDGE_MAX_SPEED * Math.min(1, (drag.y - (bottom - EDGE_ZONE_PX)) / EDGE_ZONE_PX);
+    if (speed === 0) return;
+    const before = scroller.scrollTop;
+    scroller.scrollTop = before + speed;
+    if (scroller.scrollTop !== before) {
+      dragTo(drag.x, drag.y);
+      drag.frame = requestAnimationFrame(autoScroll);
+    }
+  }, [scrollRef, dragTo]);
+
+  // A drag after a long press must not scroll: cancel touch moves (React's handler is passive).
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const onTouchMove = (e: TouchEvent) => {
+      if (dragRef.current && e.cancelable) e.preventDefault();
+    };
+    grid.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => grid.removeEventListener("touchmove", onTouchMove);
+  }, []);
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -570,13 +794,23 @@ export default function VirtualGrid({
       const tile = (e.target as Element).closest<HTMLElement>("[data-media-id]");
       const id = tile?.dataset.mediaId;
       if (!id) return;
+      const pointerId = e.pointerId;
       const press = { id, x: e.clientX, y: e.clientY, timer: 0, fired: false };
       press.timer = window.setTimeout(() => {
         press.fired = true;
-        navigator.vibrate?.(12);
-        const { selectMode: selecting, onStartSelect: start, onToggleSelect: toggle } = handlers.current;
+        hapticSelect();
+        const { selectMode: selecting, onStartSelect: start, onToggleSelect: toggle, selectedIds: current } = handlers.current;
+        const wasSelected = selecting && current.has(id);
         if (selecting) toggle(id, false);
         else start(id);
+        const anchor = orderRef.current.index.get(id);
+        // Deselecting the last item leaves selection mode: nothing to drag then.
+        const leaving = wasSelected && current.size <= 1;
+        if (anchor !== undefined && handlers.current.onSetMany && !leaving) {
+          const before = new Set(selecting ? current : []);
+          if (!selecting) before.delete(id);
+          dragRef.current = { pointerId, anchor, last: anchor, selecting: !wasSelected, before, x: press.x, y: press.y, frame: 0 };
+        }
       }, LONG_PRESS_MS);
       pressRef.current = press;
     },
@@ -585,6 +819,14 @@ export default function VirtualGrid({
 
   const onPointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = dragRef.current;
+      if (drag && drag.pointerId === e.pointerId) {
+        drag.x = e.clientX;
+        drag.y = e.clientY;
+        dragTo(e.clientX, e.clientY);
+        if (!drag.frame) drag.frame = requestAnimationFrame(autoScroll);
+        return;
+      }
       const press = pressRef.current;
       if (!press || press.fired) return;
       if (
@@ -594,13 +836,14 @@ export default function VirtualGrid({
         clearPress();
       }
     },
-    [clearPress]
+    [clearPress, dragTo, autoScroll]
   );
 
   const onPointerEnd = useCallback(() => {
+    endDrag();
     // A fired press stays recorded so the click that follows it is swallowed.
     if (pressRef.current && !pressRef.current.fired) clearPress();
-  }, [clearPress]);
+  }, [clearPress, endDrag]);
 
   const onClick = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
     const press = pressRef.current;
@@ -614,6 +857,7 @@ export default function VirtualGrid({
       toggleGroup?.(groupKey);
       return;
     }
+    if (target.closest("[data-group-header]")) return;
     const id = target.closest<HTMLElement>("[data-media-id]")?.dataset.mediaId;
     if (!id) return;
     if (!selecting && target.closest("[data-select-handle]")) start(id);
@@ -668,6 +912,7 @@ export default function VirtualGrid({
               );
             }
           }
+          const people = zoom === "day" && groupPeople ? groupPeople(group) : null;
           return (
             <section
               key={group.key}
@@ -677,24 +922,41 @@ export default function VirtualGrid({
             >
               <div
                 data-group-header=""
-                className={`sticky z-10 flex bg-bg px-4 sm:px-0 ${zoom === "day" ? "items-center" : "items-end"}`}
+                className="lp-day sticky z-10 flex items-end gap-3 bg-bg px-4 pb-2 sm:px-0"
                 style={{ top: stickyTop, height: metrics.header }}
               >
-                <div className={`flex min-w-0 flex-1 gap-3 ${HEADER_ROW[zoom]}`}>
-                  {selectMode && onToggleGroup && (
-                    <button
-                      type="button"
-                      data-group-key={group.key}
-                      aria-label={allSelected ? `Deselect ${group.label}` : `Select ${group.label}`}
-                      aria-pressed={allSelected}
-                      className="relative flex shrink-0 animate-scale-in self-center rounded-[7px] after:absolute after:-inset-[11px] after:content-['']"
-                    >
-                      <SelectCheck selected={allSelected} variant="surface" />
-                    </button>
-                  )}
-                  <h2 className={`min-w-0 flex-1 truncate text-ink ${HEADER_TITLE[zoom]}`}>{group.title ?? group.label}</h2>
-                  <span className="telemetry shrink-0 text-ink-muted">{group.meta ?? itemCount(group.items.length)}</span>
+                <div className="min-w-0 flex-1">
+                  <h2 className={`truncate text-ink ${HEADER_TITLE[zoom]}`}>
+                    {group.title ?? group.label}
+                    {group.titleSuffix && <span className="font-semibold text-ink-muted"> {group.titleSuffix}</span>}
+                  </h2>
+                  <p className="truncate text-[13px] leading-[18px] text-ink-muted tabular-nums">
+                    {group.meta ?? itemCount(group.items.length)}
+                  </p>
                 </div>
+                {people && people.length > 0 && (
+                  <span aria-label={`${people.length === 1 ? "1 person" : `${people.length} people`} in these photos`} role="img" className="mb-1 flex shrink-0 items-center">
+                    {people.map((person, i) => (
+                      <span key={person.id} className={`block rounded-full border-2 border-bg ${i > 0 ? "-ml-2" : ""}`} style={{ zIndex: 3 - i }}>
+                        <FaceAvatar repoKey={repoKey} cover={person.cover} entry={person.entry} className="h-6 w-6" />
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {onToggleGroup && (
+                  <button
+                    type="button"
+                    data-group-key={group.key}
+                    data-selecting={selectMode}
+                    aria-label={allSelected ? `Deselect ${group.label}` : `Select ${group.label}`}
+                    aria-pressed={selectMode ? allSelected : undefined}
+                    className={`lp-day-check relative mb-1 flex shrink-0 self-end rounded-full outline-none after:absolute after:-inset-[10px] after:content-[''] focus-visible:ring-2 focus-visible:ring-accent ${
+                      selectMode ? "" : "[@media(hover:none)]:hidden"
+                    }`}
+                  >
+                    <RoundCheck selected={allSelected} onPhoto={false} />
+                  </button>
+                )}
               </div>
               {tiles}
             </section>

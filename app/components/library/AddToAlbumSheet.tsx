@@ -122,7 +122,7 @@ export default function AddToAlbumSheet({
             <button
               type="submit"
               disabled={!name.trim() || busy}
-              className="rounded-full bg-ink px-4 py-2 text-small font-semibold text-bg transition-opacity duration-180 disabled:opacity-40"
+              className="rounded-full bg-accent px-4 py-2 text-callout font-semibold text-accent-ink transition-opacity duration-180 disabled:opacity-40"
             >
               {busy ? "Creating…" : "Create"}
             </button>
@@ -133,7 +133,7 @@ export default function AddToAlbumSheet({
             onClick={() => setCreating(true)}
             className="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors duration-180 hover:bg-surface-2 active:bg-surface-3"
           >
-            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-border-strong text-accent">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] bg-accent-soft text-accent-text">
               <PlusIcon size={20} />
             </span>
             <span className="text-body font-medium text-ink">New album</span>
@@ -192,7 +192,7 @@ export default function AddToAlbumSheet({
                   <span className="block truncate text-body font-medium text-ink">{album.name}</span>
                   <span className="block text-small text-ink-muted">{countLabel(albumItemCount(album, trashedIds))}</span>
                 </span>
-                {containsAll && <CheckIcon size={16} className="shrink-0 text-accent" />}
+                {containsAll && <CheckIcon size={16} className="shrink-0 text-accent-text" />}
               </button>
             );
           })}

@@ -66,20 +66,23 @@ export default function HomePage() {
 
   return (
     <main className="relative isolate flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 pb-safe-10 pt-safe-12 sm:px-6">
-      {/* Static backdrop (no blur filters to repaint): a faint dot grid fading out from the
-       * top, and one very faint lime glow behind the mark (docs/DESIGN.md › ambient glow). */}
+      {/* Full-screen aurora: static gradients, no blur filter. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10">
-        <div className="absolute inset-0 bg-[radial-gradient(rgb(var(--ink)/0.09)_1px,transparent_1.5px)] [background-size:22px_22px] [mask-image:radial-gradient(ellipse_75%_55%_at_50%_18%,black_20%,transparent_75%)]" />
-        <div className="absolute left-1/2 top-[4%] h-[26rem] w-[26rem] -translate-x-1/2 bg-[radial-gradient(closest-side,rgb(var(--signal)/0.1),transparent)] lg:left-[28%] lg:top-[18%]" />
+        <div className="absolute left-1/2 top-[-12%] h-[44rem] w-[44rem] -translate-x-1/2 bg-[radial-gradient(closest-side,rgb(var(--glow)/0.28),transparent)] lg:left-[30%]" />
+        <div className="absolute right-[-20%] top-[20%] h-[30rem] w-[30rem] bg-[radial-gradient(closest-side,rgb(var(--accent-2)/0.14),transparent)]" />
+        <div className="absolute bottom-[-20%] left-[-10%] h-[30rem] w-[30rem] bg-[radial-gradient(closest-side,rgb(var(--glow)/0.12),transparent)]" />
       </div>
 
       <div className="flex w-full max-w-md flex-col items-center gap-8 lg:max-w-5xl lg:flex-row lg:items-center lg:justify-between lg:gap-16">
-        <div className="flex flex-col items-center gap-7 text-center animate-fade-in-up lg:max-w-md lg:items-start lg:text-left">
-          <BrandMark missing="fill" className="h-24 w-24 drop-shadow-[0_18px_40px_rgb(200_245_66/0.22)]" />
+        <div className="flex flex-col items-center gap-6 text-center animate-fade-in-up lg:max-w-md lg:items-start lg:text-left">
+          <BrandMark className="h-[88px] w-[88px] drop-shadow-[0_18px_40px_rgb(22_96_235/0.45)]" />
 
-          <div className="flex flex-col gap-3">
-            <h1 className="font-display text-display text-ink lg:text-[3.5rem]">404GB</h1>
-            <p className="text-body-lg text-ink-muted">Your phone is full. Your repo isn&apos;t.</p>
+          <div className="flex flex-col gap-2.5">
+            <p className="text-headline text-accent-text">404GB</p>
+            <h1 className="text-[2.25rem] font-bold leading-[2.625rem] tracking-[-0.03em] text-ink lg:text-[3.25rem] lg:leading-[3.5rem]">
+              Your photos. Your GitHub.
+            </h1>
+            <p className="text-body-lg text-ink-muted">Back up every photo to a private repo you own, in full quality.</p>
           </div>
 
           <ul className="hidden w-full flex-col gap-3 lg:flex">
@@ -93,7 +96,7 @@ export default function HomePage() {
           {session.ended && (
             <p
               role="alert"
-              className="w-full rounded-control bg-danger/10 px-4 py-3 text-center text-small text-ink animate-fade-in dark:text-danger"
+              className="w-full rounded-control bg-danger/10 px-4 py-3 text-center text-callout font-normal text-ink animate-fade-in dark:text-danger"
             >
               Your GitHub sign-in ended. Sign in again to continue — your photos are safe in your repo.
             </p>
@@ -107,8 +110,8 @@ export default function HomePage() {
             ))}
           </ul>
 
-          <p className="max-w-sm text-center text-small text-ink-muted lg:max-w-none lg:text-left">
-            404GB needs the <code className="rounded-[5px] bg-surface-2 px-1.5 py-0.5 font-mono text-[0.8125em] text-ink">repo</code>{" "}
+          <p className="max-w-sm text-center text-footnote text-ink-muted lg:max-w-none lg:text-left">
+            404GB needs the <code className="rounded-[6px] bg-surface-2 px-1.5 py-0.5 font-mono text-[0.8125em] text-ink">repo</code>{" "}
             scope to read and write the storage repo you choose. Your token stays on this device and is only ever sent to
             GitHub.
           </p>
@@ -123,7 +126,7 @@ function Feature({ title, body, icon, delay }: { title: string; body: string; ic
     <li className="flex items-start gap-3.5 text-left animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
       <span
         aria-hidden="true"
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-tile bg-accent/[0.14] text-accent"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent-text"
       >
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
           <path d={icon} />
@@ -131,7 +134,7 @@ function Feature({ title, body, icon, delay }: { title: string; body: string; ic
       </span>
       <span className="min-w-0 pt-0.5">
         <span className="block text-body font-medium text-ink">{title}</span>
-        <span className="mt-0.5 block text-small text-ink-muted">{body}</span>
+        <span className="mt-0.5 block text-footnote text-ink-muted">{body}</span>
       </span>
     </li>
   );

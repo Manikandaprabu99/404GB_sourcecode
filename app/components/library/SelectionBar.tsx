@@ -23,11 +23,9 @@ interface SelectionBarProps {
   actions: SelectionAction[];
 }
 
-// docs/DESIGN.md › Selection bar: surface-3 on ink, inverted (ink) on paper. These are the
-// paper colours, with dark: overrides back to the surface scale.
-const BAR = "bg-ink text-bg dark:border dark:border-border/60 dark:bg-surface-3 dark:text-ink";
-const HOVER = "hover:bg-bg/10 dark:hover:bg-ink/10";
-const BUTTON = `relative flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-md text-small font-medium transition-[background-color,color,opacity,transform] duration-120 ease-out-expo active:scale-[0.94] disabled:pointer-events-none disabled:opacity-35 ${HOVER}`;
+// A floating glass pill like the tab bar.
+const BAR = "glass hairline text-ink";
+const BUTTON = "relative flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-full text-callout transition-[background-color,color,opacity,transform] duration-160 ease-out-expo hover:bg-ink/[0.06] active:scale-[0.92] disabled:pointer-events-none disabled:opacity-35";
 
 /** Floating action bar for a selection, pinned above the floating tab bar. */
 export default function SelectionBar({
@@ -65,7 +63,7 @@ export default function SelectionBar({
       aria-label="Selected items"
       className="fixed bottom-safe-[5.25rem] left-safe-3 right-safe-3 z-nav mx-auto max-w-2xl animate-fade-in-up sm:bottom-safe-6"
     >
-      <div className={`flex h-14 items-center gap-0.5 rounded-card px-1.5 shadow-elevated ${BAR}`}>
+      <div className={`flex h-14 items-center gap-0.5 rounded-full px-1.5 shadow-[0_10px_30px_-10px_rgb(0_0_0/0.45)] ${BAR}`}>
         <button
           type="button"
           onClick={onCancel}
@@ -76,14 +74,14 @@ export default function SelectionBar({
           <CloseIcon size={18} />
           <span className="hidden sm:inline">Cancel</span>
         </button>
-        <p aria-live="polite" className="telemetry shrink-0 pl-1 pr-1">
+        <p aria-live="polite" className="shrink-0 pl-1 pr-1 text-callout font-semibold tabular-nums">
           {count}
           <span className="hidden min-[380px]:inline"> selected</span>
         </p>
         <button
           type="button"
           onClick={allSelected ? onDeselectAll : onSelectAll}
-          className={`${BUTTON} px-2.5 font-semibold text-accent-inverse dark:text-accent`}
+          className={`${BUTTON} px-3 font-semibold text-accent-text`}
         >
           {allSelected ? "Deselect all" : "Select all"}
         </button>
@@ -97,8 +95,7 @@ export default function SelectionBar({
               disabled={action.disabled || count === 0}
               aria-label={action.label}
               title={action.label}
-              // On the inverted (ink) bar of the paper theme, the ink theme's danger reads.
-              className={`${BUTTON} min-w-[44px] px-2.5 ${action.tone === "danger" ? "text-[rgb(255_90_110)] dark:text-danger" : ""}`}
+              className={`${BUTTON} min-w-[44px] px-2.5 font-medium ${action.tone === "danger" ? "text-danger" : ""}`}
             >
               {action.icon}
               <span className="hidden md:inline">{action.label}</span>
@@ -121,7 +118,7 @@ export default function SelectionBar({
               {menuOpen && (
                 <div
                   role="menu"
-                  className="absolute bottom-full right-0 mb-2 w-56 origin-bottom-right animate-scale-in rounded-lg border border-border/60 bg-surface p-1.5 text-ink shadow-elevated"
+                  className="card absolute bottom-full right-0 mb-2 w-56 origin-bottom-right animate-scale-in rounded-[18px] p-1.5 text-ink shadow-elevated"
                 >
                   {secondary.map((action) => (
                     <button
@@ -133,7 +130,7 @@ export default function SelectionBar({
                         setMenuOpen(false);
                         action.onClick();
                       }}
-                      className={`flex min-h-[44px] w-full items-center gap-3 rounded-tile px-3 text-left text-body font-medium transition-colors duration-180 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-40 ${
+                      className={`flex min-h-[44px] w-full items-center gap-3 rounded-[12px] px-3 text-left text-body font-medium transition-colors duration-180 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-40 ${
                         action.tone === "danger" ? "text-danger" : "text-ink"
                       }`}
                     >

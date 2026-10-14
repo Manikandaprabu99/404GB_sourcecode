@@ -79,12 +79,12 @@ export default function DuplicateCleanup({ repoKey }: { repoKey: string }) {
         <DuplicateIcon size={18} />
       </IconTile>
       <span className="mt-auto flex min-w-0 flex-col gap-1 pt-4">
-        <span className="text-body font-medium text-ink">Duplicates</span>
-        <span className="telemetry text-ink-muted">
+        <span className="text-body font-semibold text-ink">Duplicates</span>
+        <span className="text-footnote tabular-nums text-ink-muted">
           {!ready ? "Checking…" : count === 0 ? "0 extra" : `${count.toLocaleString()} extra`}
         </span>
         {ready && (
-          <span className="mt-1 animate-fade-in text-small text-ink-muted">
+          <span className="mt-1 animate-fade-in text-footnote text-ink-muted">
             {count === 0
               ? "None. Every photo and video is in your library once."
               : `${count.toLocaleString()} extra ${count === 1 ? "copy" : "copies"} of ${files.toLocaleString()} ${

@@ -15,7 +15,7 @@ import PeopleScanner from "../components/people/PeopleScanner";
 export default function AppLayout({ children }: { children: ReactNode }) {
   const session = useSession();
   return (
-    <div className="fixed inset-0 flex flex-col bg-bg pl-safe pr-safe">
+    <div className="fixed inset-0 flex flex-col bg-bg pl-safe pr-safe sm:flex-row">
       <NavBar repoLabel={currentRepoKey(session) ?? undefined} />
       <div className="relative min-h-0 flex-1">{children}</div>
       <PeopleScanner />

@@ -2,7 +2,6 @@
 
 import type { ReactNode } from "react";
 import { ASPECT_IDS, type AspectId } from "@/lib/editor/types";
-import { chipClass } from "@/app/components/ui/Chip";
 import { FlipIcon, ResetIcon, RotateLeftIcon, RotateRightIcon } from "./icons";
 
 interface CropPanelProps {
@@ -69,7 +68,7 @@ function ToolButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="flex h-14 flex-1 flex-col items-center justify-center gap-1 rounded-tile text-micro font-medium text-ink-muted transition-[background-color,color,transform] duration-180 ease-out-expo hover:bg-surface-2 hover:text-ink active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
+      className="flex h-14 flex-1 flex-col items-center justify-center gap-1 rounded-[14px] text-[12px] font-medium text-white/70 transition-[background-color,color,transform] duration-150 hover:bg-white/[0.07] hover:text-white active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
     >
       {children}
       {label}
@@ -103,7 +102,7 @@ export default function CropPanel({
               aria-checked={selected}
               disabled={disabled}
               onClick={() => onAspectChange(id)}
-              className={`${chipClass(selected)} !gap-2`}
+              className="lv-ed-chip"
             >
               <AspectGlyph aspect={id} />
               {ASPECT_LABELS[id]}

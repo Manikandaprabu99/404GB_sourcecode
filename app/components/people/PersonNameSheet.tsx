@@ -95,7 +95,7 @@ export default function PersonNameSheet({
                 <FaceAvatar repoKey={repoKey} face={other.cover} className="h-10 w-10" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-body font-medium text-ink">{other.name}</span>
-                  <span className="telemetry mt-1 block text-ink-muted">
+                  <span className="mt-0.5 block text-footnote tabular-nums text-ink-muted">
                     Merge · {other.mediaIds.length.toLocaleString()} {other.mediaIds.length === 1 ? "photo" : "photos"}
                   </span>
                 </span>

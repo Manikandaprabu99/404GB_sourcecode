@@ -55,7 +55,7 @@ export default function MergePeopleSheet({ open, repoKey, person, people, onMerg
   return (
     <Sheet open={open} onClose={onClose} title={person.name ? `Merge with ${person.name}` : "Same person as…"}>
       <div className="flex flex-col gap-4">
-        <p className="text-small text-ink-muted">
+        <p className="text-callout font-normal text-ink-muted">
           Pick everyone who is really {person.name ?? "this person"}. Their photos are grouped together, on all your
           devices.
         </p>
@@ -71,7 +71,7 @@ export default function MergePeopleSheet({ open, repoKey, person, people, onMerg
                     type="button"
                     aria-pressed={on}
                     onClick={() => toggle(other.id)}
-                    className="group flex w-full flex-col items-center rounded-tile p-1 focus-visible:outline-none"
+                    className="group flex w-full flex-col items-center rounded-control p-1 focus-visible:outline-none"
                   >
                     <span className="relative">
                       {/* Picked: the People colour around the face and the square check. */}
@@ -89,7 +89,7 @@ export default function MergePeopleSheet({ open, repoKey, person, people, onMerg
                         </span>
                       )}
                     </span>
-                    <span className={`mt-1.5 w-full truncate text-center text-small ${other.name ? "text-ink" : "text-ink-muted"}`}>
+                    <span className={`mt-1.5 w-full truncate text-center text-footnote font-medium ${other.name ? "text-ink" : "text-ink-muted"}`}>
                       {other.name ?? photos(other.mediaIds.length)}
                     </span>
                   </button>

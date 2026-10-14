@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   requestRescan,
   setScanMobileData,
@@ -11,9 +10,9 @@ import {
   type PersonDetails,
 } from "@/lib/faces/people";
 import { IconTile, SettingsRow, cardClass, rowButtonClass } from "@/app/components/library/SettingsBlocks";
-import { ChevronRightIcon, RefreshIcon, ShieldIcon } from "@/app/components/library/icons";
+import { RefreshIcon, ShieldIcon } from "@/app/components/library/icons";
 import Switch from "@/app/components/ui/Switch";
-import TileMeter from "@/app/components/ui/TileMeter";
+import { ProgressRing } from "@/app/components/ui/Progress";
 import { useToast } from "@/app/components/ui/Toast";
 import BackgroundScanToggle from "./BackgroundScanToggle";
 import FaceAvatar from "./FaceAvatar";
@@ -29,7 +28,7 @@ const STACK_MAX = 4;
 function AvatarStack({ repoKey, people }: { repoKey: string; people: readonly PersonDetails[] }) {
   if (people.length === 0) {
     return (
-      <IconTile tone="accent-2" className="h-10 w-10">
+      <IconTile tone="accent-2" className="!h-10 !w-10 !rounded-full">
         <ScanFaceIcon size={20} />
       </IconTile>
     );
@@ -46,7 +45,7 @@ function AvatarStack({ repoKey, people }: { repoKey: string; people: readonly Pe
         />
       ))}
       {more > 0 && (
-        <span className="telemetry -ml-3 flex h-10 w-10 items-center justify-center rounded-full bg-surface-3 pl-2 text-ink ring-[2.5px] ring-surface">
+        <span className="-ml-3 flex h-10 w-10 items-center justify-center rounded-full bg-surface-3 text-footnote font-semibold tabular-nums text-ink ring-[2.5px] ring-surface">
           +{more.toLocaleString()}
         </span>
       )}
@@ -54,8 +53,8 @@ function AvatarStack({ repoKey, people }: { repoKey: string; people: readonly Pe
   );
 }
 
-/** Settings › People: scan progress, pause/resume, mobile data, finding people while charging
- * (Android app), re-scan, hidden people and the privacy note. */
+/** Settings › People: scan progress, pause/resume, mobile data, finding people in the
+ * background (Android app), re-scan, hidden people and the privacy note. */
 export default function PeopleSettings({ repoKey }: { repoKey: string }) {
   const status = useFaceScanStatus();
   const faces = useFaces(repoKey);
@@ -75,10 +74,25 @@ export default function PeopleSettings({ repoKey }: { repoKey: string }) {
   }
 
   return (
-    <div className={`divide-y divide-border/60 overflow-hidden ${cardClass}`}>
+    <div className={`settings-card overflow-hidden ${cardClass}`}>
       <div className="flex flex-col gap-3.5 px-4 py-4">
         <div className="flex items-center justify-between gap-3">
-          <AvatarStack repoKey={repoKey} people={visible} />
+          {mine && status.total > 0 && status.done < status.total ? (
+            <ProgressRing
+              size={48}
+              stroke={4.5}
+              ariaLabel="Photos checked for faces"
+              value={status.done}
+              max={status.total}
+              valueText={`${status.done.toLocaleString()} of ${status.total.toLocaleString()}`}
+              paused={!working}
+              className="animate-fade-in"
+            >
+              <span className="text-caption tabular-nums text-ink">{Math.floor((status.done / status.total) * 100)}%</span>
+            </ProgressRing>
+          ) : (
+            <AvatarStack repoKey={repoKey} people={visible} />
+          )}
           <button
             type="button"
             onClick={() => setScanPaused(!status.paused)}
@@ -90,25 +104,13 @@ export default function PeopleSettings({ repoKey }: { repoKey: string }) {
           </button>
         </div>
         <div className="min-w-0">
-          <p className="text-h3 text-ink">Face grouping</p>
-          <p data-testid="face-scan-status" className="mt-0.5 text-small text-ink-muted">
+          <p className="text-headline text-ink">Face grouping</p>
+          <p data-testid="face-scan-status" className="mt-0.5 text-footnote text-ink-muted">
             <span className="block text-ink">{headline}</span>
             {detail && <span className="block">{detail}</span>}
             {saveError && <span className="block text-danger">{saveError}</span>}
           </p>
         </div>
-        {mine && status.total > 0 && status.done < status.total && (
-          <TileMeter
-            fluid
-            tiles={20}
-            label="Photos checked"
-            ariaLabel="Photos checked for faces"
-            value={status.done}
-            max={status.total}
-            active={working}
-            className="animate-fade-in"
-          />
-        )}
       </div>
 
       <div className="px-4 py-1">
@@ -120,11 +122,12 @@ export default function PeopleSettings({ repoKey }: { repoKey: string }) {
         />
       </div>
 
-      {/* Android app only (nothing renders elsewhere). */}
+      {/* Android app only. */}
       <BackgroundScanToggle />
 
       <SettingsRow
         icon={<RefreshIcon size={18} />}
+        iconTone="teal"
         title="Re-scan"
         description="Check every photo again, including ones that couldn't be read. Names and corrections are kept."
         trailing={
@@ -143,24 +146,12 @@ export default function PeopleSettings({ repoKey }: { repoKey: string }) {
       />
 
       {hiddenCount > 0 && (
-        <Link
+        <SettingsRow
           href="/people?hidden=1"
-          className="group flex min-h-[56px] items-center gap-3.5 px-4 py-3 transition-colors duration-180 hover:bg-surface-2"
-        >
-          <IconTile>
-            <EyeOffIcon size={18} />
-          </IconTile>
-          <span className="min-w-0 flex-1">
-            <span className="block text-body font-medium text-ink">Hidden people</span>
-            <span className="block text-small text-ink-muted">
-              {hiddenCount.toLocaleString()} hidden from People and search
-            </span>
-          </span>
-          <ChevronRightIcon
-            size={18}
-            className="shrink-0 text-ink-muted transition-transform duration-180 ease-out-expo group-hover:translate-x-0.5"
-          />
-        </Link>
+          icon={<EyeOffIcon size={18} />}
+          title="Hidden people"
+          description={`${hiddenCount.toLocaleString()} hidden from People and search`}
+        />
       )}
 
       <SettingsRow
@@ -170,10 +161,10 @@ export default function PeopleSettings({ repoKey }: { repoKey: string }) {
         description={
           <>
             Faces are found and grouped on this device; your photos are never sent anywhere else. Face positions
-            and face signatures are saved in your repo (<span className="font-mono text-micro">manifest/faces.json</span>)
+            and face signatures are saved in your repo (<span className="font-mono text-[12px]">manifest/faces.json</span>)
             so your other devices don&apos;t scan again.
             {mine && status.backend && (
-              <span className="telemetry mt-2 block text-ink-muted">
+              <span className="mt-2 block text-footnote text-ink-muted">
                 Runs on {BACKEND_LABEL[status.backend] ?? status.backend}
               </span>
             )}

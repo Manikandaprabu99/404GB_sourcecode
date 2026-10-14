@@ -1,0 +1,235 @@
+/* Photos-only Lumen styles (imported by GalleryClient). Tokens fall back to --accent when the
+ * foundation's --accent-text / --accent-soft / --glow are missing. */
+
+/* Accent text and soft fills, with the fallbacks above. */
+.lp-accent-text {
+  color: rgb(var(--accent-text, var(--accent)));
+}
+.lp-accent-soft {
+  /* --accent-soft is a precomputed triplet; without it, the accent at 16%. */
+  background-color: rgb(var(--accent-soft, var(--accent) / 0.16));
+}
+
+/* The static aurora behind the top of Photos: no animation, no filter. */
+.lp-aurora {
+  background:
+    radial-gradient(120% 70% at 18% 0%, rgb(var(--glow, var(--accent)) / 0.16), transparent 62%),
+    radial-gradient(90% 60% at 92% 8%, rgb(var(--glow, var(--accent)) / 0.08), transparent 70%);
+}
+
+/* Round 40px header buttons. In the expanded header they sit on the aurora (no blur needed);
+ * the collapsed bar around them is the glass. */
+.lp-round {
+  background-color: rgb(var(--surface-2) / 0.72);
+  box-shadow: inset 0 0 0 1px rgb(var(--ink) / 0.06);
+}
+.lp-round:hover {
+  background-color: rgb(var(--surface-3) / 0.85);
+}
+
+/* The compact bar: glass over the scrolling grid (fixed chrome). */
+.lp-glass {
+  background: rgb(var(--bg) / 0.72);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+}
+:root[data-theme="light"] .lp-glass {
+  background: rgb(var(--bg) / 0.78);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .lp-glass {
+    background: rgb(var(--bg) / 0.78);
+  }
+}
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .lp-glass {
+    background: rgb(var(--bg) / 0.97);
+  }
+}
+
+/* Rail pills. */
+.lp-pill {
+  background-color: rgb(var(--surface-2));
+  box-shadow: inset 0 0 0 1px rgb(var(--ink) / 0.05);
+}
+.lp-pill:hover {
+  background-color: rgb(var(--surface-3));
+}
+.lp-pill[aria-checked="true"] {
+  background-color: rgb(var(--accent));
+  color: rgb(var(--accent-ink));
+  box-shadow: none;
+}
+
+/* ---------- Spotlight hero ---------- */
+
+.lp-hero-track {
+  scrollbar-width: none;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+}
+.lp-hero-track::-webkit-scrollbar {
+  display: none;
+}
+.lp-hero-card {
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  /* Dark: a 1px top highlight (docs/DESIGN.md › Depth). */
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+.lp-hero-card .lp-kb {
+  transform-origin: 60% 40%;
+  will-change: auto;
+}
+.lp-hero-card[data-active="true"] .lp-kb {
+  animation: lp-kenburns 12s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+  will-change: transform;
+}
+.lp-hero-card:nth-child(even)[data-active="true"] .lp-kb {
+  animation-name: lp-kenburns-b;
+}
+@keyframes lp-kenburns {
+  from {
+    transform: scale(1.02) translate3d(0, 0, 0);
+  }
+  to {
+    transform: scale(1.14) translate3d(-2.5%, -1.5%, 0);
+  }
+}
+@keyframes lp-kenburns-b {
+  from {
+    transform: scale(1.12) translate3d(2%, -1%, 0);
+  }
+  to {
+    transform: scale(1.02) translate3d(0, 1%, 0);
+  }
+}
+.lp-dot {
+  transition:
+    transform 380ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 380ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ---------- Story player ---------- */
+
+.lp-story-fill {
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+.lp-story-fill[data-state="done"] {
+  transform: scaleX(1);
+}
+.lp-story-fill[data-state="run"] {
+  animation: lp-story-progress var(--lp-story-ms, 5000ms) linear forwards;
+}
+.lp-story-paused .lp-story-fill[data-state="run"],
+.lp-story-paused .lp-story-zoom {
+  animation-play-state: paused;
+}
+@keyframes lp-story-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+.lp-story-slide {
+  transition: opacity 600ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.lp-story-zoom {
+  animation: lp-story-zoom 6500ms cubic-bezier(0.2, 0, 0.2, 1) forwards;
+}
+@keyframes lp-story-zoom {
+  from {
+    transform: scale(1.06);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+.lp-story-chrome {
+  background: rgb(255 255 255 / 0.14);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+}
+
+/* ---------- Grid ---------- */
+
+.lp-tile-pic {
+  transition:
+    transform 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    border-radius 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.lp-tile[aria-pressed="true"] .lp-tile-pic {
+  transform: scale(0.9);
+  border-radius: 10px;
+}
+.lp-tile-ring {
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity 160ms ease-out,
+    transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.lp-tile[aria-pressed="true"] .lp-tile-ring {
+  opacity: 1;
+  transform: scale(0.9);
+}
+.lp-check-pop {
+  animation: lp-pop 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes lp-pop {
+  from {
+    transform: scale(0.5);
+    opacity: 0.4;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Day header's round check: hover-capable devices see it on hover, touch only while selecting. */
+.lp-day-check {
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+}
+.lp-day:hover .lp-day-check,
+.lp-day-check:focus-visible,
+.lp-day-check[data-selecting="true"] {
+  opacity: 1;
+}
+
+/* ---------- Scrubber ---------- */
+
+.lp-scrub-pill {
+  background: rgb(var(--surface) / 0.74);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    inset 0 0 0 1px rgb(var(--ink) / 0.08),
+    0 8px 24px rgb(0 0 0 / 0.18);
+}
+
+/* ---------- Reduced motion: fades only ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-hero-card[data-active="true"] .lp-kb,
+  .lp-story-zoom {
+    animation: none;
+    transform: none;
+  }
+  .lp-story-slide {
+    transition-duration: 120ms;
+  }
+  .lp-tile-pic,
+  .lp-tile-ring,
+  .lp-dot {
+    transition-duration: 0ms;
+  }
+  .lp-check-pop {
+    animation: none;
+  }
+}

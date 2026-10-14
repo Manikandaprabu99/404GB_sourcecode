@@ -37,22 +37,23 @@ module.exports = {
           // Below 4.5:1 for small text: placeholders, separators, non-essential text.
           faint: "rgb(var(--ink-faint) / <alpha-value>)",
         },
-        // The lime, for fills only (never text on light): badges, primary buttons,
-        // switch tracks, the nav tile, progress, selection.
+        // Old name of the accent fill (Lumen aliases --signal to --accent).
         signal: {
           DEFAULT: "rgb(var(--signal) / <alpha-value>)",
-          // Text/icons on a signal fill.
           ink: "rgb(var(--signal-ink) / <alpha-value>)",
         },
-        // Accent text and icons: lime on ink, moss on paper.
+        // The chosen accent: `accent` fill with `accent-ink` on it, `accent-text` for text
+        // on bg/surface, `accent-soft` a tinted fill.
         accent: {
           DEFAULT: "rgb(var(--accent) / <alpha-value>)",
           strong: "rgb(var(--accent-strong) / <alpha-value>)",
           ink: "rgb(var(--accent-ink) / <alpha-value>)",
+          text: "rgb(var(--accent-text) / <alpha-value>)",
+          soft: "rgb(var(--accent-soft) / <alpha-value>)",
           // Readable accent on the opposite theme's surface (inverted bars).
           inverse: "rgb(var(--accent-inverse) / <alpha-value>)",
         },
-        // Iris, the secondary highlight (People, faces), used sparingly.
+        // The fixed secondary for people and faces.
         "accent-2": "rgb(var(--accent-2) / <alpha-value>)",
         success: "rgb(var(--success) / <alpha-value>)",
         danger: {
@@ -63,35 +64,39 @@ module.exports = {
         warning: "rgb(var(--warning) / <alpha-value>)",
         // Same in both themes: used on the always-dark viewer and on thumbnails.
         favorite: "rgb(251 113 133 / <alpha-value>)",
-        // Legacy: the old sign-in screen's background fields.
         glow: {
-          sky: "rgb(56 189 248 / <alpha-value>)",
-          fuchsia: "rgb(232 121 249 / <alpha-value>)",
+          DEFAULT: "rgb(var(--glow) / <alpha-value>)",
+          // Legacy names, now the accent and the people colour.
+          sky: "rgb(var(--glow) / <alpha-value>)",
+          fuchsia: "rgb(var(--accent-2) / <alpha-value>)",
         },
       },
-      // docs/DESIGN.md › Typography: Unbounded (display), Host Grotesk (sans, the default)
-      // and Kode Mono (mono), self-hosted in app/fonts/ and wired in app/layout.tsx.
+      // One family for everything (`display` aliases `sans`); `mono` is for code-like values.
       fontFamily: {
         display: ["var(--font-display)", "system-ui", "sans-serif"],
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],
       },
-      // Type roles (name -> [size, {lineHeight, letterSpacing, fontWeight}]) instead of
-      // ad hoc text-2xl/text-sm per page. The family goes with the role: `display`, `h1`
-      // and `h2` are set in font-display, `label` in font-mono and uppercase (or use the
-      // `.telemetry` class from globals.css, which bundles all of it), the rest in the
-      // default sans. Weights are only given where the role is heavier than the text
-      // around it, so a role class never thins out an inherited font-semibold.
+      // Lumen type roles, then the old role names as aliases of them.
       fontSize: {
-        display: ["2.5rem", { lineHeight: "1.05", letterSpacing: "-0.03em", fontWeight: "700" }],
-        h1: ["1.875rem", { lineHeight: "1.1", letterSpacing: "-0.02em", fontWeight: "700" }],
-        h2: ["1.25rem", { lineHeight: "1.2", letterSpacing: "-0.01em", fontWeight: "600" }],
-        h3: ["1.0625rem", { lineHeight: "1.3", letterSpacing: "-0.005em", fontWeight: "600" }],
-        "body-lg": ["1rem", { lineHeight: "1.5" }],
-        body: ["0.9375rem", { lineHeight: "1.5" }],
-        small: ["0.8125rem", { lineHeight: "1.45" }],
-        micro: ["0.6875rem", { lineHeight: "1.3", letterSpacing: "0.02em" }],
-        label: ["0.6875rem", { lineHeight: "1.2", letterSpacing: "0.08em", fontWeight: "500" }],
+        "large-title": ["2rem", { lineHeight: "2.375rem", letterSpacing: "-0.025em", fontWeight: "700" }],
+        "large-title-desktop": ["2.125rem", { lineHeight: "2.5rem", letterSpacing: "-0.025em", fontWeight: "700" }],
+        title: ["1.375rem", { lineHeight: "1.75rem", letterSpacing: "-0.015em", fontWeight: "650" }],
+        headline: ["1.0625rem", { lineHeight: "1.375rem", letterSpacing: "-0.01em", fontWeight: "600" }],
+        body: ["0.9375rem", { lineHeight: "1.375rem" }],
+        callout: ["0.875rem", { lineHeight: "1.25rem", fontWeight: "500" }],
+        footnote: ["0.8125rem", { lineHeight: "1.125rem" }],
+        caption: ["0.75rem", { lineHeight: "1rem", letterSpacing: "0.01em", fontWeight: "550" }],
+        // Aliases (old role -> Lumen role).
+        display: ["2.125rem", { lineHeight: "2.5rem", letterSpacing: "-0.025em", fontWeight: "700" }],
+        h1: ["2rem", { lineHeight: "2.375rem", letterSpacing: "-0.025em", fontWeight: "700" }],
+        h2: ["1.375rem", { lineHeight: "1.75rem", letterSpacing: "-0.015em", fontWeight: "650" }],
+        h3: ["1.0625rem", { lineHeight: "1.375rem", letterSpacing: "-0.01em", fontWeight: "600" }],
+        "body-lg": ["1rem", { lineHeight: "1.5rem" }],
+        small: ["0.8125rem", { lineHeight: "1.125rem" }],
+        micro: ["0.75rem", { lineHeight: "1rem", letterSpacing: "0.01em" }],
+        // Was the uppercase mono label; now a sentence-case caption.
+        label: ["0.75rem", { lineHeight: "1rem", letterSpacing: "0.01em", fontWeight: "550" }],
       },
       borderRadius: {
         sm: "0.5rem",
@@ -100,15 +105,15 @@ module.exports = {
         lg: "1rem",
         xl: "1.25rem",
         "2xl": "1.75rem",
-        // docs/DESIGN.md › Shape: photo-grid tiles, tile controls (badges, knobs, the nav
-        // tile), buttons and inputs, cards, dialogs, sheets and the floating nav.
-        thumb: "3px",
+        // docs/DESIGN.md › Shape: tiles 4, controls 14, cards 22, hero 26, sheets 28.
+        thumb: "4px",
         "tile-sm": "8px",
         tile: "10px",
         control: "14px",
-        card: "20px",
-        nav: "22px",
-        dialog: "24px",
+        card: "22px",
+        hero: "26px",
+        nav: "32px",
+        dialog: "22px",
         sheet: "28px",
       },
       // Stacking order for app-level layers. Toasts sit above everything so
@@ -122,13 +127,11 @@ module.exports = {
         toast: "100",
       },
       boxShadow: {
-        // Dark mode separates by surface steps plus a hairline border; these
-        // shadows are what lifts white cards off the paper background in light
-        // mode, and a finishing touch on floating chrome in dark.
-        soft: "0 1px 2px rgb(17 17 19 / 0.05), 0 6px 20px -10px rgb(17 17 19 / 0.22)",
-        elevated: "0 2px 8px rgb(0 0 0 / 0.14), 0 18px 44px -18px rgb(0 0 0 / 0.5)",
-        "glow-accent": "0 0 0 1px rgb(var(--accent) / 0.4), 0 8px 28px -8px rgb(var(--accent) / 0.45)",
-        "glow-signal": "0 0 0 1px rgb(var(--signal) / 0.35), 0 10px 30px -10px rgb(var(--signal) / 0.55)",
+        // Light theme depth: two soft layers. Dark uses the card highlight instead.
+        soft: "0 1px 2px rgb(15 20 30 / 0.06), 0 8px 24px rgb(15 20 30 / 0.06)",
+        elevated: "0 2px 8px rgb(0 0 0 / 0.12), 0 18px 44px -18px rgb(0 0 0 / 0.45)",
+        "glow-accent": "0 0 0 1px rgb(var(--accent) / 0.35), 0 8px 28px -8px rgb(var(--accent) / 0.5)",
+        "glow-signal": "0 8px 24px -10px rgb(var(--accent) / 0.6)",
         "inset-hairline": "inset 0 1px 0 0 rgb(255 255 255 / 0.06)",
         sheet: "0 -8px 40px -12px rgb(0 0 0 / 0.45)",
       },
@@ -137,6 +140,8 @@ module.exports = {
         // springy curve for small knobs (switch, checks) and a softer one for
         // the nav tile, which travels further.
         "out-expo": "cubic-bezier(0.16, 1, 0.3, 1)",
+        // docs/DESIGN.md › Motion: the standard iOS-like sheet curve (380ms).
+        lumen: "cubic-bezier(0.32, 0.72, 0, 1)",
         spring: "cubic-bezier(0.34, 1.56, 0.64, 1)",
         "spring-soft": "cubic-bezier(0.3, 1.25, 0.5, 1)",
       },
@@ -150,6 +155,7 @@ module.exports = {
         320: "320ms",
         340: "340ms",
         360: "360ms",
+        380: "380ms",
       },
       transitionDelay: {
         160: "160ms",
@@ -246,7 +252,7 @@ module.exports = {
         "scale-out": "scale-out 160ms ease-in forwards",
         "slide-in": "slide-in 220ms cubic-bezier(0.16,1,0.3,1) both",
         // `backwards`, not `both`: once finished, inline drag transforms must win.
-        "sheet-in": "sheet-in 320ms cubic-bezier(0.16,1,0.3,1) backwards",
+        "sheet-in": "sheet-in 380ms cubic-bezier(0.32,0.72,0,1) backwards",
         "sheet-out": "sheet-out 220ms cubic-bezier(0.4,0,1,1) forwards",
         "toast-in": "toast-in 260ms cubic-bezier(0.16,1,0.3,1) backwards",
         "toast-out": "toast-out 180ms ease-in forwards",
@@ -257,7 +263,7 @@ module.exports = {
         "tile-pulse": "tile-pulse 1.2s ease-in-out infinite",
         breathe: "breathe 2.4s ease-in-out infinite",
         "tile-step": "tile-step 1.6s ease-in-out infinite",
-        "check-pop": "check-pop 220ms cubic-bezier(0.34,1.56,0.64,1) both",
+        "check-pop": "check-pop 240ms cubic-bezier(0.34,1.56,0.64,1) both",
         indeterminate: "indeterminate 1.2s cubic-bezier(0.65,0,0.35,1) infinite",
         blob: "blob 20s ease-in-out infinite",
       },

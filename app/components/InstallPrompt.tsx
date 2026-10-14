@@ -88,7 +88,7 @@ export default function InstallPrompt({ full }: { full?: boolean } = {}) {
       title="Install 404GB as an app"
       className={
         full
-          ? "flex min-h-[44px] w-full items-center gap-2 rounded-tile px-2 py-2 text-left text-small text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink animate-fade-in"
+          ? "flex min-h-[44px] w-full items-center gap-2 rounded-control px-2 py-2 text-left text-callout text-ink-muted transition-colors duration-180 hover:bg-surface-2 hover:text-ink animate-fade-in"
           : `${buttonClass({ variant: "secondary", size: "sm" })} animate-fade-in`
       }
     >

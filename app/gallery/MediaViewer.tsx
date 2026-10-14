@@ -10,6 +10,9 @@ import { trapTab, useEscapeLayer, useFocusReturn } from "@/app/components/ui/foc
 import { canEdit } from "@/lib/editor/canEdit";
 import { leaveForSignIn } from "@/lib/library/signedOut";
 import { daysLeftInTrash, daysLeftLabel } from "@/lib/library/trash";
+import { select as selectHaptic } from "@/lib/ui/haptics";
+import { hideTile, prefersReducedMotion, revealTile, tileImage, tileRect } from "@/lib/ui/sharedElement";
+import Ambient from "./viewer/Ambient";
 import ImageSlide from "./viewer/ImageSlide";
 import InfoSheet from "./viewer/InfoSheet";
 import VideoSlide from "./viewer/VideoSlide";
@@ -18,9 +21,12 @@ import { canDisplayOriginal, isHeic, isVideoItem, viewerTitle } from "./viewer/f
 import { fitBox, type Size } from "./viewer/geometry";
 import {
   AlbumAddIcon,
+  AlbumRemoveIcon,
   DeleteForeverIcon,
   DownloadIcon,
   EditIcon,
+  HeartIcon,
+  InfoIcon,
   RestoreIcon,
   ShareIcon,
   Spinner,
@@ -35,8 +41,21 @@ import {
   type ProgressListener,
 } from "./viewer/originals";
 import { canShareFiles, hasNativeBackup, isShareCancel, nativeTransfer, triggerDownload } from "./viewer/transfer";
+import {
+  CLOSE_MS,
+  OPEN_MS,
+  SPRING,
+  boxRect,
+  containState,
+  coverState,
+  playFlip,
+  toRect,
+  type FlipRun,
+  type Rect,
+} from "./viewer/sharedTransition";
 import { preloadPreviewThumb } from "./viewer/useCachedThumb";
 import { SLIDE_GAP, useViewerGestures } from "./viewer/useViewerGestures";
+import "./viewer/viewer.css";
 
 const PhotoEditor = dynamic(() => import("./PhotoEditor"), {
   ssr: false,
@@ -67,9 +86,7 @@ interface Transfer {
   progress: number | null;
 }
 
-// Bigger originals (100 MP+ panoramas) load when zooming, so a phone doesn't
-// decode gigabytes of pixels just to show them at screen size. Items without
-// thumbnails have nothing else to show, so theirs always load.
+// Huge originals (100 MP+) load only when zooming; items without thumbnails always load theirs.
 const AUTO_ORIGINAL_MAX_PIXELS = 100_000_000;
 // How long a photo must stay on screen before its original starts downloading,
 // so flicking through many photos doesn't start a download for each one.
@@ -88,20 +105,33 @@ function savingData(): boolean {
   return Boolean(connection?.saveData) || /(^|-)(2g|3g)$/.test(connection?.effectiveType ?? "");
 }
 
-const CLOSE_MS = 200;
+const FADE_MS = 120;
 const LEAVE_MS = 220;
 const AUTO_HIDE_MS = 3000;
 // Browsers only open the share sheet shortly after a tap.
 const SHARE_GESTURE_MS = 4000;
 
-/**
- * Full-screen viewer. Swipe sideways to move between items, down to close and up
- * for details; pinch, double-tap or scroll to zoom; tap to hide the toolbars.
- * The 320px thumbnail shows instantly, the 1600px preview fades in over it, and
- * the original downloads right away and replaces both (formats a browser can't
- * draw, like HEIC, stay on the preview). The parent owns data changes; this only
- * calls back and moves to a neighbour after a removal.
- */
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+/** The sharpest picture the current slide has decoded (the original, else the preview, else the thumbnail). */
+function shownImageSrc(stage: HTMLElement | null): string | null {
+  const imgs = stage?.querySelectorAll<HTMLImageElement>("[data-viewer-current] img");
+  if (!imgs) return null;
+  for (let i = imgs.length - 1; i >= 0; i--) {
+    const img = imgs[i];
+    if (img.complete && img.naturalWidth > 0 && getComputedStyle(img).opacity !== "0") return img.currentSrc || img.src;
+  }
+  return null;
+}
+
+/** Waits (a few frames at most) until the current slide shows a decoded picture, for a flash-free hand-off. */
+async function slideReady(stage: HTMLElement | null, maxMs: number): Promise<void> {
+  const until = performance.now() + maxMs;
+  while (performance.now() < until && !shownImageSrc(stage)) await nextFrame();
+}
+
+/** Full-screen viewer: swipe between items, down to close, up for details; pinch or double-tap to zoom.
+ * Thumbnail, then preview, then the original; the parent owns data changes. */
 export default function MediaViewer(props: MediaViewerProps) {
   const { items, index, repoKey, onAddToAlbum, onRemoveFromAlbum, trash } = props;
   const toast = useToast();
@@ -120,6 +150,15 @@ export default function MediaViewer(props: MediaViewerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
+  const backdropRef = useRef<HTMLDivElement | null>(null);
+  const flipHostRef = useRef<HTMLDivElement>(null);
+  // The shared-element zoom (docs/DESIGN.md "Photos — new experiences" 6).
+  const openFlipRef = useRef<FlipRun | null>(null);
+  const closeFlipRef = useRef<FlipRun | null>(null);
+  const enteringRef = useRef(false);
+  const openedIdRef = useRef<string | null>(items[safeIndex]?.id ?? null);
+  const restoreTileRef = useRef<() => void>(() => {});
+  const gesturesRef = useRef<{ cancel(): void; currentZoom(): { x: number; y: number; s: number } } | null>(null);
   const aliveRef = useRef(true);
   const storeRef = useRef<OriginalStore | null>(null);
   const getStore = useCallback(() => (storeRef.current ??= new OriginalStore()), []);
@@ -142,7 +181,7 @@ export default function MediaViewer(props: MediaViewerProps) {
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [leavingId, setLeavingId] = useState<string | null>(null);
-  const [enteringId, setEnteringId] = useState<string | null>(() => items[safeIndex]?.id ?? null);
+  const [enteringId, setEnteringId] = useState<string | null>(null);
   const [videoPlaying, setVideoPlaying] = useState(false);
   const [activity, setActivity] = useState(0);
   const [shareable, setShareable] = useState(false);
@@ -170,12 +209,104 @@ export default function MediaViewer(props: MediaViewerProps) {
     latest.current.onClose();
   }, []);
 
-  const requestClose = useCallback(() => {
-    if (closingRef.current) return;
-    closingRef.current = true;
-    setClosing(true);
-    window.setTimeout(callClose, CLOSE_MS);
+  /** Reduced motion, or nothing to fly: the viewer fades out. */
+  const fadeOutAndClose = useCallback(() => {
+    const root = rootRef.current;
+    if (!root || typeof root.animate !== "function") {
+      callClose();
+      return;
+    }
+    root
+      .animate([{ opacity: 1 }, { opacity: 0 }], { duration: prefersReducedMotion() ? FADE_MS : 200, easing: "ease-out", fill: "forwards" })
+      .finished.then(callClose, callClose);
   }, [callClose]);
+
+  /** Shrinks the photo from where it is (`at`: a swipe's release) into its tile, revealing it first.
+   * No tile: shrink and fade. Reduced motion: crossfade. */
+  const closeAnimated = useCallback(
+    async (at?: { x: number; y: number; s: number }) => {
+      if (closingRef.current) return;
+      closingRef.current = true;
+      setClosing(true);
+      gesturesRef.current?.cancel();
+      openFlipRef.current?.remove();
+      openFlipRef.current = null;
+      const entry = itemsRef.current[indexRef.current];
+      const host = flipHostRef.current;
+      const stageEl = stageRef.current;
+      const backdrop = backdropRef.current;
+      const { box, stage: size } = gestureContext.current;
+      if (!entry || !host || !stageEl || !backdrop || prefersReducedMotion() || box.w <= 0 || box.h <= 0) {
+        fadeOutAndClose();
+        return;
+      }
+      const shown = shownImageSrc(stageEl);
+      let rect = tileRect(entry.id);
+      if (entry.id !== openedIdRef.current || !rect) {
+        if (revealTile(entry.id)) {
+          // The grid renders the revealed rows on its next frames.
+          for (let i = 0; i < 10; i++) {
+            await nextFrame();
+            rect = tileRect(entry.id);
+            if (rect && i >= 1) break;
+          }
+        }
+      }
+      if (!aliveRef.current) return;
+      const tile = rect ? tileImage(entry.id) : null;
+      const bottom = tile?.src ?? shown;
+      if (!bottom) {
+        fadeOutAndClose();
+        return;
+      }
+      const aspect = box.w / box.h;
+      const zoom = at ?? gesturesRef.current?.currentZoom() ?? { x: 0, y: 0, s: 1 };
+      const from = boxRect(box, size, zoom);
+      // The tile's own thumbnail underneath; the sharper picture on screen fades out over it.
+      const layers: { src: string; opacity?: number[] }[] = [{ src: bottom }];
+      if (shown && shown !== bottom) layers.push({ src: shown, opacity: tile ? [1, 1, 0] : undefined });
+      let to: Rect;
+      if (rect) {
+        to = toRect(rect);
+      } else {
+        // Nowhere to land: carry on in the swipe's direction, or sink back a little.
+        const k = at ? 0.78 : 0.9;
+        to = {
+          left: from.left + (from.width * (1 - k)) / 2,
+          top: from.top + (from.height * (1 - k)) / 2 + (at ? size.h * 0.25 : 0),
+          width: from.width * k,
+          height: from.height * k,
+        };
+      }
+      const duration = rect ? CLOSE_MS : 240;
+      stageEl.style.opacity = "0";
+      backdrop.style.transition = `opacity ${duration}ms ${SPRING}`;
+      backdrop.style.opacity = "0";
+      restoreTileRef.current();
+      restoreTileRef.current = rect ? hideTile(entry.id) : () => {};
+      const run = playFlip({
+        host,
+        layers,
+        aspect,
+        from: containState(from),
+        to: rect ? coverState(to, aspect) : containState(to),
+        duration,
+        baseWidth: box.w,
+        fadeOut: !rect,
+      });
+      closeFlipRef.current = run;
+      await run.finished;
+      // Paint the exact landing frame once before the tile takes over.
+      await nextFrame();
+      restoreTileRef.current();
+      restoreTileRef.current = () => {};
+      run.remove();
+      callClose();
+    },
+    [callClose, fadeOutAndClose]
+  );
+
+  const requestClose = useCallback(() => void closeAnimated(), [closeAnimated]);
 
   /** Close right away: the swipe-down animation already played. */
   const closeNow = useCallback(() => {
@@ -329,7 +460,7 @@ export default function MediaViewer(props: MediaViewerProps) {
         canZoom: g.canZoom,
         hasPrev: at > 0,
         hasNext: at < itemsRef.current.length - 1,
-        enabled: !blockedRef.current,
+        enabled: !blockedRef.current && !enteringRef.current,
       };
     },
     onTap: () => setChromeVisible((visible) => !visible),
@@ -345,13 +476,105 @@ export default function MediaViewer(props: MediaViewerProps) {
       currentIdRef.current = target.id;
       latest.current.onIndexChange(next);
     },
-    onDismiss: closeNow,
+    onDismiss: (at) => void closeAnimated(at),
     onSwipeUp: () => setInfoOpen(true),
     onDismissProgress: (progress) => {
       const el = chromeRef.current;
       if (el) el.style.opacity = progress === 0 ? "" : String(Math.max(0, 1 - progress * 2.5));
     },
   });
+
+  gesturesRef.current = gestures;
+
+  const setBackdrop = useCallback(
+    (el: HTMLDivElement | null) => {
+      backdropRef.current = el;
+      gestures.setBackdropEl(el);
+    },
+    [gestures]
+  );
+
+  // Open: the tile's thumbnail zooms to the fitted box, then the real slide takes over.
+  // No tile: scale in. Reduced motion: crossfade.
+  useLayoutEffect(() => {
+    const entry = itemsRef.current[indexRef.current];
+    const root = rootRef.current;
+    const host = flipHostRef.current;
+    const stageEl = stageRef.current;
+    const backdrop = backdropRef.current;
+    if (!entry || !root || !host || !stageEl || !backdrop) return;
+    const animate = typeof root.animate === "function";
+    if (prefersReducedMotion()) {
+      if (animate) root.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, easing: "ease-out" });
+      return;
+    }
+    const rect = tileRect(entry.id);
+    const tile = rect ? tileImage(entry.id) : null;
+    const bounds = stageEl.getBoundingClientRect();
+    if (!rect || !tile || !animate || bounds.width <= 0 || bounds.height <= 0) {
+      setEnteringId(entry.id);
+      if (animate) backdrop.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: "ease-out" });
+      return;
+    }
+    const measured = tile.width / tile.height;
+    const stated = entry.width && entry.height ? entry.width / entry.height : null;
+    const aspect = stated && Math.abs(measured - stated) / stated <= 0.03 ? stated : measured;
+    if (aspect !== stated) handleAspect(entry.id, aspect);
+    const size = { w: bounds.width, h: bounds.height };
+    const box = fitBox(aspect, size.w, size.h);
+    enteringRef.current = true;
+    stageEl.style.opacity = "0";
+    restoreTileRef.current = hideTile(entry.id);
+    backdrop.animate([{ opacity: 0 }, { opacity: 1 }], { duration: OPEN_MS, easing: SPRING });
+    chromeRef.current?.animate([{ opacity: 0 }, { opacity: 1 }], {
+      duration: 240,
+      delay: OPEN_MS * 0.5,
+      easing: "ease-out",
+      fill: "backwards",
+    });
+    const run = playFlip({
+      host,
+      layers: [{ src: tile.src }],
+      aspect,
+      from: coverState(toRect(rect), aspect),
+      to: containState(boxRect(box, size)),
+      duration: OPEN_MS,
+      baseWidth: box.w,
+    });
+    openFlipRef.current = run;
+    void run.finished.then(async () => {
+      if (openFlipRef.current !== run) return;
+      restoreTileRef.current();
+      restoreTileRef.current = () => {};
+      stageEl.style.opacity = "";
+      // Hand off under the overlay once the slide has a picture, then drop the overlay.
+      await slideReady(stageEl, 300);
+      await nextFrame();
+      if (openFlipRef.current !== run) return;
+      run.remove();
+      openFlipRef.current = null;
+      enteringRef.current = false;
+    });
+    return () => {
+      run.remove();
+      restoreTileRef.current();
+      restoreTileRef.current = () => {};
+      if (openFlipRef.current === run) openFlipRef.current = null;
+      enteringRef.current = false;
+      stageEl.style.opacity = "";
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Never leave a tile hidden or an overlay (and its image) behind.
+  useEffect(
+    () => () => {
+      restoreTileRef.current();
+      restoreTileRef.current = () => {};
+      closeFlipRef.current?.remove();
+    },
+    []
+  );
 
   const currentId = item?.id ?? null;
   const shownIdRef = useRef(currentId);
@@ -484,6 +707,7 @@ export default function MediaViewer(props: MediaViewerProps) {
   const toggleFavorite = useCallback(() => {
     const current = itemsRef.current[indexRef.current];
     if (!current) return;
+    selectHaptic();
     if (!current.favorite) setFavoritePulse((n) => n + 1);
     latest.current.onFavoriteChange(current.id, !current.favorite);
   }, []);
@@ -584,11 +808,7 @@ export default function MediaViewer(props: MediaViewerProps) {
     [getStore, notifyError, runTransfer, toast]
   );
 
-  /**
-   * Animates the current item out, then hands the change to the parent. The
-   * neighbour is followed by id once the parent's list drops the item, whether
-   * or not the parent also moves the index itself.
-   */
+  /** Animates the current item out, then hands the change to the parent and follows the neighbour by id. */
   const removeCurrent = useCallback(
     (target: MediaIndexEntry, commit: () => void) => {
       const list = itemsRef.current;
@@ -746,31 +966,54 @@ export default function MediaViewer(props: MediaViewerProps) {
       durationMs: 6000,
     });
 
+  const favorite = Boolean(item.favorite);
   const actions: ViewerAction[] = [];
+  const menu: ViewerAction[] = [];
+  const details: ViewerAction = { key: "info", label: "Details", icon: <InfoIcon />, onClick: () => setInfoOpen(true) };
   if (trash) {
-    actions.push({ key: "restore", label: "Restore", icon: <RestoreIcon />, onClick: restoreCurrent });
+    actions.push({ key: "restore", label: "Restore", icon: <RestoreIcon size={20} />, onClick: restoreCurrent, labelled: true });
+    actions.push(details);
     actions.push({
       key: "delete-forever",
       label: "Delete forever",
-      icon: <DeleteForeverIcon />,
+      icon: <DeleteForeverIcon size={20} />,
       onClick: () => void requestDeleteForever(),
+      labelled: true,
     });
-  } else if (shareable) {
-    actions.push({ key: "share", label: "Share", icon: <ShareIcon />, onClick: () => share(item), disabled: transfer !== null });
-  }
-  if (!trash) {
+  } else {
+    if (shareable) {
+      actions.push({ key: "share", label: "Share", icon: <ShareIcon />, onClick: () => share(item), disabled: transfer !== null });
+    }
+    actions.push({
+      key: "favorite",
+      label: favorite ? "Remove from favorites" : "Add to favorites",
+      pressed: favorite,
+      onClick: toggleFavorite,
+      icon: (
+        <span className="relative flex">
+          <span key={favoritePulse} className={`flex ${favoritePulse > 0 && favorite ? "lv-heart-pop" : ""}`}>
+            <HeartIcon filled={favorite} className={favorite ? "lv-heart-on" : undefined} />
+          </span>
+          {favoritePulse > 0 && favorite && <span key={`burst-${favoritePulse}`} className="lv-heart-burst" />}
+        </span>
+      ),
+    });
     if (canEdit(item)) {
       actions.push({ key: "edit", label: "Edit", icon: <EditIcon />, onClick: () => setEditing(true) });
     }
-    actions.push({ key: "album", label: "Add to album", icon: <AlbumAddIcon />, onClick: () => onAddToAlbum([item.id]) });
-    actions.push({
+    actions.push(details);
+    actions.push({ key: "delete", label: "Delete", icon: <TrashIcon />, onClick: () => void requestDelete() });
+    menu.push({ key: "album", label: "Add to album", icon: <AlbumAddIcon size={20} />, onClick: () => onAddToAlbum([item.id]) });
+    menu.push({
       key: "download",
       label: downloadLabel,
-      icon: <DownloadIcon />,
+      icon: <DownloadIcon size={20} />,
       onClick: () => download(item),
       disabled: transfer !== null,
     });
-    actions.push({ key: "delete", label: "Delete", icon: <TrashIcon />, onClick: () => void requestDelete() });
+    if (onRemoveFromAlbum) {
+      menu.push({ key: "remove-from-album", label: "Remove from album", icon: <AlbumRemoveIcon size={20} />, onClick: removeFromAlbum });
+    }
   }
 
   const status: { label: string; progress?: number | null } | null = transfer
@@ -799,21 +1042,18 @@ export default function MediaViewer(props: MediaViewerProps) {
         closing ? "pointer-events-none" : ""
       }`}
     >
-      <div
-        ref={gestures.setBackdropEl}
-        className={`absolute inset-0 bg-black transition-opacity duration-200 ${closing ? "opacity-0" : "animate-fade-in"}`}
-      />
+      <div ref={setBackdrop} className="absolute inset-0 bg-black">
+        <Ambient repoKey={repoKey} mediaId={item.id} enabled={hasThumb} />
+      </div>
 
       <div ref={stageRef} className="absolute inset-0 overflow-hidden">
         <div ref={gestures.setTrackEl} className="absolute inset-0">
           {slides.map(({ offset, entry }) => {
             const current = offset === 0;
             const box = boxFor(entry);
-            const motion = !current
+            const motion = !current || closing
               ? ""
-              : closing
-                ? "scale-95 opacity-0 transition duration-200 ease-in"
-                : leavingId === entry.id
+              : leavingId === entry.id
                   ? "animate-viewer-out"
                   : enteringId === entry.id
                     ? "animate-viewer-in"
@@ -822,6 +1062,7 @@ export default function MediaViewer(props: MediaViewerProps) {
               <div
                 key={entry.id}
                 aria-hidden={current ? undefined : true}
+                data-viewer-current={current ? "" : undefined}
                 className="absolute inset-0"
                 style={
                   current ? undefined : { transform: `translate3d(calc(${offset * 100}% + ${offset * SLIDE_GAP}px), 0, 0)` }
@@ -867,6 +1108,8 @@ export default function MediaViewer(props: MediaViewerProps) {
         </div>
       </div>
 
+      <div ref={flipHostRef} className="lv-flip-host" />
+
       <div
         ref={chromeRef}
         className={`pointer-events-none absolute inset-0 transition-opacity duration-250 ease-out ${
@@ -877,14 +1120,10 @@ export default function MediaViewer(props: MediaViewerProps) {
           visible={chromeShown}
           title={title}
           edited={Boolean(item.editedFrom)}
-          favorite={Boolean(item.favorite)}
-          favoritePulse={favoritePulse}
           originalChip={originalChip}
           onBack={requestClose}
-          onFavorite={trash ? undefined : toggleFavorite}
-          onInfo={() => setInfoOpen(true)}
           onOriginal={previewOnly ? explainPreview : () => loadOriginalForDisplay(item, false)}
-          onRemoveFromAlbum={onRemoveFromAlbum && !trash ? removeFromAlbum : undefined}
+          menu={menu}
         />
         <SideArrows
           visible={chromeShown}
@@ -904,6 +1143,7 @@ export default function MediaViewer(props: MediaViewerProps) {
         item={item}
         record={infoRecord}
         loading={infoLoading}
+        repoKey={repoKey}
       />
 
       {editing && (

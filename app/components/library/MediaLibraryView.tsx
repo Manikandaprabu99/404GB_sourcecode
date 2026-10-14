@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { MediaIndexEntry } from "@/lib/media";
 import type { Album } from "@/lib/albums/types";
 import MediaViewer from "@/app/gallery/MediaViewer";
-import VirtualGrid, { groupHeaderHeight } from "@/app/gallery/VirtualGrid";
+import VirtualGrid, { groupHeaderHeight, type GroupPerson } from "@/app/gallery/VirtualGrid";
 import { groupMedia, type DateGroup } from "@/app/gallery/dateGroups";
 import { useConfirm } from "@/app/components/ui/ConfirmDialog";
 import { useToast } from "@/app/components/ui/Toast";
@@ -71,12 +71,15 @@ interface MediaLibraryViewProps {
   groupItems?: (items: MediaIndexEntry[], zoom: ZoomLevel, now: Date) => DateGroup[];
   /** A corner label per tile, e.g. days left in Trash. */
   badgeFor?: (item: MediaIndexEntry) => string | null;
-  /** Content between the notice and the grid; `openSet` opens the viewer over one of `viewerSets`. */
-  aboveGrid?: (state: { selectMode: boolean; openSet: (setKey: string, id: string) => void }) => ReactNode;
+  /** Content between the notice and the grid; `openSet` opens the viewer over one of `viewerSets`.
+   * Also called during a cold load (`loading`), e.g. for skeletons. */
+  aboveGrid?: (state: { selectMode: boolean; openSet: (setKey: string, id: string) => void; loading: boolean }) => ReactNode;
   /** Other lists the viewer can page through (e.g. a memory), by key; kept current by the caller. */
   viewerSets?: Record<string, MediaIndexEntry[]>;
   /** Screen-specific selection actions (e.g. a person's "Not this person"), placed before Delete. */
   extraActions?: (selectedIds: string[], exitSelection: () => void) => SelectionAction[];
+  /** The people in a day's photos, for the Day headers' avatar stacks (memoise it). */
+  groupPeople?: (group: DateGroup) => GroupPerson[];
 }
 
 const NO_SETS: Record<string, MediaIndexEntry[]> = {};
@@ -106,6 +109,7 @@ export default function MediaLibraryView({
   aboveGrid,
   viewerSets = NO_SETS,
   extraActions,
+  groupPeople,
 }: MediaLibraryViewProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -269,6 +273,12 @@ export default function MediaLibraryView({
       const group = groups.find((g) => g.key === groupKey);
       if (!group) return;
       const ids = group.items.map((item) => item.id);
+      // The day's round check also starts selecting (hover on desktop).
+      if (!selection.active) {
+        selection.start();
+        selection.setMany(ids, true);
+        return;
+      }
       const allSelected = ids.every((id) => selection.selectedIds.has(id));
       selection.setMany(ids, !allSelected);
     },
@@ -405,7 +415,7 @@ export default function MediaLibraryView({
         </div>
         {intro?.(headerState)}
         {notice && <div className={column}>{notice}</div>}
-        {!loading && aboveGrid && <div className={column}>{aboveGrid({ selectMode: selection.active, openSet })}</div>}
+        {aboveGrid && <div className={column}>{aboveGrid({ selectMode: selection.active, openSet, loading })}</div>}
         <div className={`${column} sm:px-6`}>
           {loading ? (
             <SkeletonGrid />
@@ -427,7 +437,9 @@ export default function MediaLibraryView({
               onToggleSelect={selection.toggle}
               onStartSelect={selection.start}
               onToggleGroup={toggleGroup}
+              onSetMany={selection.setMany}
               badgeFor={badgeFor}
+              groupPeople={groupPeople}
             />
           )}
         </div>

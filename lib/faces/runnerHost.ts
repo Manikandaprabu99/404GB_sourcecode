@@ -10,7 +10,7 @@ export interface FaceRunnerHost {
   config(): string;
   /** {checked, total}: photos this run has checked, out of those it is working through. */
   progress(json: string): void;
-  /** {checked, reason}, only after the last commit: the host closes the page right away. */
+  /** {checked, reason, left?, resumeAt?}, only after the last commit: the host closes the page then. */
   finished(json: string): void;
 }
 

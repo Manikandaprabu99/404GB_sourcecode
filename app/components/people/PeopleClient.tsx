@@ -9,12 +9,12 @@ import { closeOverlaysThen } from "@/lib/library/history";
 import EmptyState, { primaryButtonClass } from "@/app/components/library/EmptyState";
 import PageHeader from "@/app/components/library/PageHeader";
 import ScrollArea from "@/app/components/library/ScrollArea";
-import { IconTile, cardClass } from "@/app/components/library/SettingsBlocks";
+import { cardClass } from "@/app/components/library/SettingsBlocks";
 import { BackIcon, ChevronDownIcon } from "@/app/components/library/icons";
 import { buttonClass } from "@/app/components/ui/Button";
 import IconButton from "@/app/components/ui/IconButton";
 import { Telemetry } from "@/app/components/ui/SectionLabel";
-import TileMeter from "@/app/components/ui/TileMeter";
+import { ProgressRing } from "@/app/components/ui/Progress";
 import FaceAvatar from "./FaceAvatar";
 import { scanDetail, scanHeadline, scanInProgress } from "./scanText";
 import { ScanFaceIcon } from "./icons";
@@ -35,18 +35,18 @@ function PersonTile({ person, repoKey }: { person: PersonDetails; repoKey: strin
     <li className="animate-fade-in">
       <Link
         href={personHref(person.id)}
-        className="group flex flex-col items-center rounded-card px-1 py-2 transition-colors duration-180 hover:bg-surface-2 focus-visible:outline-none"
+        className="pressable group flex flex-col items-center rounded-card px-1 py-2 transition-colors duration-180 hover:bg-surface-2 focus-visible:outline-none"
       >
         <FaceAvatar
           repoKey={repoKey}
           face={person.cover}
           muted={person.hidden}
-          className="h-20 w-20 ring-2 ring-transparent ring-offset-2 ring-offset-bg transition-[transform,box-shadow] duration-250 ease-out-expo group-focus-visible:ring-accent-2 group-active:scale-95 sm:h-24 sm:w-24"
+          className="h-[88px] w-[88px] ring-2 ring-transparent ring-offset-2 ring-offset-bg transition-[box-shadow] duration-240 group-focus-visible:ring-accent sm:h-24 sm:w-24"
         />
-        <span className={`mt-2.5 w-full truncate text-center text-small font-medium ${person.name ? "text-ink" : "text-ink-muted"}`}>
+        <span className={`mt-2.5 w-full truncate text-center text-callout ${person.name ? "font-semibold text-ink" : "font-medium text-ink-muted"}`}>
           {person.name ?? "Add a name"}
         </span>
-        <span className="telemetry mt-1 text-ink-muted">{photos(person.mediaIds.length)}</span>
+        <span className="mt-0.5 text-footnote tabular-nums text-ink-muted">{photos(person.mediaIds.length)}</span>
       </Link>
     </li>
   );
@@ -84,31 +84,28 @@ export default function PeopleClient({ repoOwner, repoName, showHidden }: People
           ) : undefined
         }
         leading={
-          <IconButton variant="ghost" label="Back" onClick={goBack}>
+          <IconButton variant="tile" label="Back" onClick={goBack}>
             <BackIcon size={20} />
           </IconButton>
         }
       />
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-3 pb-6 pt-2 sm:px-6">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-3 pb-6 pt-2 sm:px-6 lg:px-8">
         {scanning && (
-          <div className={`mx-1 flex animate-fade-in flex-col gap-3.5 px-4 py-4 ${cardClass}`}>
-            <div className="flex items-center gap-3.5">
-              <IconTile tone="accent-2">
-                <ScanFaceIcon size={18} />
-              </IconTile>
-              <div className="min-w-0 flex-1">
-                <p className="text-body font-medium text-ink">{scanHeadline(status)}</p>
-                {scanDetail(status) && <p className="mt-0.5 text-small text-ink-muted">{scanDetail(status)}</p>}
-              </div>
-            </div>
-            <TileMeter
-              fluid
-              tiles={20}
+          <div className={`mx-1 flex animate-fade-in items-center gap-3.5 px-4 py-4 ${cardClass}`}>
+            <ProgressRing
+              size={48}
+              stroke={4.5}
               value={status.done}
               max={status.total}
-              active={!status.paused}
+              paused={status.paused}
               ariaLabel="Photos checked for faces"
-            />
+            >
+              <ScanFaceIcon size={18} className="text-accent-text" />
+            </ProgressRing>
+            <div className="min-w-0 flex-1">
+              <p className="text-body font-semibold text-ink">{scanHeadline(status)}</p>
+              {scanDetail(status) && <p className="mt-0.5 text-footnote text-ink-muted">{scanDetail(status)}</p>}
+            </div>
           </div>
         )}
 
@@ -150,7 +147,7 @@ export default function PeopleClient({ repoOwner, repoName, showHidden }: People
               type="button"
               onClick={() => setHiddenOpen((open) => !open)}
               aria-expanded={hiddenOpen}
-              className={`${buttonClass({ variant: "ghost", size: "sm" })} self-start !text-accent`}
+              className={`${buttonClass({ variant: "ghost", size: "sm" })} self-start !text-accent-text`}
             >
               {hiddenOpen ? "Hide hidden people" : `Show hidden people (${hidden.length.toLocaleString()})`}
               <ChevronDownIcon

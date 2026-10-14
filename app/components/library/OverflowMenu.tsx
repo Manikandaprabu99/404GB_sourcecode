@@ -12,7 +12,7 @@ export interface OverflowMenuItem {
   onSelect: () => void;
 }
 
-/** A "⋮" button (a header action tile by default) with a small dropdown of actions. */
+/** A round "⋮" header button with a small dropdown of actions. */
 export default function OverflowMenu({
   items,
   label = "More options",
@@ -49,14 +49,14 @@ export default function OverflowMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className={`${iconButtonClass({ variant })} ${open ? "!bg-surface-3 !text-ink" : ""}`}
+        className={`${iconButtonClass({ variant })} ${open ? "!bg-ink/[0.12] !text-ink" : ""}`}
       >
         <MoreVerticalIcon size={20} />
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-2 w-56 origin-top-right animate-scale-in rounded-lg border border-border/60 bg-surface p-1.5 shadow-elevated"
+          className="card absolute right-0 top-full z-50 mt-2 w-56 origin-top-right animate-scale-in rounded-[18px] p-1.5 shadow-elevated"
         >
           {items.map((item) => (
             <button
@@ -67,7 +67,7 @@ export default function OverflowMenu({
                 setOpen(false);
                 item.onSelect();
               }}
-              className={`flex min-h-[44px] w-full items-center gap-3 rounded-tile px-3 text-left text-body font-medium transition-colors duration-180 hover:bg-surface-2 ${
+              className={`flex min-h-[44px] w-full items-center gap-3 rounded-[12px] px-3 text-left text-body font-medium transition-colors duration-180 hover:bg-surface-2 ${
                 item.tone === "danger" ? "text-danger" : "text-ink"
               }`}
             >

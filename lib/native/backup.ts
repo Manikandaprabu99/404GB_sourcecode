@@ -73,18 +73,35 @@ export interface ItemsUploadedEvent {
   entries: MediaIndexEntry[];
 }
 
-/** Background People matching while the phone charges (docs/FACES.md "Background"). */
+/** How the last background run ended, or why the last one due didn't go ahead. */
+export type FaceScanReason =
+  | "done" // nothing left to check
+  | "deadline" // out of time with photos left (a follow-up run is queued)
+  | "stopped" // the app was opened, the phone unplugged (only while charging), turned off…
+  | "error" // see lastError
+  | "battery-low" // unplugged under 30 % battery: skipped
+  | "power-save" // unplugged with Battery Saver on: skipped
+  | "not-charging"; // "Only while charging" and unplugged: skipped
+
+/** Background People matching with the app closed (docs/FACES.md "Background"). */
 export interface FaceScanStatus {
-  /** The user's choice (default on). */
+  /** "Find people in the background" (default on). */
   enabled: boolean;
+  /** "Only while charging" (default off; older app builds don't report it). */
+  chargingOnly: boolean;
   /** A background run is going right now (the app itself is closed). */
   running: boolean;
+  /** Photos the run going now has checked. */
+  checkedNow: number;
+  /** A run is queued: soon after the app was closed, or a follow-up. */
+  pending: boolean;
   /** Epoch ms when the last background run ended, or null. */
   lastRunAt: number | null;
   /** Photos the last background run checked. */
   lastChecked: number;
   /** Why the last run stopped early, or null. */
   lastError: string | null;
+  lastReason: FaceScanReason | null;
 }
 
 export interface SaveProgress {
@@ -111,8 +128,8 @@ export interface BackupPlugin {
   getAuth(): Promise<{ auth: BackupAuth | null }>;
   /** Forgets the token on this phone (backup pauses as "needs_sign_in"; the ledger is kept). */
   clearAuth(): Promise<BackupStatus>;
-  /** Turns background People matching (while charging, app closed) on or off. */
-  setFaceScan(options: { enabled: boolean }): Promise<FaceScanStatus>;
+  /** Background People matching on/off and "Only while charging"; either may be left out. */
+  setFaceScan(options: { enabled?: boolean; chargingOnly?: boolean }): Promise<FaceScanStatus>;
   getFaceScanStatus(): Promise<FaceScanStatus>;
   /** Downloads the original into the phone's gallery (Pictures/404GB or Movies/404GB). */
   saveToDevice(options: { mediaId: string }): Promise<{ uri: string }>;

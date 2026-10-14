@@ -289,3 +289,49 @@ export function SparkleIcon(props: IconProps) {
     </Svg>
   );
 }
+
+export function MoreIcon(props: IconProps) {
+  return (
+    <Svg {...props} fill="currentColor" strokeWidth={0}>
+      <circle cx="5.5" cy="12" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="18.5" cy="12" r="1.8" />
+    </Svg>
+  );
+}
+
+export function AlbumIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3.5" y="5.5" width="17" height="14" rx="3" />
+      <path d="m6.5 16 3.6-3.8 2.6 2.6 2-2 2.8 3.2" />
+      <path d="M7 3h10" />
+    </Svg>
+  );
+}
+
+export function GitHubIcon(props: IconProps) {
+  return (
+    <Svg {...props} fill="currentColor" strokeWidth={0}>
+      <path d="M12 2.2a9.8 9.8 0 0 0-3.1 19.1c.5.1.7-.2.7-.5v-1.7c-2.7.6-3.3-1.3-3.3-1.3-.5-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.2-4.5-1.1-4.5-4.9 0-1.1.4-2 1-2.7-.1-.2-.4-1.2.1-2.6 0 0 .8-.3 2.7 1a9.3 9.3 0 0 1 4.9 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.6.6.7 1 1.6 1 2.7 0 3.8-2.3 4.7-4.5 4.9.4.3.7.9.7 1.8v2.7c0 .3.2.6.7.5A9.8 9.8 0 0 0 12 2.2Z" />
+    </Svg>
+  );
+}
+
+export function ExternalIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M14 4.5h5.5V10M19.5 4.5 11 13" />
+      <path d="M17.5 14v3.5a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2H10" />
+    </Svg>
+  );
+}
+
+export function TagIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 12.2V5.5a2 2 0 0 1 2-2h6.7l8.3 8.3a2 2 0 0 1 0 2.8l-6 6a2 2 0 0 1-2.8 0l-8.2-8.4Z" />
+      <circle cx="8.2" cy="8.2" r="1.4" />
+    </Svg>
+  );
+}

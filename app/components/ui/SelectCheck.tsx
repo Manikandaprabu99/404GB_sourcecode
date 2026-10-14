@@ -1,10 +1,7 @@
 import { CheckIcon } from "@/app/components/library/icons";
 
-/**
- * The square selection check (docs/DESIGN.md › Motion: it pops from 0.6 to 1 when picked).
- * Decorative: the tile or row around it carries the selected state for assistive tech.
- * `photo` sits on pictures (white outline); `surface` on cards and lists.
- */
+/** A decorative round 24px check: white ring, or accent fill with a tick that pops in.
+ * `photo` sits on pictures; `surface` on cards and lists. */
 export default function SelectCheck({
   selected,
   variant = "photo",
@@ -17,17 +14,21 @@ export default function SelectCheck({
   return (
     <span
       aria-hidden="true"
-      className={`relative flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[7px] ${
+      className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
         selected
           ? ""
           : variant === "photo"
-            ? "border-2 border-white/90 bg-black/20 shadow-[0_1px_3px_rgb(0_0_0/0.35)]"
-            : "border-2 border-border-strong"
+            ? "border-[1.75px] border-white bg-black/15 shadow-[0_1px_3px_rgb(0_0_0/0.3)]"
+            : "border-[1.75px] border-border-strong"
       } ${className ?? ""}`}
     >
       {selected && (
-        <span className="absolute inset-0 flex animate-check-pop items-center justify-center rounded-[7px] bg-signal text-signal-ink shadow-[0_1px_3px_rgb(0_0_0/0.25)]">
-          <CheckIcon size={13} strokeWidth={3.2} />
+        <span
+          className={`absolute inset-0 flex animate-check-pop items-center justify-center rounded-full bg-accent text-accent-ink ${
+            variant === "photo" ? "shadow-[0_0_0_1.75px_white,0_1px_4px_rgb(0_0_0/0.3)]" : ""
+          }`}
+        >
+          <CheckIcon size={14} strokeWidth={3} />
         </span>
       )}
     </span>

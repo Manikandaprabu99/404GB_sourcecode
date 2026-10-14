@@ -517,3 +517,22 @@ export function CommitIcon(props: IconProps) {
     </Svg>
   );
 }
+
+export function PaletteIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.9 1.8-1.8 0-.5-.2-.9-.5-1.3-.3-.3-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3Z" />
+      <circle cx="7.5" cy="11" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="7" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="14.5" cy="7" r="1.2" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+export function TextIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 19 9 5h1l5 14M5.8 14h7.4M15.5 13.2c.6-1 1.6-1.5 2.7-1.5 1.6 0 2.8 1 2.8 2.7V19m0-3.3c-.7-.4-1.6-.6-2.5-.6-1.5 0-2.7.8-2.7 2.1 0 1.1.9 1.9 2.1 1.9 1.3 0 2.5-.8 3.1-2" />
+    </Svg>
+  );
+}

@@ -1,0 +1,578 @@
+/* Lumen viewer + editor chrome (docs/DESIGN.md › Viewer). Always dark; blur only on fixed chrome
+ * and the ambient element; only transform and opacity animate. */
+
+/* ---------- shared-element overlay ---------- */
+
+.lv-flip-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.lv-flip-clip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  transform-origin: 0 0;
+  will-change: transform, opacity;
+  contain: layout paint;
+}
+
+.lv-flip-img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  max-width: none;
+  transform-origin: 0 0;
+  will-change: transform, opacity;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* ---------- ambient background ---------- */
+
+/* The current photo's 320px thumbnail, drawn at 1/8 size with the blur, then scaled up: the
+ * filter runs on a tiny bitmap once per photo, and the layers crossfade with opacity only. */
+.lv-ambient {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.lv-ambient-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 420ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.lv-ambient-layer[data-shown="true"] {
+  opacity: 1;
+}
+
+.lv-ambient-img {
+  position: absolute;
+  left: 43.75%;
+  top: 43.75%;
+  width: 12.5%;
+  height: 12.5%;
+  max-width: none;
+  object-fit: cover;
+  filter: blur(4px) saturate(1.5) brightness(0.55);
+  transform: scale(9.5);
+}
+
+/* A soft vignette keeps the photo's edges and the chrome readable over bright ambients. */
+.lv-ambient::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 50% 50%, rgb(0 0 0 / 0.1) 0%, rgb(0 0 0 / 0.55) 100%);
+}
+
+/* ---------- glass chrome ---------- */
+
+.lv-glass {
+  background: rgb(24 26 32 / 0.48);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.18);
+}
+
+/* Over moving content (a playing video): the same look without the blur. */
+.lv-glass-still {
+  background: rgb(18 20 26 / 0.66);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.22);
+}
+
+.lv-scrim-top {
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.5), rgb(0 0 0 / 0.18) 60%, transparent);
+}
+
+.lv-scrim-bottom {
+  background: linear-gradient(to top, rgb(0 0 0 / 0.42), rgb(0 0 0 / 0.12) 60%, transparent);
+}
+
+.lv-round {
+  display: flex;
+  height: 2.75rem;
+  width: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: rgb(255 255 255 / 0.95);
+  transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1), background-color 160ms ease-out;
+}
+
+.lv-round:active {
+  transform: scale(0.94);
+}
+
+.lv-round:focus-visible,
+.lv-action:focus-visible,
+.lv-badge:focus-visible,
+.lv-menu-item:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+.lv-title {
+  text-shadow: 0 1px 12px rgb(0 0 0 / 0.45);
+}
+
+/* The bottom capsule's buttons: icon only, a soft highlight on press. */
+.lv-action {
+  position: relative;
+  display: flex;
+  height: 3rem;
+  min-width: 3rem;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: rgb(255 255 255 / 0.92);
+  transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1), background-color 160ms ease-out, color 160ms ease-out;
+}
+
+.lv-action:hover {
+  background: rgb(255 255 255 / 0.08);
+  color: #fff;
+}
+
+.lv-action:active {
+  transform: scale(0.92);
+  background: rgb(255 255 255 / 0.12);
+}
+
+.lv-action:disabled {
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+.lv-action[data-labelled="true"] {
+  gap: 0.5rem;
+  padding: 0 1rem;
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.lv-heart-on {
+  color: rgb(255 77 109);
+}
+
+.lv-heart-pop {
+  animation: lv-heart-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes lv-heart-pop {
+  0% { transform: scale(1); }
+  30% { transform: scale(0.72); }
+  62% { transform: scale(1.28); }
+  100% { transform: scale(1); }
+}
+
+/* A ring that bursts from the heart when it's favorited. */
+.lv-heart-burst {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: -1.125rem 0 0 -1.125rem;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 2px rgb(255 77 109 / 0.9);
+  opacity: 0;
+  pointer-events: none;
+  animation: lv-heart-burst 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes lv-heart-burst {
+  0% { opacity: 0.9; transform: scale(0.4); }
+  100% { opacity: 0; transform: scale(1.5); }
+}
+
+/* Original badge: a small glass pill. */
+.lv-badge {
+  display: inline-flex;
+  height: 1.75rem;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 9999px;
+  padding: 0 0.7rem 0 0.55rem;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  color: rgb(255 255 255 / 0.92);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lv-badge-check {
+  display: inline-flex;
+  height: 1rem;
+  width: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgb(var(--accent));
+  color: rgb(var(--accent-ink));
+}
+
+.lv-badge-ring {
+  color: rgb(var(--accent-text, var(--accent)));
+  filter: brightness(1.35);
+}
+
+/* Overflow menu. */
+.lv-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  min-width: 13.5rem;
+  border-radius: 18px;
+  padding: 0.375rem;
+  transform-origin: top right;
+  animation: lv-menu-in 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes lv-menu-in {
+  from { opacity: 0; transform: scale(0.92) translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.lv-menu-item {
+  display: flex;
+  min-height: 2.875rem;
+  width: 100%;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: 12px;
+  padding: 0 0.75rem;
+  font-size: 15px;
+  color: rgb(255 255 255 / 0.95);
+  text-align: left;
+  transition: background-color 120ms ease-out;
+}
+
+.lv-menu-item:hover,
+.lv-menu-item:active {
+  background: rgb(255 255 255 / 0.1);
+}
+
+.lv-menu-item:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.lv-fade-in {
+  animation: lv-fade-in 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes lv-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ---------- info sheet (follows the app theme) ---------- */
+
+.lv-info-card {
+  background: rgb(var(--surface-2));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+.lv-info-badge {
+  background: rgb(var(--accent) / 0.14);
+  color: rgb(var(--accent-text, var(--accent)));
+}
+
+.lv-info-chip {
+  display: inline-flex;
+  height: 2.125rem;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 9999px;
+  padding: 0 0.875rem 0 0.7rem;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgb(var(--ink));
+  background: rgb(var(--surface-2));
+  box-shadow: inset 0 0 0 1px rgb(var(--border));
+  transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1), background-color 160ms ease-out;
+}
+
+.lv-info-chip svg {
+  color: rgb(var(--accent-text, var(--accent)));
+}
+
+.lv-info-chip:active {
+  transform: scale(0.97);
+}
+
+.lv-info-chip:hover {
+  background: rgb(var(--surface-3));
+}
+
+/* ---------- video ---------- */
+
+.lv-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: #fff;
+  transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1), opacity 250ms ease-out;
+}
+
+.lv-play:active {
+  transform: scale(0.94);
+}
+
+.lv-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2.75rem;
+  background: transparent;
+  cursor: pointer;
+  --lv-fill: 0%;
+}
+
+.lv-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: linear-gradient(to right, #fff 0 var(--lv-fill), rgb(255 255 255 / 0.28) var(--lv-fill) 100%);
+}
+
+.lv-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 16px;
+  width: 16px;
+  margin-top: -6px;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  transition: transform 120ms ease-out;
+}
+
+.lv-range:active::-webkit-slider-thumb {
+  transform: scale(1.25);
+}
+
+.lv-range::-moz-range-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.28);
+}
+
+.lv-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 9999px;
+  background: #fff;
+}
+
+.lv-range::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border: 0;
+  border-radius: 9999px;
+  background: #fff;
+}
+
+.lv-range:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* ---------- editor ---------- */
+
+.lv-ed-save {
+  display: inline-flex;
+  height: 2.5rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0 1.125rem;
+  font-size: 15px;
+  font-weight: 600;
+  background: rgb(var(--accent));
+  color: rgb(var(--accent-ink));
+  transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1), background-color 160ms ease-out, color 160ms ease-out,
+    opacity 160ms ease-out;
+}
+
+.lv-ed-save:active {
+  transform: scale(0.97);
+}
+
+.lv-ed-save:disabled {
+  background: rgb(255 255 255 / 0.1);
+  color: rgb(255 255 255 / 0.5);
+}
+
+.lv-ed-save[data-saved="true"]:disabled {
+  background: rgb(var(--accent));
+  color: rgb(var(--accent-ink));
+}
+
+.lv-ed-tabs {
+  position: relative;
+  display: flex;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  padding: 0.25rem;
+  background: rgb(255 255 255 / 0.07);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+}
+
+.lv-ed-tab {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  height: 2.5rem;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 9999px;
+  padding: 0 0.9rem;
+  font-size: 14px;
+  font-weight: 550;
+  color: rgb(255 255 255 / 0.62);
+  transition: color 200ms ease-out, transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.lv-ed-tab:active {
+  transform: scale(0.96);
+}
+
+.lv-ed-tab[aria-selected="true"] {
+  color: #fff;
+}
+
+.lv-ed-tab:disabled {
+  opacity: 0.5;
+}
+
+.lv-ed-tab:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+/* The selected tab's pill slides between tabs (transform only). */
+.lv-ed-tab-thumb {
+  position: absolute;
+  z-index: 0;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  left: 0.25rem;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.14);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 2px 10px rgb(0 0 0 / 0.25);
+  transition: transform 380ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.lv-ed-chip {
+  display: inline-flex;
+  height: 2.125rem;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 9999px;
+  padding: 0 0.875rem;
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+  color: rgb(255 255 255 / 0.78);
+  background: rgb(255 255 255 / 0.07);
+  transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1), background-color 160ms ease-out, color 160ms ease-out;
+}
+
+.lv-ed-chip:active {
+  transform: scale(0.96);
+}
+
+.lv-ed-chip[aria-pressed="true"],
+.lv-ed-chip[aria-checked="true"],
+.lv-ed-chip[aria-selected="true"] {
+  background: rgb(var(--accent));
+  color: rgb(var(--accent-ink));
+}
+
+.lv-ed-chip:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* iOS-like slider: a hairline track, accent fill, a big white knob. */
+.lv-ed-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.16);
+}
+
+.lv-ed-fill {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 9999px;
+  background: rgb(var(--accent));
+}
+
+.lv-ed-knob {
+  position: absolute;
+  top: 50%;
+  height: 26px;
+  width: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25), 0 4px 12px rgb(0 0 0 / 0.3), 0 0 0 0.5px rgb(0 0 0 / 0.08);
+  transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.lv-ed-knob[data-dragging="true"] {
+  transform: scale(1.12);
+}
+
+.lv-ed-bubble {
+  position: absolute;
+  bottom: calc(100% - 0.25rem);
+  display: flex;
+  height: 1.625rem;
+  align-items: center;
+  border-radius: 9999px;
+  padding: 0 0.6rem;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: #fff;
+  color: rgb(13 15 20);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.3);
+  transform: translateX(-50%);
+  animation: lv-fade-in 140ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-ambient-layer,
+  .lv-ed-tab-thumb {
+    transition-duration: 120ms;
+  }
+  .lv-heart-pop,
+  .lv-heart-burst,
+  .lv-menu {
+    animation: none;
+  }
+  .lv-fade-in {
+    animation-duration: 120ms;
+  }
+}

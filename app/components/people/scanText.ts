@@ -51,10 +51,10 @@ export function scanDetail(status: ScanStatus): string | null {
     case "user":
       return "Paused by you.";
     case "hidden":
-      // Only the Android app (with the switch on) also goes on while the phone charges.
-      return status.background ? "Continues when 404GB is open, or while charging." : "Continues when 404GB is open.";
+      // Only the Android app (with the switch on) goes on with the app closed.
+      return status.background ? "Continues in the background after you close 404GB." : "Continues when 404GB is open.";
     case "background":
-      return "Finding people in the background while charging.";
+      return "Finding people in the background.";
     case "busy":
       return "Waiting for uploads and syncing to finish.";
     case "offline":

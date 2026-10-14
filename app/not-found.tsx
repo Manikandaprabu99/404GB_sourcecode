@@ -6,7 +6,7 @@ export default function NotFound() {
     <StatusScreen
       eyebrow="Error 404 · Page not found"
       title="This page is missing"
-      message="Like the empty tile in our logo, there's nothing here. Your photos are safe."
+      message="There's nothing at this address. Your photos are safe."
       art={<MissingTileCode />}
     >
       <Link href="/gallery" className={primaryButtonClass}>

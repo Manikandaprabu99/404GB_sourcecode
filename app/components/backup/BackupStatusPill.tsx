@@ -19,12 +19,11 @@ function glyphFor(tone: BackupPillTone): TileGlyphState {
   return "waiting";
 }
 
-/** The badge's short form of a backup state, in the spirit of `128 TO GO` / `WAITING · WI-FI`
- * (shown uppercase). The full sentence stays the badge's accessible text. Also used by the
- * backup card in Settings. */
+/** The badge's short sentence-case form ("128 to go", "Waiting for Wi-Fi"); the full
+ * sentence stays its accessible text. */
 export function shortLabel(pill: BackupPill, backup: BackupSnapshot): string {
   const status = backup.status;
-  if (pill.tone === "ok") return "Up to date";
+  if (pill.tone === "ok") return "Backed up";
   switch (pill.icon) {
     case "sync":
       if (status?.state === "uploading") return status.pending > 0 ? `${status.pending.toLocaleString()} to go` : "Backing up";
@@ -34,17 +33,17 @@ export function shortLabel(pill: BackupPill, backup: BackupSnapshot): string {
     case "update":
       return "Update app";
     case "wifi":
-      return "Waiting · Wi-Fi";
+      return "Waiting for Wi-Fi";
     case "signal":
-      return "Paused · Roaming";
+      return "Paused · roaming";
     case "charging":
-      return "Waiting · Charger";
+      return "Waiting for a charger";
     case "battery":
-      return "Paused · Battery";
+      return "Paused · battery low";
     case "clock":
       return pill.label.startsWith("GitHub limit") ? "Paused · GitHub limit" : "Starting soon";
     case "off":
-      return pill.tone === "action" ? "Backup off" : "Waiting · Offline";
+      return pill.tone === "action" ? "Backup off" : "Offline";
     case "alert":
       if (status?.state === "needs_permission") return "Allow access";
       return status && status.failed > 0 ? `${status.failed.toLocaleString()} failed` : "Check backup";
@@ -64,7 +63,7 @@ export function StatusPill({
   /** What the badge shows; defaults to `label`. */
   short?: string;
   tone: BackupPillTone;
-  /** Kept for callers; the badge's 2×2 glyph follows the tone instead. */
+  /** Kept for callers; the badge's mark follows the tone instead. */
   icon: BackupPillIcon;
   href?: string;
   /** 0..1 while uploading (the badge's glyph runs instead of showing a fraction). */
@@ -82,8 +81,8 @@ export function StatusPill({
   );
   if (!href) return <span role="status" className="flex min-w-0">{body}</span>;
   return (
-    // A 44px-tall hit area around the 24px badge.
-    <Link href={href} className="relative flex min-w-0 rounded-tile-sm after:absolute after:-inset-x-1 after:-inset-y-2.5 after:content-['']">
+    // A 44px-tall hit area around the 28px badge.
+    <Link href={href} className="relative flex min-w-0 rounded-full after:absolute after:-inset-x-1 after:-inset-y-2 after:content-['']">
       {body}
     </Link>
   );

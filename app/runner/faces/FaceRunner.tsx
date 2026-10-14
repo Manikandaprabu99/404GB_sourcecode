@@ -33,7 +33,7 @@ export default function FaceRunner() {
     <StatusScreen
       eyebrow="People runner"
       title="Nothing to do here"
-      message="The 404GB Android app opens this page while your phone charges, to find people in your photos."
+      message="The 404GB Android app opens this page after you close it, to find people in your photos."
     >
       {/* A plain link: nothing here should prefetch. */}
       <a href="/" className={primaryButtonClass}>
